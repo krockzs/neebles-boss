@@ -1,0 +1,5 @@
+#!/bin/bash
+
+echo "[N.E.E.B.L.E.S.] Bootstrap conectado correctamente."
+echo "[N.E.E.B.L.E.S.] Boss todavía no está implementado."
+exit 0
