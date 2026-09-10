@@ -9,8 +9,9 @@
   },
   "install_root": "/opt/neebles",
   "paths": {
-    "backend": "/opt/neebles/boss/backend/neebles-backend",
-    "ui": "/opt/neebles/boss/ui/neebles-ui",
+    "backend": "/opt/neebles/client/backend/neebles-backend",
+    "ui": "/opt/neebles/client/ui/neebles-ui",
+    "os_entrypoint": "/opt/neebles/client/bin/neebles",
     "command": "/usr/local/bin/neebles"
   }
 }
