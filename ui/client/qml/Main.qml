@@ -26,7 +26,7 @@ ApplicationWindow {
             }
 
             Label {
-                text: "Boss 0.0.1"
+                text: "Boss 1.0.0"
                 color: "#A78BFA"
                 font.pixelSize: 16
                 Layout.alignment: Qt.AlignHCenter
