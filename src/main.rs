@@ -1,6 +1,6 @@
 use std::process::Command;
 
-const VERSION: &str = "0.0.1";
+const VERSION: &str = "1.0.0";
 const UI_PATH: &str = "/opt/neebles/client/ui/neebles-ui";
 
 fn print_version() {
