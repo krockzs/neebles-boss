@@ -3,9 +3,14 @@
   "name": "N.E.E.B.L.E.S. Boss",
   "version": "0.0.1",
   "components": {
+    "installer": "neebles-installer",
     "backend": "neebles-backend",
     "ui": "neebles-ui"
   },
   "install_root": "/opt/neebles",
-  "command": "/usr/local/bin/neebles"
+  "paths": {
+    "backend": "/opt/neebles/boss/backend/neebles-backend",
+    "ui": "/opt/neebles/boss/ui/neebles-ui",
+    "command": "/usr/local/bin/neebles"
+  }
 }
