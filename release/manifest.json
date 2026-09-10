@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "name": "N.E.E.B.L.E.S. Boss",
+  "version": "0.0.1",
+  "components": {
+    "backend": "neebles-backend",
+    "ui": "neebles-ui"
+  },
+  "install_root": "/opt/neebles",
+  "command": "/usr/local/bin/neebles"
+}
