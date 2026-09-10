@@ -2,10 +2,10 @@
 set -euo pipefail
 
 NEEBLES_ROOT="/opt/neebles"
-BOSS_ROOT="$NEEBLES_ROOT/boss"
-BIN_DIR="$BOSS_ROOT/bin"
-BACKEND_DIR="$BOSS_ROOT/backend"
-UI_DIR="$BOSS_ROOT/ui"
+CLIENT_ROOT="$NEEBLES_ROOT/client"
+BIN_DIR="$CLIENT_ROOT/bin"
+BACKEND_DIR="$CLIENT_ROOT/backend"
+UI_DIR="$CLIENT_ROOT/ui"
 MODULES_DIR="$NEEBLES_ROOT/modules"
 SHARED_DIR="$NEEBLES_ROOT/shared"
 
@@ -51,7 +51,7 @@ status "Installing N.E.E.B.L.E.S. UI..."
 install -m 0755 "$UI_SOURCE" "$UI_DIR/neebles-ui"
 
 progress 78
-status "Creating N.E.E.B.L.E.S. command entrypoint..."
+status "Creating N.E.E.B.L.E.S. client entrypoint..."
 ln -sfn "$BACKEND_DIR/neebles-backend" "$BIN_DIR/neebles"
 ln -sfn "$BIN_DIR/neebles" /usr/local/bin/neebles
 
@@ -63,4 +63,5 @@ progress 100
 status "N.E.E.B.L.E.S. Boss installed successfully."
 echo "Installed backend: $BACKEND_DIR/neebles-backend"
 echo "Installed UI: $UI_DIR/neebles-ui"
+echo "OS entrypoint: $BIN_DIR/neebles"
 echo "Global command: /usr/local/bin/neebles"
