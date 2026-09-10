@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "name": "N.E.E.B.L.E.S. Boss",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "components": {
     "installer": "neebles-installer",
     "backend": "neebles-backend",
