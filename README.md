@@ -1,17 +1,18 @@
 # N.E.E.B.L.E.S. Boss
 
-Current development target: `1.0.0`.
+Current stable release: `1.0.0`.
 
-## First milestone
+## Purpose
 
-The first milestone proves the N.E.E.B.L.E.S. injection path on a client system:
+N.E.E.B.L.E.S. Boss is the central executable responsible for the N.E.E.B.L.E.S. runtime and its modular architecture.
 
-1. `Start NEEBLES` reaches the bootstrap layer.
-2. The bootstrap resolves the stable Boss release.
-3. The bootstrap launches the minimal NEEBLES installer UI when installation or update is required.
-4. The installer places Boss under `/opt/neebles/`.
-5. The global `neebles` command becomes available.
-6. `neebles --version` returns the installed Boss version.
+The Boss is distributed as a stable release and is installed under `/opt/neebles/`. The global `neebles` command is provided by the installed client runtime.
+
+## Stable 1.0.0
+
+Boss `1.0.0` is the current stable release referenced by the N.E.E.B.L.E.S. bootstrap registry.
+
+The release provides the client, backend, UI and installer assets required by the bootstrap/install path.
 
 ## Runtime layout
 
@@ -28,4 +29,15 @@ The first milestone proves the N.E.E.B.L.E.S. injection path on a client system:
 └── shared/
 ```
 
-Boss and modules remain physically separated. Modules will be added later under `/opt/neebles/modules/<module>/`.
+Boss and modules remain physically separated. Modules are installed independently under `/opt/neebles/modules/<module>/`.
+
+## Release assets
+
+The stable release publishes the runtime assets consumed by the registry bootstrap:
+
+- `neebles-backend`
+- `neebles-ui`
+- `neebles-installer`
+- `install.sh`
+
+The registry records the release version and SHA-256 values for these assets before they are consumed by the bootstrap process.
