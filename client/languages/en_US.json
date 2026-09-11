@@ -1,0 +1,25 @@
+{
+  "app.title": "N.E.E.B.L.E.S. Boss",
+  "app.ready": "N.E.E.B.L.E.S. is ready.",
+
+  "nav.config": "Settings",
+  "nav.modules": "Modules",
+
+  "config.title": "Settings",
+  "config.language": "Language",
+  "config.tray": "Show system tray icon",
+  "config.launcher": "Show N.E.E.B.L.E.S. quick access",
+  "config.normal_notifications": "Show normal notifications",
+
+  "modules.title": "Modules",
+  "modules.empty": "No modules are installed.",
+
+  "common.open": "Open",
+  "common.enable": "Enable",
+  "common.disable": "Disable",
+  "common.install": "Install",
+  "common.update": "Update",
+  "common.uninstall": "Uninstall",
+  "common.save": "Save",
+  "common.cancel": "Cancel"
+}

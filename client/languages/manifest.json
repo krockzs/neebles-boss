@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "default": "es_CL",
+  "languages": [
+    {
+      "code": "es_CL",
+      "name": "Español (Chile)",
+      "flag": "cl.svg",
+      "file": "es_CL.json"
+    },
+    {
+      "code": "en_US",
+      "name": "English (United States)",
+      "flag": "us.svg",
+      "file": "en_US.json"
+    }
+  ]
+}
