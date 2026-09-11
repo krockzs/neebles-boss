@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "name": "N.E.E.B.L.E.S. Boss",
   "version": "1.0.0",
   "components": {
@@ -9,9 +9,16 @@
   },
   "install_root": "/opt/neebles",
   "paths": {
+    "client_root": "/opt/neebles/client",
     "backend": "/opt/neebles/client/backend/neebles-backend",
     "ui": "/opt/neebles/client/ui/neebles-ui",
     "os_entrypoint": "/opt/neebles/client/bin/neebles",
-    "command": "/usr/local/bin/neebles"
+    "command": "/usr/local/bin/neebles",
+    "modules_root": "/opt/neebles/modules",
+    "shared_root": "/opt/neebles/shared"
+  },
+  "registry_manifests": {
+    "checking": "https://raw.githubusercontent.com/krockzs/neebles-registry/main/boss/checking.json",
+    "critical_update": "https://raw.githubusercontent.com/krockzs/neebles-registry/main/boss/critical-update.json"
   }
 }
