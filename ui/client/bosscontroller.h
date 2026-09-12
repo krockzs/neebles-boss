@@ -1,9 +1,12 @@
 #pragma once
 
 #include <QObject>
+#include <QSet>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QUrl>
+
+class QTimer;
 
 class BossController final : public QObject
 {
@@ -61,6 +64,10 @@ private:
     void loadLanguages();
     void loadTranslations();
     void loadModules();
+    void pollModuleRuntime();
+    void applyModuleLifecycle();
+    void scheduleAutomaticUpdate(const QString &name);
+    void performAutomaticUpdate(const QString &name);
     void runModuleOperation(const QString &operation, const QString &name, bool privileged);
     void setBusy(bool value);
     void setStatusText(const QString &value);
@@ -72,6 +79,10 @@ private:
     QVariantList m_languages;
     QVariantList m_modules;
     QVariantMap m_strings;
+    QVariantMap m_updateNotifications;
+    QVariantMap m_autoUpdateFailedVersions;
+    QSet<QString> m_autoUpdatesInFlight;
+    QTimer *m_modulePollTimer = nullptr;
     int m_translationsRevision = 0;
     bool m_busy = false;
     QString m_statusText;

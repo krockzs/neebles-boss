@@ -84,7 +84,33 @@ fn config_command(args: &[String]) -> i32 {
                 Err(error) => fail(error),
             }
         }
-        _ => fail("usage: neebles config show | neebles config set <key> <value>".to_string()),
+        Some("module-update-notified") => {
+            let Some(name) = args.get(1) else {
+                return fail(
+                    "config module-update-notified requires a module name"
+                        .to_string()
+                );
+            };
+
+            let Some(version) = args.get(2) else {
+                return fail(
+                    "config module-update-notified requires a version"
+                        .to_string()
+                );
+            };
+
+            match config::mark_module_update_notified(
+                name,
+                version,
+            ) {
+                Ok(config) => print_json(&config),
+                Err(error) => fail(error),
+            }
+        }
+        _ => fail(
+            "usage: neebles config show | neebles config set <key> <value> | neebles config module-update-notified <module> <version>"
+                .to_string()
+        ),
     }
 }
 
@@ -263,6 +289,7 @@ fn print_help() {
     println!("Boss administration:");
     println!("  neebles config show");
     println!("  neebles config set <key> <value>");
+    println!("  neebles config module-update-notified <module> <version>");
     println!("  neebles modules available|installed");
     println!("  neebles modules install|update|uninstall <module>");
     println!("  neebles modules enable|disable <module>");

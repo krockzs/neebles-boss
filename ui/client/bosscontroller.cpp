@@ -9,12 +9,24 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSet>
+#include <QTimer>
 #include <QVersionNumber>
 
 BossController::BossController(QObject *parent)
     : QObject(parent)
 {
+    m_modulePollTimer = new QTimer(this);
+    m_modulePollTimer->setInterval(1000);
+
+    connect(
+        m_modulePollTimer,
+        &QTimer::timeout,
+        this,
+        &BossController::pollModuleRuntime
+    );
+
     reload();
+    m_modulePollTimer->start();
 }
 
 
@@ -236,6 +248,8 @@ QUrl BossController::flagUrl(const QString &name) const
 
 void BossController::reload()
 {
+    m_autoUpdateFailedVersions.clear();
+
     loadConfig();
     loadLanguages();
     loadTranslations();
@@ -253,7 +267,19 @@ void BossController::loadConfig()
     m_language = map.value(QStringLiteral("language"), QStringLiteral("en_US")).toString();
     m_trayEnabled = map.value(QStringLiteral("tray_enabled"), true).toBool();
     m_launcherEnabled = map.value(QStringLiteral("launcher_enabled"), true).toBool();
-    m_normalNotifications = map.value(QStringLiteral("normal_notifications"), true).toBool();
+    m_normalNotifications =
+        map.value(
+            QStringLiteral("normal_notifications"),
+            true
+        ).toBool();
+
+    m_updateNotifications =
+        map.value(
+            QStringLiteral(
+                "module_update_notifications"
+            )
+        ).toMap();
+
     emit configChanged();
 }
 
@@ -513,6 +539,345 @@ void BossController::loadModules()
 
     m_modules = combined;
     emit modulesChanged();
+
+    applyModuleLifecycle();
+}
+
+void BossController::pollModuleRuntime()
+{
+    bool ok = false;
+
+    const QVariant value = parseJson(
+        run(
+            {
+                QStringLiteral("modules"),
+                QStringLiteral("installed")
+            },
+            false,
+            5000,
+            &ok
+        )
+    );
+
+    if (
+        !ok
+        || !value.canConvert<QVariantList>()
+    )
+        return;
+
+    QVariantMap runningByName;
+
+    for (
+        const QVariant &item :
+        value.toList()
+    ) {
+        const QVariantMap module =
+            item.toMap();
+
+        runningByName.insert(
+            module.value(
+                QStringLiteral("name")
+            ).toString(),
+            module.value(
+                QStringLiteral("running"),
+                false
+            ).toBool()
+        );
+    }
+
+    QVariantList updated = m_modules;
+    bool changed = false;
+
+    for (int i = 0; i < updated.size(); ++i) {
+        QVariantMap module =
+            updated.at(i).toMap();
+
+        if (
+            !module.value(
+                QStringLiteral("installed")
+            ).toBool()
+        )
+            continue;
+
+        const QString name =
+            module.value(
+                QStringLiteral("name")
+            ).toString();
+
+        const bool running =
+            runningByName.value(
+                name,
+                false
+            ).toBool();
+
+        if (
+            module.value(
+                QStringLiteral("running"),
+                false
+            ).toBool()
+            != running
+        ) {
+            module.insert(
+                QStringLiteral("running"),
+                running
+            );
+
+            updated[i] = module;
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        m_modules = updated;
+        emit modulesChanged();
+    }
+
+    applyModuleLifecycle();
+}
+
+void BossController::applyModuleLifecycle()
+{
+    for (const QVariant &item : m_modules) {
+        const QVariantMap module =
+            item.toMap();
+
+        if (
+            !module.value(
+                QStringLiteral("installed")
+            ).toBool()
+            || !module.value(
+                QStringLiteral(
+                    "update_available"
+                )
+            ).toBool()
+        )
+            continue;
+
+        const QString name =
+            module.value(
+                QStringLiteral("name")
+            ).toString();
+
+        const QString remoteVersion =
+            module.value(
+                QStringLiteral(
+                    "remote_version"
+                )
+            ).toString();
+
+        const bool running =
+            module.value(
+                QStringLiteral("running"),
+                false
+            ).toBool();
+
+        /*
+         * Notify only once for each available
+         * module/version combination.
+         */
+        if (
+            m_normalNotifications
+            && !remoteVersion.isEmpty()
+            && m_updateNotifications
+                .value(name)
+                .toString()
+                != remoteVersion
+        ) {
+            bool notificationOk = false;
+
+            const QString message =
+                running
+                ? QStringLiteral(
+                    "Hay una actualización para %1. "
+                    "Guarda tu trabajo. "
+                    "La actualización comenzará "
+                    "automáticamente cuando cierres "
+                    "la aplicación."
+                ).arg(name)
+                : QStringLiteral(
+                    "Hay una actualización para %1. "
+                    "Se instalará automáticamente."
+                ).arg(name);
+
+            run(
+                {
+                    QStringLiteral("notify"),
+                    running
+                        ? QStringLiteral("warning")
+                        : QStringLiteral("info"),
+                    QStringLiteral(
+                        "N.E.E.B.L.E.S."
+                    ),
+                    message
+                },
+                false,
+                5000,
+                &notificationOk
+            );
+
+            if (notificationOk) {
+                bool markOk = false;
+
+                run(
+                    {
+                        QStringLiteral("config"),
+                        QStringLiteral(
+                            "module-update-notified"
+                        ),
+                        name,
+                        remoteVersion
+                    },
+                    false,
+                    5000,
+                    &markOk
+                );
+
+                if (markOk) {
+                    m_updateNotifications.insert(
+                        name,
+                        remoteVersion
+                    );
+                }
+            }
+        }
+
+        /*
+         * While running:
+         * - Open is blocked by UI.
+         * - update remains pending.
+         * - Boss waits.
+         *
+         * As soon as running becomes false,
+         * automatic update is scheduled.
+         */
+        if (running)
+            continue;
+
+        /*
+         * Do not loop forever if pkexec/update
+         * was cancelled or failed.
+         *
+         * Global refresh clears this suppression
+         * and allows an explicit retry.
+         */
+        if (
+            m_autoUpdateFailedVersions
+                .value(name)
+                .toString()
+                == remoteVersion
+        )
+            continue;
+
+        scheduleAutomaticUpdate(name);
+    }
+}
+
+void BossController::scheduleAutomaticUpdate(
+    const QString &name
+)
+{
+    if (
+        name.isEmpty()
+        || m_autoUpdatesInFlight.contains(name)
+    )
+        return;
+
+    m_autoUpdatesInFlight.insert(name);
+
+    QTimer::singleShot(
+        0,
+        this,
+        [this, name]() {
+            performAutomaticUpdate(name);
+        }
+    );
+}
+
+void BossController::performAutomaticUpdate(
+    const QString &name
+)
+{
+    QString remoteVersion;
+
+    for (const QVariant &item : m_modules) {
+        const QVariantMap module =
+            item.toMap();
+
+        if (
+            module.value(
+                QStringLiteral("name")
+            ).toString()
+            == name
+        ) {
+            remoteVersion =
+                module.value(
+                    QStringLiteral(
+                        "remote_version"
+                    )
+                ).toString();
+
+            if (
+                module.value(
+                    QStringLiteral("running"),
+                    false
+                ).toBool()
+            ) {
+                m_autoUpdatesInFlight
+                    .remove(name);
+                return;
+            }
+
+            break;
+        }
+    }
+
+    setBusy(true);
+
+    bool ok = false;
+
+    run(
+        {
+            QStringLiteral("modules"),
+            QStringLiteral("update"),
+            name
+        },
+        true,
+        600000,
+        &ok
+    );
+
+    m_autoUpdatesInFlight.remove(name);
+
+    if (!ok) {
+        if (!remoteVersion.isEmpty()) {
+            m_autoUpdateFailedVersions.insert(
+                name,
+                remoteVersion
+            );
+        }
+
+        setStatusText(
+            QStringLiteral(
+                "Update failed: %1"
+            ).arg(name)
+        );
+
+        setBusy(false);
+        return;
+    }
+
+    setStatusText(
+        QStringLiteral("OK")
+    );
+
+    setBusy(false);
+
+    /*
+     * Re-read local manifest and remote registry.
+     * If versions match, update_available disappears
+     * and Open becomes available again.
+     */
+    loadModules();
 }
 
 void BossController::saveConfig(const QString &language,
@@ -647,20 +1012,128 @@ void BossController::runModuleOperation(const QString &operation, const QString 
         return;
     setBusy(true);
     bool ok = false;
-    run({QStringLiteral("modules"), operation, name}, privileged, 600000, &ok);
-    setStatusText(ok ? QStringLiteral("OK") : QStringLiteral("ERROR"));
+    run(
+        {
+            QStringLiteral("modules"),
+            operation,
+            name
+        },
+        privileged,
+        600000,
+        &ok
+    );
+
+    if (
+        operation == QStringLiteral("update")
+        && !ok
+    ) {
+        for (const QVariant &item : m_modules) {
+            const QVariantMap module =
+                item.toMap();
+
+            if (
+                module.value(
+                    QStringLiteral("name")
+                ).toString()
+                == name
+            ) {
+                const QString version =
+                    module.value(
+                        QStringLiteral(
+                            "remote_version"
+                        )
+                    ).toString();
+
+                if (!version.isEmpty()) {
+                    m_autoUpdateFailedVersions
+                        .insert(
+                            name,
+                            version
+                        );
+                }
+
+                break;
+            }
+        }
+    } else if (
+        operation
+        == QStringLiteral("update")
+    ) {
+        m_autoUpdateFailedVersions
+            .remove(name);
+    }
+
+    setStatusText(
+        ok
+        ? QStringLiteral("OK")
+        : QStringLiteral("ERROR")
+    );
+
     loadModules();
     setBusy(false);
 }
 
-void BossController::installModule(const QString &name)
+void BossController::installModule(
+    const QString &name
+)
 {
-    runModuleOperation(QStringLiteral("install"), name, true);
+    if (name.isEmpty())
+        return;
+
+    setBusy(true);
+
+    bool installed = false;
+
+    run(
+        {
+            QStringLiteral("modules"),
+            QStringLiteral("install"),
+            name
+        },
+        true,
+        600000,
+        &installed
+    );
+
+    bool enabled = false;
+
+    if (installed) {
+        run(
+            {
+                QStringLiteral("modules"),
+                QStringLiteral("enable"),
+                name
+            },
+            false,
+            5000,
+            &enabled
+        );
+    }
+
+    const bool ok =
+        installed && enabled;
+
+    setStatusText(
+        ok
+        ? QStringLiteral("OK")
+        : QStringLiteral("ERROR")
+    );
+
+    loadModules();
+    setBusy(false);
 }
 
-void BossController::updateModule(const QString &name)
+void BossController::updateModule(
+    const QString &name
+)
 {
-    runModuleOperation(QStringLiteral("update"), name, true);
+    m_autoUpdateFailedVersions.remove(name);
+
+    runModuleOperation(
+        QStringLiteral("update"),
+        name,
+        true
+    );
 }
 
 void BossController::uninstallModule(const QString &name)
@@ -668,11 +1141,88 @@ void BossController::uninstallModule(const QString &name)
     runModuleOperation(QStringLiteral("uninstall"), name, true);
 }
 
-void BossController::openModule(const QString &name)
+void BossController::openModule(
+    const QString &name
+)
 {
     if (name.isEmpty())
         return;
-    QProcess::startDetached(commandPath(), {name, QStringLiteral("open")});
+
+    for (int i = 0; i < m_modules.size(); ++i) {
+        QVariantMap module =
+            m_modules.at(i).toMap();
+
+        if (
+            module.value(
+                QStringLiteral("name")
+            ).toString()
+            != name
+        )
+            continue;
+
+        if (
+            !module.value(
+                QStringLiteral("installed")
+            ).toBool()
+            || !module.value(
+                QStringLiteral("enabled")
+            ).toBool()
+            || module.value(
+                QStringLiteral("running"),
+                false
+            ).toBool()
+            || module.value(
+                QStringLiteral(
+                    "update_available"
+                ),
+                false
+            ).toBool()
+        )
+            return;
+
+        qint64 processId = 0;
+
+        const bool started =
+            QProcess::startDetached(
+                commandPath(),
+                {
+                    name,
+                    QStringLiteral("open")
+                },
+                QString(),
+                &processId
+            );
+
+        if (!started) {
+            setStatusText(
+                QStringLiteral(
+                    "Could not open module: %1"
+                ).arg(name)
+            );
+            return;
+        }
+
+        /*
+         * Hide Open immediately.
+         * The backend runtime marker becomes
+         * authoritative on the next poll.
+         */
+        module.insert(
+            QStringLiteral("running"),
+            true
+        );
+
+        m_modules[i] = module;
+        emit modulesChanged();
+
+        QTimer::singleShot(
+            250,
+            this,
+            &BossController::pollModuleRuntime
+        );
+
+        return;
+    }
 }
 
 void BossController::setModuleEnabled(const QString &name, bool enabled)

@@ -1,5 +1,6 @@
 use crate::languages;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -12,6 +13,8 @@ pub struct BossConfig {
     pub normal_notifications: bool,
     #[serde(default)]
     pub disabled_modules: Vec<String>,
+    #[serde(default)]
+    pub module_update_notifications: BTreeMap<String, String>,
 }
 
 impl BossConfig {
@@ -22,6 +25,7 @@ impl BossConfig {
             launcher_enabled: true,
             normal_notifications: true,
             disabled_modules: Vec::new(),
+            module_update_notifications: BTreeMap::new(),
         }
     }
 }
@@ -106,4 +110,19 @@ pub fn set_module_enabled(name: &str, enabled: bool) -> Result<BossConfig, Strin
 pub fn module_enabled(name: &str) -> Result<bool, String> {
     let config = load_or_initialize()?;
     Ok(!config.disabled_modules.iter().any(|item| item == name))
+}
+
+
+pub fn mark_module_update_notified(
+    name: &str,
+    version: &str,
+) -> Result<BossConfig, String> {
+    let mut config = load_or_initialize()?;
+
+    config
+        .module_update_notifications
+        .insert(name.to_string(), version.to_string());
+
+    save(&config)?;
+    Ok(config)
 }

@@ -818,8 +818,12 @@ ApplicationWindow {
                                                 !!modelData.installed
 
                                             enabled:
-                                                typeof boss === "undefined"
-                                                || !boss.busy
+                                                (
+                                                    typeof boss
+                                                    === "undefined"
+                                                    || !boss.busy
+                                                )
+                                                && !modelData.running
 
                                             onToggled: {
                                                 if (
@@ -889,6 +893,8 @@ ApplicationWindow {
                                             visible:
                                                 !!modelData.installed
                                                 && !!modelData.enabled
+                                                && !modelData.running
+                                                && !modelData.update_available
 
                                             text:
                                                 typeof boss !== "undefined"
@@ -945,8 +951,12 @@ ApplicationWindow {
                                                 : "Update"
 
                                             enabled:
-                                                typeof boss === "undefined"
-                                                || !boss.busy
+                                                (
+                                                    typeof boss
+                                                    === "undefined"
+                                                    || !boss.busy
+                                                )
+                                                && !modelData.running
 
                                             background: Rectangle {
                                                 radius: 7
