@@ -8,7 +8,7 @@ mod notifications;
 mod privileges;
 mod request;
 
-pub const VERSION: &str = "1.0.1";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
