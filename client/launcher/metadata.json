@@ -1,0 +1,17 @@
+{
+  "KPackageStructure": "Plasma/Applet",
+  "KPlugin": {
+    "Id": "org.neebles.launcher",
+    "Name": "N.E.E.B.L.E.S.",
+    "Description": "N.E.E.B.L.E.S. quick access launcher",
+    "Icon": "neebles-boss-launcher-icon",
+    "Version": "1.0.0",
+    "License": "MIT",
+    "Authors": [
+      {
+        "Name": "Olate Stark y Jarvis"
+      }
+    ]
+  },
+  "X-Plasma-API-Minimum-Version": "6.0"
+}

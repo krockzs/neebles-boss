@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/thomyorke/NEEBLES/neebles-boss/ui/installer/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -1,1 +1,17 @@
-ACA IRAN LAS LISTAS DE COMANDOS
+N.E.E.B.L.E.S. Boss
+
+Usage:
+  neebles
+  neebles start
+  neebles --version
+  neebles --help
+  neebles <module> [arguments...]
+
+Boss administration:
+  neebles config show
+  neebles config set <key> <value>
+  neebles modules available|installed
+  neebles modules install|update|uninstall <module>
+  neebles modules enable|disable <module>
+  neebles notify <severity> <title> <message>
+  neebles --request-json '<ExecutionRequest JSON>'

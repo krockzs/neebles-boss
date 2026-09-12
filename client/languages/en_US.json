@@ -14,6 +14,10 @@
   "modules.title": "Modules",
   "modules.empty": "No modules are installed.",
 
+  "tray.open_boss": "Open N.E.E.B.L.E.S. Boss",
+  "tray.quit": "Quit tray",
+  "launcher.open_boss": "Open Boss",
+
   "common.open": "Open",
   "common.enable": "Enable",
   "common.disable": "Disable",
@@ -21,5 +25,6 @@
   "common.update": "Update",
   "common.uninstall": "Uninstall",
   "common.save": "Save",
-  "common.cancel": "Cancel"
+  "common.cancel": "Cancel",
+  "common.refresh": "Refresh"
 }

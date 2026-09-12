@@ -1,0 +1,6 @@
+module NeeblesUI
+typeinfo neebles-ui.qmltypes
+prefer :/qt/qml/NeeblesUI/
+Main 1.0 qml/Main.qml
+depends QtQuick
+

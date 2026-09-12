@@ -1,0 +1,6 @@
+{
+  "tray_enabled": true,
+  "launcher_enabled": true,
+  "normal_notifications": true,
+  "first_run_language_fallback": "en_US"
+}

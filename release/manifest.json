@@ -5,13 +5,21 @@
   "components": {
     "installer": "neebles-installer",
     "backend": "neebles-backend",
-    "ui": "neebles-ui"
+    "ui": "neebles-ui",
+    "tray": "neebles-tray",
+    "launcher": "org.neebles.launcher",
+    "notifications": "boss-routed-plasma"
   },
   "install_root": "/opt/neebles",
   "paths": {
     "client_root": "/opt/neebles/client",
     "backend": "/opt/neebles/client/backend/neebles-backend",
     "ui": "/opt/neebles/client/ui/neebles-ui",
+    "tray": "/opt/neebles/client/tray/neebles-tray",
+    "launcher": "/opt/neebles/client/launcher",
+    "notifications": "/opt/neebles/client/notifications",
+    "languages": "/opt/neebles/client/languages",
+    "config_defaults": "/opt/neebles/client/config",
     "os_entrypoint": "/opt/neebles/client/bin/neebles",
     "command": "/usr/local/bin/neebles",
     "modules_root": "/opt/neebles/modules",

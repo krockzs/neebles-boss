@@ -1,0 +1,40 @@
+file(REMOVE_RECURSE
+  ".qt/rcc/qrc_neebles-installer_raw_qml_0.cpp"
+  ".qt/rcc/qrc_qmake_NeeblesInstaller.cpp"
+  ".rcc/qmlcache/neebles-installer_qml/Main_qml.cpp"
+  ".rcc/qmlcache/neebles-installer_qml/Main_qml.cpp.aotstats"
+  ".rcc/qmlcache/neebles-installer_qmlcache_loader.cpp"
+  "CMakeFiles/neebles-installer.dir/link.d"
+  "CMakeFiles/neebles-installer_autogen.dir/AutogenUsed.txt"
+  "CMakeFiles/neebles-installer_autogen.dir/ParseCache.txt"
+  "neebles-installer_autogen"
+  "CMakeFiles/neebles-installer.dir/build/.qt/rcc/qrc_neebles-installer_raw_qml_0.cpp.o"
+  "CMakeFiles/neebles-installer.dir/build/.qt/rcc/qrc_neebles-installer_raw_qml_0.cpp.o.d"
+  "CMakeFiles/neebles-installer.dir/build/.qt/rcc/qrc_qmake_NeeblesInstaller.cpp.o"
+  "CMakeFiles/neebles-installer.dir/build/.qt/rcc/qrc_qmake_NeeblesInstaller.cpp.o.d"
+  "CMakeFiles/neebles-installer.dir/build/.rcc/qmlcache/neebles-installer_qml/Main_qml.cpp.o"
+  "CMakeFiles/neebles-installer.dir/build/.rcc/qmlcache/neebles-installer_qml/Main_qml.cpp.o.d"
+  "CMakeFiles/neebles-installer.dir/build/.rcc/qmlcache/neebles-installer_qmlcache_loader.cpp.o"
+  "CMakeFiles/neebles-installer.dir/build/.rcc/qmlcache/neebles-installer_qmlcache_loader.cpp.o.d"
+  "CMakeFiles/neebles-installer.dir/installercontroller.cpp.o"
+  "CMakeFiles/neebles-installer.dir/installercontroller.cpp.o.d"
+  "CMakeFiles/neebles-installer.dir/main.cpp.o"
+  "CMakeFiles/neebles-installer.dir/main.cpp.o.d"
+  "CMakeFiles/neebles-installer.dir/neebles-installer_autogen/mocs_compilation.cpp.o"
+  "CMakeFiles/neebles-installer.dir/neebles-installer_autogen/mocs_compilation.cpp.o.d"
+  "CMakeFiles/neebles-installer.dir/neebles-installer_qmltyperegistrations.cpp.o"
+  "CMakeFiles/neebles-installer.dir/neebles-installer_qmltyperegistrations.cpp.o.d"
+  "NeeblesInstaller/neebles-installer.qmltypes"
+  "meta_types/neebles-installer_json_file_list.txt"
+  "meta_types/neebles-installer_json_file_list.txt.timestamp"
+  "meta_types/qt6neebles-installer_metatypes.json"
+  "meta_types/qt6neebles-installer_metatypes.json.gen"
+  "neebles-installer"
+  "neebles-installer.pdb"
+  "neebles-installer_qmltyperegistrations.cpp"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang CXX)
+  include(CMakeFiles/neebles-installer.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

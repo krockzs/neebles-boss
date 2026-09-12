@@ -1,0 +1,16 @@
+--bare
+-I
+/home/thomyorke/NEEBLES/neebles-boss/ui/installer/build
+-I
+/home/thomyorke/NEEBLES/neebles-boss/ui/installer/build/NeeblesInstaller
+-I
+/home/thomyorke/NEEBLES/neebles-boss/ui/installer/build
+-I
+/usr/lib/x86_64-linux-gnu/qt6/qml
+--resource
+/home/thomyorke/NEEBLES/neebles-boss/ui/installer/build/.qt/rcc/qmake_NeeblesInstaller.qrc
+--resource
+/home/thomyorke/NEEBLES/neebles-boss/ui/installer/build/.qt/rcc/neebles-installer_raw_qml_0.qrc
+/home/thomyorke/NEEBLES/neebles-boss/ui/installer/qml/Main.qml
+--json
+/home/thomyorke/NEEBLES/neebles-boss/ui/installer/build/neebles-installer_qmllint.json
