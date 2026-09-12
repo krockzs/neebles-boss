@@ -44,6 +44,7 @@ private:
     void startTray();
     void installLauncherIntoPanel();
     void consumeLine(const QString &line);
+    QString authorizationPath() const;
 
     QString m_installScript;
     QString m_backendBinary;

@@ -11,7 +11,7 @@ ApplicationWindow {
     minimumHeight: 520
     visible: true
 
-    title: "N.E.E.B.L.E.S. Boss 1.0.1"
+    title: "N.E.E.B.L.E.S. Boss 1.0.4"
     color: "#09090B"
 
     property int page: 0
@@ -802,8 +802,12 @@ ApplicationWindow {
                                         Label {
                                             text:
                                                 modelData.installed
-                                                ? "Installed"
-                                                : "Install"
+                                                ? root.t(
+                                                    "modules.installed"
+                                                )
+                                                : root.t(
+                                                    "common.install"
+                                                )
 
                                             color:
                                                 modelData.installed
@@ -817,6 +821,18 @@ ApplicationWindow {
                                             checked:
                                                 !!modelData.installed
 
+                                            /*
+                                             * Boss owns the state.
+                                             *
+                                             * Clicking the control requests
+                                             * a change, but the Switch itself
+                                             * never mutates checked optimistically.
+                                             *
+                                             * checked changes only after Boss
+                                             * reloads the real backend state.
+                                             */
+                                            checkable: false
+
                                             enabled:
                                                 (
                                                     typeof boss
@@ -825,21 +841,24 @@ ApplicationWindow {
                                                 )
                                                 && !modelData.running
 
-                                            onToggled: {
+                                            onClicked: {
                                                 if (
                                                     typeof boss
                                                     === "undefined"
                                                 )
                                                     return
 
-                                                if (checked)
-                                                    boss.installModule(
-                                                        modelData.name
-                                                    )
-                                                else
+                                                if (
+                                                    modelData.installed
+                                                ) {
                                                     boss.uninstallModule(
                                                         modelData.name
                                                     )
+                                                } else {
+                                                    boss.installModule(
+                                                        modelData.name
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -853,8 +872,12 @@ ApplicationWindow {
                                         Label {
                                             text:
                                                 modelData.enabled
-                                                ? "Active"
-                                                : "Not active"
+                                                ? root.t(
+                                                    "modules.active"
+                                                )
+                                                : root.t(
+                                                    "modules.inactive"
+                                                )
 
                                             color:
                                                 modelData.enabled
@@ -868,20 +891,29 @@ ApplicationWindow {
                                             checked:
                                                 !!modelData.enabled
 
+                                            /*
+                                             * Do not break the checked binding.
+                                             * Active changes only after Boss
+                                             * confirms the backend state.
+                                             */
+                                            checkable: false
+
                                             enabled:
                                                 typeof boss
                                                 === "undefined"
                                                 || !boss.busy
 
-                                            onToggled: {
+                                            onClicked: {
                                                 if (
                                                     typeof boss
-                                                    !== "undefined"
+                                                    === "undefined"
                                                 )
-                                                    boss.setModuleEnabled(
-                                                        modelData.name,
-                                                        checked
-                                                    )
+                                                    return
+
+                                                boss.setModuleEnabled(
+                                                    modelData.name,
+                                                    !modelData.enabled
+                                                )
                                             }
                                         }
                                     }
@@ -890,11 +922,28 @@ ApplicationWindow {
                                         spacing: 6
 
                                         Button {
+                                            id: openButton
+
                                             visible:
                                                 !!modelData.installed
                                                 && !!modelData.enabled
                                                 && !modelData.running
                                                 && !modelData.update_available
+
+                                            hoverEnabled: true
+
+                                            scale:
+                                                down
+                                                ? 0.96
+                                                : hovered
+                                                  ? 1.03
+                                                  : 1.0
+
+                                            Behavior on scale {
+                                                NumberAnimation {
+                                                    duration: 80
+                                                }
+                                            }
 
                                             text:
                                                 typeof boss !== "undefined"
@@ -910,15 +959,37 @@ ApplicationWindow {
 
                                             background: Rectangle {
                                                 radius: 7
-                                                color: "#1B1027"
 
-                                                border.width: 2
-                                                border.color: "#C084FC"
+                                                color:
+                                                    openButton.down
+                                                    ? "#32155A"
+                                                    : openButton.hovered
+                                                      ? "#251044"
+                                                      : "#1B1027"
+
+                                                border.width:
+                                                    openButton.hovered
+                                                    || openButton.down
+                                                    ? 3
+                                                    : 2
+
+                                                border.color:
+                                                    openButton.down
+                                                    ? "#22D3EE"
+                                                    : openButton.hovered
+                                                      ? "#D8B4FE"
+                                                      : "#C084FC"
                                             }
 
                                             contentItem: Text {
-                                                text: parent.text
-                                                color: "#E9D5FF"
+                                                text: openButton.text
+
+                                                color:
+                                                    openButton.down
+                                                    ? "#FFFFFF"
+                                                    : openButton.hovered
+                                                      ? "#CFFAFE"
+                                                      : "#E9D5FF"
 
                                                 horizontalAlignment:
                                                     Text.AlignHCenter
@@ -939,9 +1010,26 @@ ApplicationWindow {
                                         }
 
                                         Button {
+                                            id: updateButton
+
                                             visible:
                                                 !!modelData.installed
                                                 && !!modelData.update_available
+
+                                            hoverEnabled: true
+
+                                            scale:
+                                                down
+                                                ? 0.96
+                                                : hovered
+                                                  ? 1.03
+                                                  : 1.0
+
+                                            Behavior on scale {
+                                                NumberAnimation {
+                                                    duration: 80
+                                                }
+                                            }
 
                                             text:
                                                 typeof boss !== "undefined"
@@ -951,24 +1039,43 @@ ApplicationWindow {
                                                 : "Update"
 
                                             enabled:
-                                                (
-                                                    typeof boss
-                                                    === "undefined"
-                                                    || !boss.busy
-                                                )
-                                                && !modelData.running
+                                                typeof boss
+                                                === "undefined"
+                                                || !boss.busy
 
                                             background: Rectangle {
                                                 radius: 7
-                                                color: "#2A0E12"
 
-                                                border.width: 2
-                                                border.color: "#FF3344"
+                                                color:
+                                                    updateButton.down
+                                                    ? "#5A101A"
+                                                    : updateButton.hovered
+                                                      ? "#3A1018"
+                                                      : "#2A0E12"
+
+                                                border.width:
+                                                    updateButton.hovered
+                                                    || updateButton.down
+                                                    ? 3
+                                                    : 2
+
+                                                border.color:
+                                                    updateButton.down
+                                                    ? "#67E8F9"
+                                                    : updateButton.hovered
+                                                      ? "#FF5C6A"
+                                                      : "#FF3344"
                                             }
 
                                             contentItem: Text {
-                                                text: parent.text
-                                                color: "#FFB4BC"
+                                                text: updateButton.text
+
+                                                color:
+                                                    updateButton.down
+                                                    ? "#FFFFFF"
+                                                    : updateButton.hovered
+                                                      ? "#FFE4E6"
+                                                      : "#FFB4BC"
 
                                                 horizontalAlignment:
                                                     Text.AlignHCenter

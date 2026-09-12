@@ -171,12 +171,31 @@ fn modules_command(args: &[String]) -> i32 {
         }
         Some("update") => {
             let Some(name) = args.get(1) else {
-                return fail("modules update requires a module name".to_string());
+                return fail(
+                    "modules update requires a module name"
+                        .to_string()
+                );
             };
-            if let Err(error) = privileges::ensure_root(true) {
+
+            if let Err(error) =
+                privileges::ensure_root(true)
+            {
                 return fail(error);
             }
-            result(modules::update(name))
+
+            const CLOSE_FLAG: &str =
+                "--close-running";
+
+            let close_running =
+                args.iter()
+                    .any(|value| value == CLOSE_FLAG);
+
+            result(
+                modules::update(
+                    name,
+                    close_running
+                )
+            )
         }
         Some("uninstall") => {
             let Some(name) = args.get(1) else {
@@ -292,6 +311,7 @@ fn print_help() {
     println!("  neebles config module-update-notified <module> <version>");
     println!("  neebles modules available|installed");
     println!("  neebles modules install|update|uninstall <module>");
+    println!("  neebles modules update <module> --close-running");
     println!("  neebles modules enable|disable <module>");
     println!("  neebles notify <info|success|warning|critical|fatal> <title> <message>");
     println!("  neebles --request-json '<ExecutionRequest JSON>'");

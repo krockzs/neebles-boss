@@ -15,7 +15,12 @@
 BossController::BossController(QObject *parent)
     : QObject(parent)
 {
-    m_modulePollTimer = new QTimer(this);
+    /*
+     * Runtime state is local and cheap.
+     */
+    m_modulePollTimer =
+        new QTimer(this);
+
     m_modulePollTimer->setInterval(1000);
 
     connect(
@@ -25,8 +30,29 @@ BossController::BossController(QObject *parent)
         &BossController::pollModuleRuntime
     );
 
+    /*
+     * DEMO:
+     * remote module update check every 30 seconds.
+     *
+     * Production contract:
+     * 5 minutes = 300000 ms.
+     */
+    m_updatePollTimer =
+        new QTimer(this);
+
+    m_updatePollTimer->setInterval(300000);
+
+    connect(
+        m_updatePollTimer,
+        &QTimer::timeout,
+        this,
+        &BossController::pollModuleUpdates
+    );
+
     reload();
+
     m_modulePollTimer->start();
+    m_updatePollTimer->start();
 }
 
 
@@ -145,29 +171,259 @@ QString BossController::commandPath() const
     return QStringLiteral("neebles");
 }
 
-QByteArray BossController::run(const QStringList &arguments, bool privileged, int timeoutMs, bool *ok)
+QString BossController::authorizationPath() const
 {
-    QProcess process;
-    process.setProcessChannelMode(QProcess::SeparateChannels);
+    const QString override =
+        qEnvironmentVariable(
+            "NEEBLES_AUTH_AGENT"
+        );
 
-    if (privileged) {
-        QStringList elevated;
-        elevated << commandPath();
-        elevated << arguments;
-        process.start(QStringLiteral("pkexec"), elevated);
-    } else {
-        process.start(commandPath(), arguments);
+    const QStringList candidates = {
+        override,
+
+        QStringLiteral(
+            "/opt/neebles/client/auth/neebles-auth-agent"
+        ),
+
+        QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath(
+            QStringLiteral(
+                "../auth/neebles-auth-agent"
+            )
+        ),
+
+        QDir::current().filePath(
+            QStringLiteral(
+                "ui/auth-agent/build/neebles-auth-agent"
+            )
+        )
+    };
+
+    for (const QString &candidate : candidates) {
+        if (
+            !candidate.isEmpty()
+            && QFileInfo(candidate).isExecutable()
+        ) {
+            return QFileInfo(
+                candidate
+            ).absoluteFilePath();
+        }
     }
 
-    const bool started = process.waitForStarted(5000);
-    const bool finished = started && process.waitForFinished(timeoutMs);
-    const bool success = finished && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    return {};
+}
+
+
+QByteArray BossController::run(
+    const QStringList &arguments,
+    bool privileged,
+    int timeoutMs,
+    bool *ok
+)
+{
+    QProcess process;
+
+    process.setProcessChannelMode(
+        QProcess::SeparateChannels
+    );
+
+    if (privileged) {
+        const QString authAgent =
+            authorizationPath();
+
+        if (authAgent.isEmpty()) {
+            if (ok)
+                *ok = false;
+
+            setStatusText(
+                text(
+                    QStringLiteral(
+                        "auth.agent_missing"
+                    )
+                )
+            );
+
+            return {};
+        }
+
+        QString operation =
+            QStringLiteral("generic");
+
+        QString name;
+        QString fromVersion;
+        QString toVersion;
+
+        bool running = false;
+
+        if (
+            arguments.size() >= 2
+            && arguments.at(0)
+                == QStringLiteral("modules")
+        ) {
+            const QString action =
+                arguments.at(1);
+
+            if (
+                action
+                == QStringLiteral("install")
+            ) {
+                operation =
+                    QStringLiteral(
+                        "install-module"
+                    );
+            } else if (
+                action
+                == QStringLiteral("update")
+            ) {
+                operation =
+                    QStringLiteral(
+                        "update-module"
+                    );
+            } else if (
+                action
+                == QStringLiteral("uninstall")
+            ) {
+                operation =
+                    QStringLiteral(
+                        "uninstall-module"
+                    );
+            }
+
+            if (arguments.size() >= 3)
+                name = arguments.at(2);
+
+            for (
+                const QVariant &item :
+                m_modules
+            ) {
+                const QVariantMap module =
+                    item.toMap();
+
+                if (
+                    module.value(
+                        QStringLiteral("name")
+                    ).toString()
+                    != name
+                )
+                    continue;
+
+                fromVersion =
+                    module.value(
+                        QStringLiteral(
+                            "installed_version"
+                        ),
+                        module.value(
+                            QStringLiteral(
+                                "version"
+                            )
+                        )
+                    ).toString();
+
+                toVersion =
+                    module.value(
+                        QStringLiteral(
+                            "remote_version"
+                        )
+                    ).toString();
+
+                if (toVersion.isEmpty()) {
+                    toVersion =
+                        module.value(
+                            QStringLiteral(
+                                "version"
+                            )
+                        ).toString();
+                }
+
+                running =
+                    module.value(
+                        QStringLiteral(
+                            "running"
+                        ),
+                        false
+                    ).toBool();
+
+                break;
+            }
+        }
+
+        QStringList elevated;
+
+        elevated
+            << QStringLiteral("--locale")
+            << m_language
+
+            << QStringLiteral("--operation")
+            << operation;
+
+        if (!name.isEmpty()) {
+            elevated
+                << QStringLiteral("--name")
+                << name;
+        }
+
+        if (!fromVersion.isEmpty()) {
+            elevated
+                << QStringLiteral("--from")
+                << fromVersion;
+        }
+
+        if (!toVersion.isEmpty()) {
+            elevated
+                << QStringLiteral("--to")
+                << toVersion;
+        }
+
+        elevated
+            << QStringLiteral("--running")
+            << (
+                running
+                ? QStringLiteral("true")
+                : QStringLiteral("false")
+            );
+
+        elevated
+            << QStringLiteral("--")
+            << commandPath();
+
+        elevated << arguments;
+
+        process.start(
+            authAgent,
+            elevated
+        );
+    } else {
+        process.start(
+            commandPath(),
+            arguments
+        );
+    }
+
+    const bool started =
+        process.waitForStarted(5000);
+
+    const bool finished =
+        started
+        && process.waitForFinished(
+            timeoutMs
+        );
+
+    const bool success =
+        finished
+        && process.exitStatus()
+            == QProcess::NormalExit
+        && process.exitCode() == 0;
 
     if (ok)
         *ok = success;
 
     if (!success) {
-        const QString error = QString::fromUtf8(process.readAllStandardError()).trimmed();
+        const QString error =
+            QString::fromUtf8(
+                process.readAllStandardError()
+            ).trimmed();
+
         if (!error.isEmpty())
             setStatusText(error);
     }
@@ -248,8 +504,6 @@ QUrl BossController::flagUrl(const QString &name) const
 
 void BossController::reload()
 {
-    m_autoUpdateFailedVersions.clear();
-
     loadConfig();
     loadLanguages();
     loadTranslations();
@@ -635,15 +889,29 @@ void BossController::pollModuleRuntime()
     applyModuleLifecycle();
 }
 
+void BossController::pollModuleUpdates()
+{
+    if (m_busy)
+        return;
+
+    loadModules();
+}
+
+
 void BossController::applyModuleLifecycle()
 {
-    for (const QVariant &item : m_modules) {
+    for (
+        const QVariant &item :
+        m_modules
+    ) {
         const QVariantMap module =
             item.toMap();
 
         if (
             !module.value(
-                QStringLiteral("installed")
+                QStringLiteral(
+                    "installed"
+                )
             ).toBool()
             || !module.value(
                 QStringLiteral(
@@ -667,219 +935,87 @@ void BossController::applyModuleLifecycle()
 
         const bool running =
             module.value(
-                QStringLiteral("running"),
+                QStringLiteral(
+                    "running"
+                ),
                 false
             ).toBool();
 
         /*
-         * Notify only once for each available
-         * module/version combination.
+         * One notification for each
+         * module + available version.
          */
         if (
-            m_normalNotifications
-            && !remoteVersion.isEmpty()
-            && m_updateNotifications
-                .value(name)
-                .toString()
-                != remoteVersion
-        ) {
-            bool notificationOk = false;
-
-            const QString message =
-                running
-                ? QStringLiteral(
-                    "Hay una actualización para %1. "
-                    "Guarda tu trabajo. "
-                    "La actualización comenzará "
-                    "automáticamente cuando cierres "
-                    "la aplicación."
-                ).arg(name)
-                : QStringLiteral(
-                    "Hay una actualización para %1. "
-                    "Se instalará automáticamente."
-                ).arg(name);
-
-            run(
-                {
-                    QStringLiteral("notify"),
-                    running
-                        ? QStringLiteral("warning")
-                        : QStringLiteral("info"),
-                    QStringLiteral(
-                        "N.E.E.B.L.E.S."
-                    ),
-                    message
-                },
-                false,
-                5000,
-                &notificationOk
-            );
-
-            if (notificationOk) {
-                bool markOk = false;
-
-                run(
-                    {
-                        QStringLiteral("config"),
-                        QStringLiteral(
-                            "module-update-notified"
-                        ),
-                        name,
-                        remoteVersion
-                    },
-                    false,
-                    5000,
-                    &markOk
-                );
-
-                if (markOk) {
-                    m_updateNotifications.insert(
-                        name,
-                        remoteVersion
-                    );
-                }
-            }
-        }
-
-        /*
-         * While running:
-         * - Open is blocked by UI.
-         * - update remains pending.
-         * - Boss waits.
-         *
-         * As soon as running becomes false,
-         * automatic update is scheduled.
-         */
-        if (running)
-            continue;
-
-        /*
-         * Do not loop forever if pkexec/update
-         * was cancelled or failed.
-         *
-         * Global refresh clears this suppression
-         * and allows an explicit retry.
-         */
-        if (
-            m_autoUpdateFailedVersions
+            !m_normalNotifications
+            || remoteVersion.isEmpty()
+            || m_updateNotifications
                 .value(name)
                 .toString()
                 == remoteVersion
         )
             continue;
 
-        scheduleAutomaticUpdate(name);
-    }
-}
+        const QString key =
+            running
+            ? QStringLiteral(
+                "modules.update_notification_running"
+            )
+            : QStringLiteral(
+                "modules.update_notification"
+            );
 
-void BossController::scheduleAutomaticUpdate(
-    const QString &name
-)
-{
-    if (
-        name.isEmpty()
-        || m_autoUpdatesInFlight.contains(name)
-    )
-        return;
+        const QString message =
+            text(key)
+                .arg(
+                    name,
+                    remoteVersion
+                );
 
-    m_autoUpdatesInFlight.insert(name);
+        bool notificationOk = false;
 
-    QTimer::singleShot(
-        0,
-        this,
-        [this, name]() {
-            performAutomaticUpdate(name);
-        }
-    );
-}
+        run(
+            {
+                QStringLiteral("notify"),
+                running
+                    ? QStringLiteral("warning")
+                    : QStringLiteral("info"),
+                QStringLiteral(
+                    "N.E.E.B.L.E.S."
+                ),
+                message
+            },
+            false,
+            5000,
+            &notificationOk
+        );
 
-void BossController::performAutomaticUpdate(
-    const QString &name
-)
-{
-    QString remoteVersion;
+        if (!notificationOk)
+            continue;
 
-    for (const QVariant &item : m_modules) {
-        const QVariantMap module =
-            item.toMap();
+        bool markOk = false;
 
-        if (
-            module.value(
-                QStringLiteral("name")
-            ).toString()
-            == name
-        ) {
-            remoteVersion =
-                module.value(
-                    QStringLiteral(
-                        "remote_version"
-                    )
-                ).toString();
+        run(
+            {
+                QStringLiteral("config"),
+                QStringLiteral(
+                    "module-update-notified"
+                ),
+                name,
+                remoteVersion
+            },
+            false,
+            5000,
+            &markOk
+        );
 
-            if (
-                module.value(
-                    QStringLiteral("running"),
-                    false
-                ).toBool()
-            ) {
-                m_autoUpdatesInFlight
-                    .remove(name);
-                return;
-            }
-
-            break;
-        }
-    }
-
-    setBusy(true);
-
-    bool ok = false;
-
-    run(
-        {
-            QStringLiteral("modules"),
-            QStringLiteral("update"),
-            name
-        },
-        true,
-        600000,
-        &ok
-    );
-
-    m_autoUpdatesInFlight.remove(name);
-
-    if (!ok) {
-        if (!remoteVersion.isEmpty()) {
-            m_autoUpdateFailedVersions.insert(
+        if (markOk) {
+            m_updateNotifications.insert(
                 name,
                 remoteVersion
             );
         }
-
-        setStatusText(
-            QStringLiteral(
-                "Update failed: %1"
-            ).arg(name)
-        );
-
-        setBusy(false);
-        return;
     }
-
-    setStatusText(
-        QStringLiteral("OK")
-    );
-
-    setBusy(false);
-
-    /*
-     * Re-read local manifest and remote registry.
-     * If versions match, update_available disappears
-     * and Open becomes available again.
-     */
-    loadModules();
 }
-
 void BossController::saveConfig(const QString &language,
                                 bool trayEnabled,
                                 bool launcherEnabled,
@@ -1006,12 +1142,19 @@ void BossController::saveConfig(const QString &language,
     setBusy(false);
 }
 
-void BossController::runModuleOperation(const QString &operation, const QString &name, bool privileged)
+void BossController::runModuleOperation(
+    const QString &operation,
+    const QString &name,
+    bool privileged
+)
 {
     if (name.isEmpty())
         return;
+
     setBusy(true);
+
     bool ok = false;
+
     run(
         {
             QStringLiteral("modules"),
@@ -1023,46 +1166,6 @@ void BossController::runModuleOperation(const QString &operation, const QString 
         &ok
     );
 
-    if (
-        operation == QStringLiteral("update")
-        && !ok
-    ) {
-        for (const QVariant &item : m_modules) {
-            const QVariantMap module =
-                item.toMap();
-
-            if (
-                module.value(
-                    QStringLiteral("name")
-                ).toString()
-                == name
-            ) {
-                const QString version =
-                    module.value(
-                        QStringLiteral(
-                            "remote_version"
-                        )
-                    ).toString();
-
-                if (!version.isEmpty()) {
-                    m_autoUpdateFailedVersions
-                        .insert(
-                            name,
-                            version
-                        );
-                }
-
-                break;
-            }
-        }
-    } else if (
-        operation
-        == QStringLiteral("update")
-    ) {
-        m_autoUpdateFailedVersions
-            .remove(name);
-    }
-
     setStatusText(
         ok
         ? QStringLiteral("OK")
@@ -1070,9 +1173,9 @@ void BossController::runModuleOperation(const QString &operation, const QString 
     );
 
     loadModules();
+
     setBusy(false);
 }
-
 void BossController::installModule(
     const QString &name
 )
@@ -1127,15 +1230,41 @@ void BossController::updateModule(
     const QString &name
 )
 {
-    m_autoUpdateFailedVersions.remove(name);
+    if (name.isEmpty())
+        return;
 
-    runModuleOperation(
-        QStringLiteral("update"),
-        name,
-        true
+    setBusy(true);
+
+    bool ok = false;
+
+    run(
+        {
+            QStringLiteral("modules"),
+            QStringLiteral("update"),
+            name,
+            QStringLiteral(
+                "--close-running"
+            )
+        },
+        true,
+        600000,
+        &ok
     );
-}
 
+    setStatusText(
+        ok
+        ? QStringLiteral("OK")
+        : text(
+            QStringLiteral(
+                "modules.update_failed"
+            )
+        ).arg(name)
+    );
+
+    loadModules();
+
+    setBusy(false);
+}
 void BossController::uninstallModule(const QString &name)
 {
     runModuleOperation(QStringLiteral("uninstall"), name, true);

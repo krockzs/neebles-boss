@@ -3,3 +3,5 @@
 /ui/installer/build/
 /client/tray/build/
 /dist/
+
+ui/auth-agent/build/

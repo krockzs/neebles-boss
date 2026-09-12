@@ -7,6 +7,7 @@ BIN_DIR="$CLIENT_ROOT/bin"
 BACKEND_DIR="$CLIENT_ROOT/backend"
 UI_DIR="$CLIENT_ROOT/ui"
 TRAY_DIR="$CLIENT_ROOT/tray"
+AUTH_DIR="$CLIENT_ROOT/auth"
 LAUNCHER_DIR="$CLIENT_ROOT/launcher"
 SPACER_DIR="$CLIENT_ROOT/spacer"
 NOTIFICATIONS_DIR="$CLIENT_ROOT/notifications"
@@ -33,6 +34,7 @@ BACKEND_SOURCE="$1"
 UI_SOURCE="$2"
 TRAY_SOURCE="$3"
 CLIENT_DATA_ARCHIVE="$4"
+AUTH_AGENT_SOURCE="${5:-}"
 CLIENT_DATA_SOURCE=""
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_CLIENT_DIR="$(cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd)/client"
@@ -86,7 +88,7 @@ progress 25
 status "Creating N.E.E.B.L.E.S. directory structure..."
 install -d "$BIN_DIR" "$BACKEND_DIR" "$UI_DIR" "$TRAY_DIR" "$LAUNCHER_DIR" "$SPACER_DIR" \
     "$NOTIFICATIONS_DIR" "$ASSETS_DIR" "$LANGUAGES_DIR" "$CONFIG_DIR" \
-    "$MODULES_DIR" "$SHARED_DIR"
+    "$AUTH_DIR" "$MODULES_DIR" "$SHARED_DIR"
 
 progress 38
 status "Installing N.E.E.B.L.E.S. backend..."
@@ -95,6 +97,17 @@ install -m 0755 "$BACKEND_SOURCE" "$BACKEND_DIR/neebles-backend"
 progress 50
 status "Installing N.E.E.B.L.E.S. UI..."
 install -m 0755 "$UI_SOURCE" "$UI_DIR/neebles-ui"
+
+if [[ -n "$AUTH_AGENT_SOURCE" ]]; then
+    status "Installing N.E.E.B.L.E.S. authorization agent..."
+
+    [[ -x "$AUTH_AGENT_SOURCE" ]] || {
+        echo "Authorization agent not found or not executable: $AUTH_AGENT_SOURCE" >&2
+        exit 1
+    }
+
+    install -m 0755         "$AUTH_AGENT_SOURCE"         "$AUTH_DIR/neebles-auth-agent"
+fi
 
 if [[ -n "$TRAY_SOURCE" ]]; then
     progress 58

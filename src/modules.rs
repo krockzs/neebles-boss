@@ -552,11 +552,42 @@ pub fn uninstall(name: &str) -> Result<(), String> {
         })
 }
 
-pub fn update(name: &str) -> Result<(), String> {
+pub fn update(
+    name: &str,
+    close_running: bool,
+) -> Result<(), String> {
     if module_running(name) {
-        return Err(format!(
-            "module '{name}' is currently running"
-        ));
+        if !close_running {
+            return Err(format!(
+                "module '{name}' is currently running"
+            ));
+        }
+
+        /*
+         * Authorization has already been granted before
+         * this privileged backend process starts.
+         *
+         * Only now may Boss close the running application.
+         */
+        stop_module(name)?;
+
+        let deadline =
+            std::time::Instant::now()
+            + std::time::Duration::from_secs(15);
+
+        while module_running(name)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(
+                std::time::Duration::from_millis(200)
+            );
+        }
+
+        if module_running(name) {
+            return Err(format!(
+                "module '{name}' did not close in time"
+            ));
+        }
     }
 
     let path = find_module_dir(name)?;

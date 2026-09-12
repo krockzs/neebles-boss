@@ -1,7 +1,9 @@
 #include "installercontroller.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
+#include <QLocale>
 #include <QRegularExpression>
 
 InstallerController::InstallerController(const QStringList &arguments, QObject *parent)
@@ -24,6 +26,58 @@ InstallerController::InstallerController(const QStringList &arguments, QObject *
     connect(&m_process, &QProcess::errorOccurred,
             this, &InstallerController::processError);
 }
+
+QString InstallerController::authorizationPath() const
+{
+    const QString override =
+        qEnvironmentVariable(
+            "NEEBLES_AUTH_AGENT"
+        );
+
+    const QStringList candidates = {
+        override,
+
+        QStringLiteral(
+            "/opt/neebles/client/auth/neebles-auth-agent"
+        ),
+
+        QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath(
+            QStringLiteral(
+                "neebles-auth-agent"
+            )
+        ),
+
+        QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath(
+            QStringLiteral(
+                "../auth/neebles-auth-agent"
+            )
+        ),
+
+        QDir::current().filePath(
+            QStringLiteral(
+                "ui/auth-agent/build/neebles-auth-agent"
+            )
+        )
+    };
+
+    for (const QString &candidate : candidates) {
+        if (
+            !candidate.isEmpty()
+            && QFileInfo(candidate).isExecutable()
+        ) {
+            return QFileInfo(
+                candidate
+            ).absoluteFilePath();
+        }
+    }
+
+    return {};
+}
+
 
 void InstallerController::startInstallation()
 {
@@ -65,15 +119,65 @@ void InstallerController::startInstallation()
     setProgress(2);
     appendLog(QStringLiteral("Requesting administrator privileges through Polkit..."));
 
-    const QStringList args {
+    const QString authAgent =
+        authorizationPath();
+
+    if (authAgent.isEmpty()) {
+        setStatus(
+            QStringLiteral(
+                "N.E.E.B.L.E.S. authorization agent was not found."
+            )
+        );
+
+        appendLog(
+            QStringLiteral(
+                "ERROR: N.E.E.B.L.E.S. authorization agent was not found."
+            )
+        );
+
+        m_running = false;
+        m_finished = true;
+        m_success = false;
+
+        emit runningChanged();
+        emit finishedChanged();
+
+        return;
+    }
+
+    QStringList args {
+        QStringLiteral("--locale"),
+        QLocale::system().name(),
+
+        QStringLiteral("--operation"),
+        QStringLiteral("install-boss"),
+
+        QStringLiteral("--name"),
+        QStringLiteral("N.E.E.B.L.E.S. Boss"),
+
+        QStringLiteral("--running"),
+        QStringLiteral("false"),
+
+        QStringLiteral("--"),
+
         m_installScript,
         m_backendBinary,
         m_uiBinary,
         m_trayBinary,
-        m_clientDataArchive
+        m_clientDataArchive,
+
+        /*
+         * install.sh receives the auth agent as
+         * optional fifth payload and installs it
+         * permanently with Boss.
+         */
+        authAgent
     };
 
-    m_process.start(QStringLiteral("pkexec"), args);
+    m_process.start(
+        authAgent,
+        args
+    );
 }
 
 void InstallerController::readOutput()

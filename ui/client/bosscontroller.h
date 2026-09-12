@@ -58,6 +58,7 @@ signals:
 
 private:
     QString commandPath() const;
+    QString authorizationPath() const;
     QByteArray run(const QStringList &arguments, bool privileged, int timeoutMs, bool *ok = nullptr);
     QVariant parseJson(const QByteArray &data) const;
     void loadConfig();
@@ -65,9 +66,8 @@ private:
     void loadTranslations();
     void loadModules();
     void pollModuleRuntime();
+    void pollModuleUpdates();
     void applyModuleLifecycle();
-    void scheduleAutomaticUpdate(const QString &name);
-    void performAutomaticUpdate(const QString &name);
     void runModuleOperation(const QString &operation, const QString &name, bool privileged);
     void setBusy(bool value);
     void setStatusText(const QString &value);
@@ -80,9 +80,8 @@ private:
     QVariantList m_modules;
     QVariantMap m_strings;
     QVariantMap m_updateNotifications;
-    QVariantMap m_autoUpdateFailedVersions;
-    QSet<QString> m_autoUpdatesInFlight;
     QTimer *m_modulePollTimer = nullptr;
+    QTimer *m_updatePollTimer = nullptr;
     int m_translationsRevision = 0;
     bool m_busy = false;
     QString m_statusText;
