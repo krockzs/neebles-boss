@@ -16,6 +16,109 @@ BossController::BossController(QObject *parent)
     reload();
 }
 
+
+static bool applyLauncherPanelState(bool enabled)
+{
+    QString qdbus;
+
+    if (QFileInfo::exists(QStringLiteral("/usr/bin/qdbus6")))
+        qdbus = QStringLiteral("/usr/bin/qdbus6");
+    else if (QFileInfo::exists(QStringLiteral("/usr/bin/qdbus")))
+        qdbus = QStringLiteral("/usr/bin/qdbus");
+    else
+        return false;
+
+    QString script = QStringLiteral(R"JS(
+var enabled = %1;
+var ps = panels();
+
+/*
+ * Always remove current N.E.E.B.L.E.S. panel instances first.
+ */
+for (var p = 0; p < ps.length; ++p) {
+    var ws = ps[p].widgets();
+
+    for (var i = ws.length - 1; i >= 0; --i) {
+        if (
+            ws[i].type == "org.neebles.launcher"
+            || ws[i].type == "org.neebles.spacer"
+        ) {
+            ws[i].remove();
+        }
+    }
+}
+
+if (enabled) {
+    var targetPanel = null;
+    var kickoffX = 0;
+    var kickoffWidth = 0;
+
+    for (var p = 0; p < ps.length; ++p) {
+        var ws = ps[p].widgets();
+
+        for (var i = 0; i < ws.length; ++i) {
+            if (
+                ws[i].type == "org.kde.plasma.kickoff"
+                || ws[i].type == "org.kde.plasma.kicker"
+            ) {
+                targetPanel = ps[p];
+                kickoffX = ws[i].geometry.x;
+                kickoffWidth = ws[i].geometry.width;
+                break;
+            }
+        }
+
+        if (targetPanel)
+            break;
+    }
+
+    if (targetPanel) {
+        var launcherX = kickoffX + kickoffWidth + 4;
+
+        targetPanel.addWidget(
+            "org.neebles.launcher",
+            launcherX,
+            16,
+            38,
+            38
+        );
+
+        targetPanel.addWidget(
+            "org.neebles.spacer",
+            launcherX + 38,
+            16,
+            20,
+            38
+        );
+    }
+}
+)JS").arg(enabled ? QStringLiteral("true")
+                  : QStringLiteral("false"));
+
+    QProcess process;
+
+    process.start(
+        qdbus,
+        {
+            QStringLiteral("org.kde.plasmashell"),
+            QStringLiteral("/PlasmaShell"),
+            QStringLiteral(
+                "org.kde.PlasmaShell.evaluateScript"
+            ),
+            script
+        }
+    );
+
+    if (!process.waitForStarted(3000))
+        return false;
+
+    if (!process.waitForFinished(10000))
+        return false;
+
+    return process.exitStatus() == QProcess::NormalExit
+        && process.exitCode() == 0;
+}
+
 QString BossController::commandPath() const
 {
     const QString override = qEnvironmentVariable("NEEBLES_COMMAND");
@@ -214,23 +317,124 @@ void BossController::saveConfig(const QString &language,
                                 bool launcherEnabled,
                                 bool normalNotifications)
 {
+    const bool trayWasEnabled = m_trayEnabled;
+    const bool launcherWasEnabled = m_launcherEnabled;
+    const bool notificationsWereEnabled = m_normalNotifications;
+
     setBusy(true);
+
     bool ok = true;
     bool current = false;
 
-    run({QStringLiteral("config"), QStringLiteral("set"), QStringLiteral("language"), language}, false, 5000, &current);
-    ok = ok && current;
-    run({QStringLiteral("config"), QStringLiteral("set"), QStringLiteral("tray_enabled"), trayEnabled ? QStringLiteral("true") : QStringLiteral("false")}, false, 5000, &current);
-    ok = ok && current;
-    run({QStringLiteral("config"), QStringLiteral("set"), QStringLiteral("launcher_enabled"), launcherEnabled ? QStringLiteral("true") : QStringLiteral("false")}, false, 5000, &current);
-    ok = ok && current;
-    run({QStringLiteral("config"), QStringLiteral("set"), QStringLiteral("normal_notifications"), normalNotifications ? QStringLiteral("true") : QStringLiteral("false")}, false, 5000, &current);
+    run({
+        QStringLiteral("config"),
+        QStringLiteral("set"),
+        QStringLiteral("language"),
+        language
+    }, false, 5000, &current);
     ok = ok && current;
 
-    if (ok) {
-        setStatusText(QStringLiteral("OK"));
-        reload();
+    run({
+        QStringLiteral("config"),
+        QStringLiteral("set"),
+        QStringLiteral("tray_enabled"),
+        trayEnabled
+            ? QStringLiteral("true")
+            : QStringLiteral("false")
+    }, false, 5000, &current);
+    ok = ok && current;
+
+    run({
+        QStringLiteral("config"),
+        QStringLiteral("set"),
+        QStringLiteral("launcher_enabled"),
+        launcherEnabled
+            ? QStringLiteral("true")
+            : QStringLiteral("false")
+    }, false, 5000, &current);
+    ok = ok && current;
+
+    /*
+     * OFF: notify before disabling normal notifications.
+     */
+    if (!normalNotifications && notificationsWereEnabled) {
+        bool notificationOk = false;
+
+        run({
+            QStringLiteral("notify"),
+            QStringLiteral("info"),
+            QStringLiteral("N.E.E.B.L.E.S."),
+            QStringLiteral("Notificaciones desactivadas")
+        }, false, 5000, &notificationOk);
     }
+
+    run({
+        QStringLiteral("config"),
+        QStringLiteral("set"),
+        QStringLiteral("normal_notifications"),
+        normalNotifications
+            ? QStringLiteral("true")
+            : QStringLiteral("false")
+    }, false, 5000, &current);
+    ok = ok && current;
+
+    /*
+     * ON: enable first, then notify.
+     */
+    if (
+        ok
+        && normalNotifications
+        && !notificationsWereEnabled
+    ) {
+        bool notificationOk = false;
+
+        run({
+            QStringLiteral("notify"),
+            QStringLiteral("success"),
+            QStringLiteral("N.E.E.B.L.E.S."),
+            QStringLiteral("Notificaciones activadas")
+        }, false, 5000, &notificationOk);
+    }
+
+    if (ok) {
+        /*
+         * Tray OFF is handled by the tray process itself when it
+         * observes tray_enabled=false.
+         *
+         * On the OFF -> ON transition, Boss starts it again.
+         */
+        if (trayEnabled && !trayWasEnabled) {
+            const QString trayPath =
+                QStringLiteral(
+                    "/opt/neebles/client/tray/neebles-tray"
+                );
+
+            if (QFileInfo::exists(trayPath))
+                QProcess::startDetached(trayPath, {});
+        }
+
+        /*
+         * Launcher is a real Plasma panel integration:
+         * OFF removes launcher + spacer.
+         * ON recreates both beside Kickoff.
+         */
+        if (launcherEnabled != launcherWasEnabled) {
+            if (!applyLauncherPanelState(launcherEnabled))
+                setStatusText(
+                    QStringLiteral(
+                        "Could not update Plasma launcher state"
+                    )
+                );
+        }
+
+        reload();
+
+        if (statusText().isEmpty()
+            || statusText() == QStringLiteral("OK")) {
+            setStatusText(QStringLiteral("OK"));
+        }
+    }
+
     setBusy(false);
 }
 

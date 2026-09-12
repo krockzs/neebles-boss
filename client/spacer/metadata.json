@@ -1,0 +1,11 @@
+{
+    "KPlugin": {
+        "Id": "org.neebles.spacer",
+        "Name": "N.E.E.B.L.E.S. Spacer",
+        "Description": "Horizontal panel spacing for N.E.E.B.L.E.S.",
+        "Version": "1.0.0",
+        "License": "MIT"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

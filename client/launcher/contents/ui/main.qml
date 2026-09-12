@@ -11,6 +11,7 @@ PlasmoidItem {
     property var modules: []
     property var strings: ({})
     property var callbacks: ({})
+    property bool bossRunning: false
 
     function safeModuleId(value) {
         return /^[A-Za-z0-9._-]+$/.test(value)
@@ -21,7 +22,7 @@ PlasmoidItem {
         runner.connectSource(command)
     }
 
-    function refresh() {
+    function refreshRuntimeState() {
         exec("neebles config show", function(output) {
             try {
                 const cfg = JSON.parse(output)
@@ -30,11 +31,20 @@ PlasmoidItem {
                 launcherEnabled = true
             }
         })
+
+    }
+
+    function refresh() {
+        refreshRuntimeState()
+
         exec("neebles i18n dump", function(output) {
             try { strings = JSON.parse(output) } catch (e) { strings = ({}) }
         })
         exec("neebles modules installed", function(output) {
             try { modules = JSON.parse(output) } catch (e) { modules = [] }
+        })
+        exec("qdbus6 org.freedesktop.DBus / org.freedesktop.DBus.NameHasOwner org.neebles.Boss", function(output) {
+            bossRunning = output.trim() === "true"
         })
     }
 
@@ -48,6 +58,13 @@ PlasmoidItem {
     }
 
     Component.onCompleted: refresh()
+
+    Timer {
+        interval: 1500
+        running: true
+        repeat: true
+        onTriggered: root.refreshRuntimeState()
+    }
 
     Plasma5Support.DataSource {
         id: runner
@@ -65,17 +82,17 @@ PlasmoidItem {
     preferredRepresentation: compactRepresentation
 
     compactRepresentation: Item {
-        implicitWidth: 36
-        implicitHeight: 36
+        implicitWidth: root.launcherEnabled ? 38 : 0
+        implicitHeight: 38
         visible: root.launcherEnabled
 
         Image {
             anchors.fill: parent
-            anchors.margins: 4
             source: "../images/neebles-boss-launcher-icon.png"
             fillMode: Image.PreserveAspectFit
             smooth: true
         }
+
 
         MouseArea {
             anchors.fill: parent
@@ -143,6 +160,7 @@ PlasmoidItem {
             PlasmaComponents3.Button {
                 Layout.fillWidth: true
                 text: root.t("launcher.open_boss", "Open Boss")
+                enabled: !root.bossRunning
                 onClicked: root.exec("neebles start", function() {})
             }
         }

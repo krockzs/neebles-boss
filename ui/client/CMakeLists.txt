@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Quick QuickControls2)
+find_package(Qt6 REQUIRED COMPONENTS Core DBus Quick QuickControls2)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -25,6 +25,7 @@ qt_add_qml_module(neebles-ui
 target_link_libraries(neebles-ui
     PRIVATE
         Qt6::Core
+        Qt6::DBus
         Qt6::Quick
         Qt6::QuickControls2
 )

@@ -2,6 +2,8 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDir>
+#include <QDBusConnection>
+#include <QDBusConnectionInterface>
 #include <QFileInfo>
 #include <QIcon>
 #include <QJsonArray>
@@ -12,6 +14,22 @@
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QVariantMap>
+
+static bool bossIsRunning()
+{
+    auto *interface =
+        QDBusConnection::sessionBus().interface();
+
+    if (!interface)
+        return false;
+
+    const auto reply =
+        interface->isServiceRegistered(
+            QStringLiteral("org.neebles.Boss")
+        );
+
+    return reply.isValid() && reply.value();
+}
 
 static QString neeblesCommand()
 {
@@ -107,10 +125,28 @@ int main(int argc, char *argv[])
         menu.clear();
         const QJsonObject text = strings();
 
-        QAction *bossAction = menu.addAction(trKey(text, QStringLiteral("tray.open_boss"), QStringLiteral("Open N.E.E.B.L.E.S. Boss")));
-        QObject::connect(bossAction, &QAction::triggered, []() {
-            QProcess::startDetached(neeblesCommand(), {QStringLiteral("start")});
-        });
+        QAction *bossAction = menu.addAction(
+            trKey(
+                text,
+                QStringLiteral("tray.open_boss"),
+                QStringLiteral("Open N.E.E.B.L.E.S. Boss")
+            )
+        );
+
+        bossAction->setEnabled(
+            !bossIsRunning()
+        );
+
+        QObject::connect(
+            bossAction,
+            &QAction::triggered,
+            []() {
+                QProcess::startDetached(
+                    neeblesCommand(),
+                    {QStringLiteral("start")}
+                );
+            }
+        );
         menu.addSeparator();
 
         const QJsonArray modules = QJsonDocument::fromJson(
@@ -154,10 +190,13 @@ int main(int argc, char *argv[])
     visibilityTimer.setInterval(2000);
     QObject::connect(&visibilityTimer, &QTimer::timeout, [&]() {
         const bool enabled = config().value(QStringLiteral("tray_enabled")).toBool(true);
-        if (enabled && !tray.isVisible())
+        if (!enabled) {
+            app.quit();
+            return;
+        }
+
+        if (!tray.isVisible())
             tray.show();
-        else if (!enabled && tray.isVisible())
-            tray.hide();
     });
     visibilityTimer.start();
 

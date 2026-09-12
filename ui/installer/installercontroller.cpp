@@ -235,43 +235,73 @@ void InstallerController::installLauncherIntoPanel()
 
     const QString script =
         QStringLiteral(R"JS(
-var found = false;
 var ps = panels();
 
-for (var i = 0; i < ps.length; ++i) {
-    var ws = ps[i].widgets();
+/*
+ * Remove stale N.E.E.B.L.E.S. panel instances first.
+ * This also normalizes upgrades from older layouts.
+ */
+for (var p = 0; p < ps.length; ++p) {
+    var oldWidgets = ps[p].widgets();
 
-    for (var j = 0; j < ws.length; ++j) {
-        if (ws[j].type == "org.neebles.launcher") {
-            found = true;
+    for (var i = oldWidgets.length - 1; i >= 0; --i) {
+        if (
+            oldWidgets[i].type == "org.neebles.launcher"
+            || oldWidgets[i].type == "org.neebles.spacer"
+        ) {
+            oldWidgets[i].remove();
+        }
+    }
+}
+
+/*
+ * Find the panel that owns the application launcher.
+ */
+var targetPanel = null;
+var kickoffX = 0;
+var kickoffWidth = 0;
+
+for (var p = 0; p < ps.length; ++p) {
+    var widgets = ps[p].widgets();
+
+    for (var i = 0; i < widgets.length; ++i) {
+        if (
+            widgets[i].type == "org.kde.plasma.kickoff"
+            || widgets[i].type == "org.kde.plasma.kicker"
+        ) {
+            targetPanel = ps[p];
+            kickoffX = widgets[i].geometry.x;
+            kickoffWidth = widgets[i].geometry.width;
             break;
         }
     }
 
-    if (found)
+    if (targetPanel)
         break;
 }
 
-if (!found && ps.length > 0) {
-    var targetPanel = ps[0];
-
-    for (var p = 0; p < ps.length; ++p) {
-        var widgets = ps[p].widgets();
-
-        for (var w = 0; w < widgets.length; ++w) {
-            if (
-                widgets[w].type == "org.kde.plasma.kickoff"
-                || widgets[w].type == "org.kde.plasma.kicker"
-            ) {
-                targetPanel = ps[p];
-                p = ps.length;
-                break;
-            }
-        }
-    }
+if (targetPanel) {
+    /*
+     * Physical positioning is intentional:
+     *
+     * [ Kickoff ][ N.E.E.B.L.E.S. ][ 20 px spacer ][ rest ]
+     */
+    var launcherX = kickoffX + kickoffWidth + 4;
 
     targetPanel.addWidget(
-        "org.neebles.launcher"
+        "org.neebles.launcher",
+        launcherX,
+        16,
+        38,
+        38
+    );
+
+    targetPanel.addWidget(
+        "org.neebles.spacer",
+        launcherX + 38,
+        16,
+        20,
+        38
     );
 }
 )JS");

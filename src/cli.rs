@@ -5,7 +5,7 @@ use crate::modules;
 use crate::notifications::{self, Severity};
 use crate::privileges;
 use crate::request::{ExecutionContext, ExecutionRequest};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 pub fn run(args: Vec<String>) -> i32 {
     if args.is_empty() {

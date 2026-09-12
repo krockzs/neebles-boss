@@ -8,6 +8,7 @@ BACKEND_DIR="$CLIENT_ROOT/backend"
 UI_DIR="$CLIENT_ROOT/ui"
 TRAY_DIR="$CLIENT_ROOT/tray"
 LAUNCHER_DIR="$CLIENT_ROOT/launcher"
+SPACER_DIR="$CLIENT_ROOT/spacer"
 NOTIFICATIONS_DIR="$CLIENT_ROOT/notifications"
 ASSETS_DIR="$CLIENT_ROOT/assets"
 LANGUAGES_DIR="$CLIENT_ROOT/languages"
@@ -83,7 +84,7 @@ fi
 
 progress 25
 status "Creating N.E.E.B.L.E.S. directory structure..."
-install -d "$BIN_DIR" "$BACKEND_DIR" "$UI_DIR" "$TRAY_DIR" "$LAUNCHER_DIR" \
+install -d "$BIN_DIR" "$BACKEND_DIR" "$UI_DIR" "$TRAY_DIR" "$LAUNCHER_DIR" "$SPACER_DIR" \
     "$NOTIFICATIONS_DIR" "$ASSETS_DIR" "$LANGUAGES_DIR" "$CONFIG_DIR" \
     "$MODULES_DIR" "$SHARED_DIR"
 
@@ -111,6 +112,10 @@ if [[ -n "$CLIENT_DATA_SOURCE" && -d "$CLIENT_DATA_SOURCE" ]]; then
     if [[ -d "$CLIENT_DATA_SOURCE/launcher" ]]; then
         rm -rf "$LAUNCHER_DIR"
         cp -a "$CLIENT_DATA_SOURCE/launcher" "$LAUNCHER_DIR"
+    fi
+    if [[ -d "$CLIENT_DATA_SOURCE/spacer" ]]; then
+        rm -rf "$SPACER_DIR"
+        cp -a "$CLIENT_DATA_SOURCE/spacer" "$SPACER_DIR"
     fi
 fi
 
@@ -145,6 +150,13 @@ if [[ -f "$LAUNCHER_DIR/metadata.json" && -d "$LAUNCHER_DIR/contents" ]]; then
     status "Installing N.E.E.B.L.E.S. Plasma launcher package..."
     install -d /usr/share/plasma/plasmoids/org.neebles.launcher
     cp -a "$LAUNCHER_DIR/." /usr/share/plasma/plasmoids/org.neebles.launcher/
+fi
+
+if [[ -f "$SPACER_DIR/metadata.json" && -d "$SPACER_DIR/contents" ]]; then
+    status "Installing N.E.E.B.L.E.S. Plasma spacer package..."
+    rm -rf /usr/share/plasma/plasmoids/org.neebles.spacer
+    install -d /usr/share/plasma/plasmoids/org.neebles.spacer
+    cp -a "$SPACER_DIR/." /usr/share/plasma/plasmoids/org.neebles.spacer/
 fi
 
 progress 94
