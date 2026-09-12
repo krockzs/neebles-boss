@@ -24,7 +24,7 @@
       "path": "/opt/neebles/client/backend/neebles-backend",
       "required": true,
       "mode": "0755",
-      "sha256": "2ee14c10000f5beba69034c8823741d0b6bd00475f0c17bce3f0698925971e8d",
+      "sha256": "ef4c8c0668dfdafc651fa017156d550c28bd4d0456451a09808d500f51c13c67",
       "restore": {
         "source": "bootstrap",
         "asset": "backend"
@@ -43,7 +43,7 @@
       "path": "/opt/neebles/client/ui/neebles-ui",
       "required": true,
       "mode": "0755",
-      "sha256": "941948d86ccbc341b73b5722f0461dab849f3416df895afa0900f03c7ca57042",
+      "sha256": "af2c598dc8839b67d96528c2f14ac8f8d3a24375da358a685fc0e0a14e081033",
       "restore": {
         "source": "bootstrap",
         "asset": "ui"
