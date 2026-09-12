@@ -16,6 +16,7 @@ class BossController final : public QObject
     Q_PROPERTY(QVariantList modules READ modules NOTIFY modulesChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
+    Q_PROPERTY(int translationsRevision READ translationsRevision NOTIFY translationsChanged)
 
 public:
     explicit BossController(QObject *parent = nullptr);
@@ -28,9 +29,11 @@ public:
     QVariantList modules() const { return m_modules; }
     bool busy() const { return m_busy; }
     QString statusText() const { return m_statusText; }
+    int translationsRevision() const { return m_translationsRevision; }
 
     Q_INVOKABLE QString text(const QString &key) const;
     Q_INVOKABLE QUrl assetUrl(const QString &name) const;
+    Q_INVOKABLE QUrl flagUrl(const QString &name) const;
     Q_INVOKABLE void reload();
     Q_INVOKABLE void saveConfig(const QString &language,
                                 bool trayEnabled,
@@ -69,6 +72,7 @@ private:
     QVariantList m_languages;
     QVariantList m_modules;
     QVariantMap m_strings;
+    int m_translationsRevision = 0;
     bool m_busy = false;
     QString m_statusText;
 };

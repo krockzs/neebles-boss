@@ -1,5 +1,7 @@
 #include <QAction>
 #include <QApplication>
+#include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QIcon>
 #include <QJsonArray>
@@ -54,8 +56,48 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("N.E.E.B.L.E.S. Tray"));
 
     QSystemTrayIcon tray;
-    const QString iconPath = QStringLiteral("/opt/neebles/client/assets/branding/neebles-boss-launcher-icon.png");
-    tray.setIcon(QFileInfo::exists(iconPath) ? QIcon(iconPath) : QIcon::fromTheme(QStringLiteral("applications-system")));
+
+    const QString clientRoot =
+        qEnvironmentVariable("NEEBLES_CLIENT_ROOT");
+
+    const QStringList iconCandidates = {
+        clientRoot.isEmpty()
+            ? QString()
+            : clientRoot
+                + QStringLiteral(
+                    "/assets/branding/neebles-boss-launcher-icon.png"
+                ),
+
+        QCoreApplication::applicationDirPath()
+            + QStringLiteral(
+                "/../../assets/branding/neebles-boss-launcher-icon.png"
+            ),
+
+        QDir::currentPath()
+            + QStringLiteral(
+                "/client/assets/branding/neebles-boss-launcher-icon.png"
+            ),
+
+        QStringLiteral(
+            "/opt/neebles/client/assets/branding/neebles-boss-launcher-icon.png"
+        )
+    };
+
+    QIcon trayIcon;
+
+    for (const QString &path : iconCandidates) {
+        if (!path.isEmpty() && QFileInfo::exists(path)) {
+            trayIcon = QIcon(path);
+            break;
+        }
+    }
+
+    if (trayIcon.isNull())
+        trayIcon = QIcon::fromTheme(
+            QStringLiteral("applications-system")
+        );
+
+    tray.setIcon(trayIcon);
     tray.setToolTip(QStringLiteral("N.E.E.B.L.E.S."));
 
     QMenu menu;

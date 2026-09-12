@@ -62,15 +62,23 @@ PlasmoidItem {
         }
     }
 
+    preferredRepresentation: compactRepresentation
+
     compactRepresentation: Item {
-        implicitWidth: root.launcherEnabled ? 36 : 0
+        implicitWidth: 36
         implicitHeight: 36
         visible: root.launcherEnabled
 
-        PlasmaComponents3.ToolButton {
+        Image {
             anchors.fill: parent
-            icon.name: "neebles-boss-launcher-icon"
-            text: "N.E.E.B.L.E.S."
+            anchors.margins: 4
+            source: "../images/neebles-boss-launcher-icon.png"
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+        }
+
+        MouseArea {
+            anchors.fill: parent
             onClicked: root.expanded = !root.expanded
         }
     }

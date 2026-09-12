@@ -14,7 +14,7 @@ ApplicationWindow {
 
     visible: true
 
-    title: "N.E.E.B.L.E.S. Installer 0.0.1"
+    title: "N.E.E.B.L.E.S. Installer " + Qt.application.version
     color: "#09090B"
 
     property bool detailsVisible: false

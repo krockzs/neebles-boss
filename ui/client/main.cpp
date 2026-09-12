@@ -29,7 +29,7 @@ int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("N.E.E.B.L.E.S. Boss"));
-    app.setApplicationVersion(QStringLiteral("1.0.0"));
+    app.setApplicationVersion(QStringLiteral("1.0.1"));
     app.setOrganizationName(QStringLiteral("N.E.E.B.L.E.S."));
 
     const QString iconPath = findBrandingAsset(QStringLiteral("neebles-boss-launcher-icon.png"));

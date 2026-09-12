@@ -129,6 +129,7 @@ void InstallerController::processFinished(int exitCode, QProcess::ExitStatus exi
         setProgress(100);
         setStatus(QStringLiteral("N.E.E.B.L.E.S. installation completed."));
         appendLog(QStringLiteral("Installation completed successfully."));
+        integrateDesktop();
     } else {
         setStatus(QStringLiteral("Installation was cancelled or failed."));
         appendLog(QStringLiteral("Installer exited with code %1.").arg(exitCode));
@@ -152,6 +153,167 @@ void InstallerController::processError(QProcess::ProcessError error)
 
     setStatus(QStringLiteral("Could not start the privileged installer."));
     appendLog(QStringLiteral("ERROR: %1").arg(m_process.errorString()));
+}
+
+void InstallerController::integrateDesktop()
+{
+    startTray();
+    installLauncherIntoPanel();
+}
+
+void InstallerController::startTray()
+{
+    const QString trayPath =
+        QStringLiteral(
+            "/opt/neebles/client/tray/neebles-tray"
+        );
+
+    if (!QFileInfo::exists(trayPath)) {
+        appendLog(
+            QStringLiteral(
+                "WARNING: tray binary not found."
+            )
+        );
+        return;
+    }
+
+    const bool started =
+        QProcess::startDetached(trayPath, {});
+
+    appendLog(
+        started
+            ? QStringLiteral(
+                  "N.E.E.B.L.E.S. tray started."
+              )
+            : QStringLiteral(
+                  "WARNING: could not start N.E.E.B.L.E.S. tray."
+              )
+    );
+}
+
+void InstallerController::installLauncherIntoPanel()
+{
+    const QString packagePath =
+        QStringLiteral(
+            "/usr/share/plasma/plasmoids/org.neebles.launcher"
+        );
+
+    if (!QFileInfo::exists(
+            packagePath
+            + QStringLiteral("/metadata.json")
+        )) {
+        appendLog(
+            QStringLiteral(
+                "WARNING: Plasma launcher package not found."
+            )
+        );
+        return;
+    }
+
+    QString qdbus;
+
+    if (
+        QFileInfo::exists(
+            QStringLiteral("/usr/bin/qdbus6")
+        )
+    )
+        qdbus = QStringLiteral("/usr/bin/qdbus6");
+    else if (
+        QFileInfo::exists(
+            QStringLiteral("/usr/bin/qdbus")
+        )
+    )
+        qdbus = QStringLiteral("/usr/bin/qdbus");
+    else {
+        appendLog(
+            QStringLiteral(
+                "WARNING: qdbus was not found; launcher was installed but could not be added to the panel."
+            )
+        );
+        return;
+    }
+
+    const QString script =
+        QStringLiteral(R"JS(
+var found = false;
+var ps = panels();
+
+for (var i = 0; i < ps.length; ++i) {
+    var ws = ps[i].widgets();
+
+    for (var j = 0; j < ws.length; ++j) {
+        if (ws[j].type == "org.neebles.launcher") {
+            found = true;
+            break;
+        }
+    }
+
+    if (found)
+        break;
+}
+
+if (!found && ps.length > 0) {
+    var targetPanel = ps[0];
+
+    for (var p = 0; p < ps.length; ++p) {
+        var widgets = ps[p].widgets();
+
+        for (var w = 0; w < widgets.length; ++w) {
+            if (
+                widgets[w].type == "org.kde.plasma.kickoff"
+                || widgets[w].type == "org.kde.plasma.kicker"
+            ) {
+                targetPanel = ps[p];
+                p = ps.length;
+                break;
+            }
+        }
+    }
+
+    targetPanel.addWidget(
+        "org.neebles.launcher"
+    );
+}
+)JS");
+
+    QProcess process;
+
+    process.start(
+        qdbus,
+        {
+            QStringLiteral(
+                "org.kde.plasmashell"
+            ),
+            QStringLiteral(
+                "/PlasmaShell"
+            ),
+            QStringLiteral(
+                "org.kde.PlasmaShell.evaluateScript"
+            ),
+            script
+        }
+    );
+
+    if (
+        !process.waitForStarted(3000)
+        || !process.waitForFinished(10000)
+        || process.exitStatus()
+            != QProcess::NormalExit
+        || process.exitCode() != 0
+    ) {
+        appendLog(
+            QStringLiteral(
+                "WARNING: launcher package installed, but Plasma panel integration failed."
+            )
+        );
+        return;
+    }
+
+    appendLog(
+        QStringLiteral(
+            "N.E.E.B.L.E.S. launcher added to Plasma."
+        )
+    );
 }
 
 void InstallerController::setProgress(int value)

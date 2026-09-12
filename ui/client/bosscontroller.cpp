@@ -90,6 +90,46 @@ QUrl BossController::assetUrl(const QString &name) const
     return {};
 }
 
+QUrl BossController::flagUrl(const QString &name) const
+{
+    const QString clientRoot =
+        qEnvironmentVariable("NEEBLES_CLIENT_ROOT");
+
+    const QStringList candidates = {
+        clientRoot.isEmpty()
+            ? QString()
+            : QDir(clientRoot).filePath(
+                  QStringLiteral("assets/flags/4x3/") + name
+              ),
+
+        QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath(
+            QStringLiteral("../assets/flags/4x3/") + name
+        ),
+
+        QDir::current().filePath(
+            QStringLiteral("client/assets/flags/4x3/") + name
+        ),
+
+        QStringLiteral(
+            "/opt/neebles/client/assets/flags/4x3/"
+        ) + name
+    };
+
+    for (const QString &path : candidates) {
+        if (
+            !path.isEmpty()
+            && QFileInfo::exists(path)
+        )
+            return QUrl::fromLocalFile(
+                QFileInfo(path).absoluteFilePath()
+            );
+    }
+
+    return {};
+}
+
 void BossController::reload()
 {
     loadConfig();
@@ -130,6 +170,7 @@ void BossController::loadTranslations()
     if (!ok || !value.canConvert<QVariantMap>())
         return;
     m_strings = value.toMap();
+    ++m_translationsRevision;
     emit translationsChanged();
 }
 

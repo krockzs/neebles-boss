@@ -11,7 +11,7 @@ ApplicationWindow {
     minimumHeight: 520
     visible: true
 
-    title: "N.E.E.B.L.E.S. Boss 1.0.0"
+    title: "N.E.E.B.L.E.S. Boss 1.0.1"
     color: "#09090B"
 
     property int page: 0
@@ -32,7 +32,21 @@ ApplicationWindow {
     }
 
     function flag(name) {
+        if (
+            typeof boss !== "undefined"
+            && boss.flagUrl
+        )
+            return boss.flagUrl(name)
+
         return sourceFlagsRoot + name
+    }
+
+    function t(key) {
+        if (typeof boss === "undefined")
+            return key
+
+        const revision = boss.translationsRevision
+        return boss.text(key)
     }
 
     function shortLanguage(code) {
@@ -533,7 +547,7 @@ ApplicationWindow {
 
                             text:
                                 typeof boss !== "undefined"
-                                ? boss.text(
+                                ? root.t(
                                     "config.tray"
                                 )
                                 : "Tray"
@@ -552,7 +566,7 @@ ApplicationWindow {
 
                             text:
                                 typeof boss !== "undefined"
-                                ? boss.text(
+                                ? root.t(
                                     "config.launcher"
                                 )
                                 : "Launcher"
@@ -571,7 +585,7 @@ ApplicationWindow {
 
                             text:
                                 typeof boss !== "undefined"
-                                ? boss.text(
+                                ? root.t(
                                     "config.normal_notifications"
                                 )
                                 : "Notifications"
@@ -677,7 +691,7 @@ ApplicationWindow {
 
                             text:
                                 typeof boss !== "undefined"
-                                ? boss.text(
+                                ? root.t(
                                     "modules.empty"
                                 )
                                 : ""
@@ -876,7 +890,7 @@ ApplicationWindow {
 
                                             text:
                                                 typeof boss !== "undefined"
-                                                ? boss.text(
+                                                ? root.t(
                                                     "common.open"
                                                 )
                                                 : "Open"
@@ -906,7 +920,7 @@ ApplicationWindow {
 
                                             text:
                                                 typeof boss !== "undefined"
-                                                ? boss.text(
+                                                ? root.t(
                                                     "common.update"
                                                 )
                                                 : "Update"

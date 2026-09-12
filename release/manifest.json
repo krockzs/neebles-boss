@@ -1,32 +1,32 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "1.0.0",
-  "base_url": "https://github.com/krockzs/neebles-boss/releases/download/v1.0.0",
+  "version": "1.0.1",
+  "base_url": "https://github.com/krockzs/neebles-boss/releases/download/v1.0.1",
   "assets": {
     "backend": {
       "file": "neebles-backend",
-      "sha256": "ef4c8c0668dfdafc651fa017156d550c28bd4d0456451a09808d500f51c13c67",
+      "sha256": "a02826cddc05d4ee6249a8a66eb62dd8218b815b9a5d9297af54158ae80fc289",
       "executable": true
     },
     "ui": {
       "file": "neebles-ui",
-      "sha256": "af2c598dc8839b67d96528c2f14ac8f8d3a24375da358a685fc0e0a14e081033",
+      "sha256": "ab932adfbca69e5e4994a8524a19af20ee5f3fecf0c7738daa30fd5d1b5ff7bb",
       "executable": true
     },
     "installer": {
       "file": "neebles-installer",
-      "sha256": "f811c39485cf567346678c1f7ada44d2d167653da3c61c1dbf30df724251ec66",
+      "sha256": "cfccfdd3b730944361dd337ae3bcd5c0b4e531062c7f9d36574c36c651daecc3",
       "executable": true
     },
     "tray": {
       "file": "neebles-tray",
-      "sha256": "d0686b06b4852f66140e36b71fb8c5b85b7dcec7243b3f8c54454b50b6e74503",
+      "sha256": "62ce1384157ee7a30b14ee526e406f50464f2a6d0f577373cecb5368bc760603",
       "executable": true
     },
     "client_data": {
       "file": "client-data.tar.gz",
-      "sha256": "1170a93766eaee7f893c1732e8e9ee8492b2945759f8f7e3957f9fd34a988a8a",
+      "sha256": "6eb1175c236f7a30dd406b1b8e5238f79e0d417cd70751936d565ab62bd5cd88",
       "executable": false
     },
     "install": {

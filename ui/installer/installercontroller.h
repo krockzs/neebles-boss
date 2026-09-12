@@ -40,6 +40,9 @@ private:
     void setProgress(int value);
     void setStatus(const QString &value);
     void appendLog(const QString &line);
+    void integrateDesktop();
+    void startTray();
+    void installLauncherIntoPanel();
     void consumeLine(const QString &line);
 
     QString m_installScript;
