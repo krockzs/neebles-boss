@@ -728,26 +728,32 @@ ApplicationWindow {
                                     anchors.margins: 14
                                     spacing: 14
 
-                                    Image {
-                                        Layout.preferredWidth:
-                                            58
+                                    Item {
+                                        Layout.minimumWidth: 58
+                                        Layout.preferredWidth: 58
+                                        Layout.maximumWidth: 58
 
-                                        Layout.preferredHeight:
-                                            58
+                                        Layout.minimumHeight: 58
+                                        Layout.preferredHeight: 58
+                                        Layout.maximumHeight: 58
 
-                                        source:
-                                            modelData.icon
-                                            && modelData.icon.length > 0
-                                            ? modelData.icon
-                                            : root.asset(
-                                                "modules_icon.png"
-                                            )
+                                        Image {
+                                            anchors.fill: parent
 
-                                        fillMode:
-                                            Image.PreserveAspectFit
+                                            source:
+                                                modelData.icon
+                                                && modelData.icon.length > 0
+                                                ? modelData.icon
+                                                : root.asset(
+                                                    "modules_icon.png"
+                                                )
 
-                                        smooth: true
-                                        mipmap: true
+                                            fillMode:
+                                                Image.PreserveAspectFit
+
+                                            smooth: true
+                                            mipmap: true
+                                        }
                                     }
 
                                     ColumnLayout {
@@ -797,7 +803,7 @@ ApplicationWindow {
                                             text:
                                                 modelData.installed
                                                 ? "Installed"
-                                                : "Not installed"
+                                                : "Install"
 
                                             color:
                                                 modelData.installed
@@ -835,21 +841,19 @@ ApplicationWindow {
                                     }
 
                                     ColumnLayout {
+                                        visible:
+                                            !!modelData.installed
+
                                         spacing: 2
 
                                         Label {
                                             text:
-                                                modelData.installed
-                                                ? (
-                                                    modelData.enabled
-                                                    ? "Active"
-                                                    : "Not active"
-                                                )
+                                                modelData.enabled
+                                                ? "Active"
                                                 : "Not active"
 
                                             color:
-                                                modelData.installed
-                                                && modelData.enabled
+                                                modelData.enabled
                                                 ? "#A78BFA"
                                                 : "#71717A"
 
@@ -861,12 +865,9 @@ ApplicationWindow {
                                                 !!modelData.enabled
 
                                             enabled:
-                                                !!modelData.installed
-                                                && (
-                                                    typeof boss
-                                                    === "undefined"
-                                                    || !boss.busy
-                                                )
+                                                typeof boss
+                                                === "undefined"
+                                                || !boss.busy
 
                                             onToggled: {
                                                 if (
@@ -887,6 +888,7 @@ ApplicationWindow {
                                         Button {
                                             visible:
                                                 !!modelData.installed
+                                                && !!modelData.enabled
 
                                             text:
                                                 typeof boss !== "undefined"
@@ -896,12 +898,28 @@ ApplicationWindow {
                                                 : "Open"
 
                                             enabled:
-                                                !!modelData.enabled
-                                                && (
-                                                    typeof boss
-                                                    === "undefined"
-                                                    || !boss.busy
-                                                )
+                                                typeof boss
+                                                === "undefined"
+                                                || !boss.busy
+
+                                            background: Rectangle {
+                                                radius: 7
+                                                color: "#1B1027"
+
+                                                border.width: 2
+                                                border.color: "#C084FC"
+                                            }
+
+                                            contentItem: Text {
+                                                text: parent.text
+                                                color: "#E9D5FF"
+
+                                                horizontalAlignment:
+                                                    Text.AlignHCenter
+
+                                                verticalAlignment:
+                                                    Text.AlignVCenter
+                                            }
 
                                             onClicked: {
                                                 if (
@@ -917,6 +935,7 @@ ApplicationWindow {
                                         Button {
                                             visible:
                                                 !!modelData.installed
+                                                && !!modelData.update_available
 
                                             text:
                                                 typeof boss !== "undefined"
@@ -928,6 +947,25 @@ ApplicationWindow {
                                             enabled:
                                                 typeof boss === "undefined"
                                                 || !boss.busy
+
+                                            background: Rectangle {
+                                                radius: 7
+                                                color: "#2A0E12"
+
+                                                border.width: 2
+                                                border.color: "#FF3344"
+                                            }
+
+                                            contentItem: Text {
+                                                text: parent.text
+                                                color: "#FFB4BC"
+
+                                                horizontalAlignment:
+                                                    Text.AlignHCenter
+
+                                                verticalAlignment:
+                                                    Text.AlignVCenter
+                                            }
 
                                             onClicked: {
                                                 if (

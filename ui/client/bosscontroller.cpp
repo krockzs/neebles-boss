@@ -9,6 +9,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSet>
+#include <QVersionNumber>
 
 BossController::BossController(QObject *parent)
     : QObject(parent)
@@ -280,32 +281,234 @@ void BossController::loadTranslations()
 void BossController::loadModules()
 {
     QVariantList combined;
-    QSet<QString> installedNames;
+    QVariantMap installedByName;
+    QSet<QString> seen;
 
+    /*
+     * Read installed state first.
+     */
     bool installedOk = false;
-    const QVariant installedValue = parseJson(run({QStringLiteral("modules"), QStringLiteral("installed")}, false, 5000, &installedOk));
-    if (installedOk && installedValue.canConvert<QVariantList>()) {
-        const QVariantList installed = installedValue.toList();
-        for (const QVariant &item : installed) {
+
+    const QVariant installedValue = parseJson(
+        run(
+            {
+                QStringLiteral("modules"),
+                QStringLiteral("installed")
+            },
+            false,
+            5000,
+            &installedOk
+        )
+    );
+
+    if (
+        installedOk
+        && installedValue.canConvert<QVariantList>()
+    ) {
+        for (
+            const QVariant &item :
+            installedValue.toList()
+        ) {
             QVariantMap map = item.toMap();
-            map.insert(QStringLiteral("installed"), true);
-            installedNames.insert(map.value(QStringLiteral("name")).toString());
-            combined.append(map);
+
+            const QString name =
+                map.value(
+                    QStringLiteral("name")
+                ).toString();
+
+            map.insert(
+                QStringLiteral("installed"),
+                true
+            );
+
+            installedByName.insert(name, map);
         }
     }
 
+    /*
+     * Merge remote registry information with installed state.
+     */
     bool availableOk = false;
-    const QVariant availableValue = parseJson(run({QStringLiteral("modules"), QStringLiteral("available")}, false, 10000, &availableOk));
-    if (availableOk && availableValue.canConvert<QVariantList>()) {
-        for (const QVariant &item : availableValue.toList()) {
-            QVariantMap map = item.toMap();
-            const QString name = map.value(QStringLiteral("name")).toString();
-            if (!installedNames.contains(name)) {
-                map.insert(QStringLiteral("installed"), false);
-                map.insert(QStringLiteral("enabled"), false);
-                combined.append(map);
+
+    const QVariant availableValue = parseJson(
+        run(
+            {
+                QStringLiteral("modules"),
+                QStringLiteral("available")
+            },
+            false,
+            10000,
+            &availableOk
+        )
+    );
+
+    if (
+        availableOk
+        && availableValue.canConvert<QVariantList>()
+    ) {
+        for (
+            const QVariant &item :
+            availableValue.toList()
+        ) {
+            const QVariantMap remote = item.toMap();
+
+            const QString name =
+                remote.value(
+                    QStringLiteral("name")
+                ).toString();
+
+            const QString remoteVersionString =
+                remote.value(
+                    QStringLiteral("version")
+                ).toString();
+
+            QVariantMap map;
+
+            if (installedByName.contains(name)) {
+                map =
+                    installedByName.value(name)
+                    .toMap();
+
+                const QString installedVersionString =
+                    map.value(
+                        QStringLiteral("version")
+                    ).toString();
+
+                map.insert(
+                    QStringLiteral("installed"),
+                    true
+                );
+
+                map.insert(
+                    QStringLiteral("installed_version"),
+                    installedVersionString
+                );
+
+                map.insert(
+                    QStringLiteral("remote_version"),
+                    remoteVersionString
+                );
+
+                map.insert(
+                    QStringLiteral("repo"),
+                    remote.value(
+                        QStringLiteral("repo")
+                    )
+                );
+
+                /*
+                 * Installed icon has priority because it belongs
+                 * to the exact installed module version.
+                 */
+                if (
+                    map.value(
+                        QStringLiteral("icon")
+                    ).toString().isEmpty()
+                ) {
+                    map.insert(
+                        QStringLiteral("icon"),
+                        remote.value(
+                            QStringLiteral("icon")
+                        )
+                    );
+                }
+
+                const QVersionNumber installedVersion =
+                    QVersionNumber::fromString(
+                        installedVersionString
+                    );
+
+                const QVersionNumber remoteVersion =
+                    QVersionNumber::fromString(
+                        remoteVersionString
+                    );
+
+                const bool updateAvailable =
+                    !installedVersion.isNull()
+                    && !remoteVersion.isNull()
+                    && QVersionNumber::compare(
+                        installedVersion,
+                        remoteVersion
+                    ) < 0;
+
+                map.insert(
+                    QStringLiteral("update_available"),
+                    updateAvailable
+                );
+            } else {
+                map = remote;
+
+                map.insert(
+                    QStringLiteral("installed"),
+                    false
+                );
+
+                map.insert(
+                    QStringLiteral("enabled"),
+                    false
+                );
+
+                map.insert(
+                    QStringLiteral("installed_version"),
+                    QString()
+                );
+
+                map.insert(
+                    QStringLiteral("remote_version"),
+                    remoteVersionString
+                );
+
+                map.insert(
+                    QStringLiteral("update_available"),
+                    false
+                );
             }
+
+            combined.append(map);
+            seen.insert(name);
         }
+    }
+
+    /*
+     * Keep locally installed modules visible even if somebody
+     * removes them from the remote registry.
+     */
+    for (
+        auto it = installedByName.constBegin();
+        it != installedByName.constEnd();
+        ++it
+    ) {
+        if (seen.contains(it.key()))
+            continue;
+
+        QVariantMap map = it.value().toMap();
+
+        const QString installedVersionString =
+            map.value(
+                QStringLiteral("version")
+            ).toString();
+
+        map.insert(
+            QStringLiteral("installed"),
+            true
+        );
+
+        map.insert(
+            QStringLiteral("installed_version"),
+            installedVersionString
+        );
+
+        map.insert(
+            QStringLiteral("remote_version"),
+            QString()
+        );
+
+        map.insert(
+            QStringLiteral("update_available"),
+            false
+        );
+
+        combined.append(map);
     }
 
     m_modules = combined;

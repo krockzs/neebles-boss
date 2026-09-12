@@ -53,6 +53,68 @@ fn default_schema() -> u32 {
     1
 }
 
+const MODULE_ICON_EXTENSIONS: &[&str] = &[
+    "svg",
+    "png",
+    "webp",
+    "jpg",
+    "jpeg",
+];
+
+fn local_module_icon(module_dir: &Path) -> String {
+    for extension in MODULE_ICON_EXTENSIONS {
+        let candidate = module_dir.join(format!("icon.{extension}"));
+
+        if candidate.is_file() {
+            if let Ok(path) = candidate.canonicalize() {
+                return format!("file://{}", path.display());
+            }
+        }
+    }
+
+    String::new()
+}
+
+fn github_raw_base(repo: &str, branch: &str) -> Option<String> {
+    let repo = repo
+        .strip_prefix("https://github.com/")?
+        .trim_end_matches(".git")
+        .trim_end_matches('/');
+
+    Some(format!(
+        "https://raw.githubusercontent.com/{repo}/{branch}"
+    ))
+}
+
+fn remote_module_icon(repo: &str, branch: Option<&str>) -> String {
+    let branch = branch.unwrap_or("main");
+
+    let Some(base) = github_raw_base(repo, branch) else {
+        return String::new();
+    };
+
+    for extension in MODULE_ICON_EXTENSIONS {
+        let url = format!("{base}/icon.{extension}");
+
+        let status = Command::new("curl")
+            .args([
+                "-fsIL",
+                "--max-time",
+                "5",
+                url.as_str(),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        if matches!(status, Ok(value) if value.success()) {
+            return url;
+        }
+    }
+
+    String::new()
+}
+
 pub fn neebles_root() -> PathBuf {
     env::var("NEEBLES_ROOT")
         .map(PathBuf::from)
@@ -112,11 +174,14 @@ pub fn installed_modules_json() -> Result<Value, String> {
         }
         let manifest = read_manifest(&manifest_path)?;
         let enabled = config::module_enabled(&manifest.name)?;
+        let icon = local_module_icon(&entry.path());
+
         result.push(json!({
             "name": manifest.name,
             "version": manifest.version,
             "enabled": enabled,
             "path": entry.path(),
+            "icon": icon,
         }));
     }
 
@@ -136,10 +201,17 @@ pub fn available_modules_json() -> Result<Value, String> {
 
     for (name, module) in registry.modules {
         let is_installed = installed.contains(&name);
+
+        let icon = remote_module_icon(
+            &module.repo,
+            module.branch.as_deref(),
+        );
+
         result.push(json!({
             "name": name,
             "version": module.version.unwrap_or_default(),
             "repo": module.repo,
+            "icon": icon,
             "installed": is_installed,
         }));
     }
@@ -247,6 +319,13 @@ fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<Stri
             destination.display()
         )
     })?;
+
+    /*
+     * A newly installed module is active by default.
+     * This also clears a stale disabled state left by an
+     * earlier installation of the same module.
+     */
+    config::set_module_enabled(name, true)?;
 
     visiting.remove(name);
     Ok(())
