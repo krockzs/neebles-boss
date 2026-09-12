@@ -6,27 +6,27 @@
   "assets": {
     "backend": {
       "file": "neebles-backend",
-      "sha256": "a02826cddc05d4ee6249a8a66eb62dd8218b815b9a5d9297af54158ae80fc289",
+      "sha256": "dc6769bbe4d980bafd4e2bbc45eeb17a2abde48d099e647d5417628b6f5f9733",
       "executable": true
     },
     "ui": {
       "file": "neebles-ui",
-      "sha256": "ab932adfbca69e5e4994a8524a19af20ee5f3fecf0c7738daa30fd5d1b5ff7bb",
+      "sha256": "1b9dfcc9af943b2c0d7e654f77d386d70eb0bb435042d84b655761d35692c343",
       "executable": true
     },
     "installer": {
       "file": "neebles-installer",
-      "sha256": "cfccfdd3b730944361dd337ae3bcd5c0b4e531062c7f9d36574c36c651daecc3",
+      "sha256": "9aa79649f2ee180338ad31e6f2cb076493d442142b8cf205be3a06f424756815",
       "executable": true
     },
     "tray": {
       "file": "neebles-tray",
-      "sha256": "62ce1384157ee7a30b14ee526e406f50464f2a6d0f577373cecb5368bc760603",
+      "sha256": "c9cebaede44e3823691dea370c7ac8534fa86b86c56ce3c6b49eaa53448564b3",
       "executable": true
     },
     "client_data": {
       "file": "client-data.tar.gz",
-      "sha256": "6eb1175c236f7a30dd406b1b8e5238f79e0d417cd70751936d565ab62bd5cd88",
+      "sha256": "9daecc94895fd2f84fb744d1ee8d0727a92eb4596d62b9c773607e0600bb99c3",
       "executable": false
     },
     "install": {
