@@ -1,22 +1,22 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "1.0.3",
-  "base_url": "https://github.com/krockzs/neebles-boss/releases/download/v1.0.3",
+  "version": "1.0.4",
+  "base_url": "https://github.com/krockzs/neebles-boss/releases/download/v1.0.4",
   "assets": {
     "backend": {
       "file": "neebles-backend",
-      "sha256": "646287e34a5258d5d1c2475158a1ed9efd6607ba057afb3bdef968291d26c666",
+      "sha256": "d19b2d942554392aa4ba06203ec53c14b20cb762875460041e16f94c1ba12a4a",
       "executable": true
     },
     "ui": {
       "file": "neebles-ui",
-      "sha256": "26c4037463d473f51b5b1715c5c197224005f2ebb6041cb3a55453225dbd288b",
+      "sha256": "93534df3beed059693381144d0b5dc4930c2cf75192521fa11e7bf5a3fddbcbe",
       "executable": true
     },
     "installer": {
       "file": "neebles-installer",
-      "sha256": "d459e53861ec4fc902a19539390365b3c64bcb8d4087f394480cb0d86b6bff73",
+      "sha256": "c107b1b8a0fd2e9a97e9495ae171bce554875997fa7d551a2e11c93a82322413",
       "executable": true
     },
     "tray": {
@@ -24,14 +24,19 @@
       "sha256": "77c4fccac8a4508e106c79f853eb12a55e7cf0aa611ca771939b26cdadd1ac91",
       "executable": true
     },
+    "auth_agent": {
+      "file": "neebles-auth-agent",
+      "sha256": "162450a7583d1d05372b65f9cb5761b3890e84db124962400278b13f5ed80808",
+      "executable": true
+    },
     "client_data": {
       "file": "client-data.tar.gz",
-      "sha256": "b9a53547fde4ee78794091d49525101859ad6a9e5e781c26f00e068ff469f93b",
+      "sha256": "fdb4df6abb946c6754327aeb6e012befa7d1b75a6d504fb9a81b3dace4e70a88",
       "executable": false
     },
     "install": {
       "file": "install.sh",
-      "sha256": "773e4ab478c61138fc8b172bb0cf8820293d4c505c4f999e8ce5f50db07516be",
+      "sha256": "8520b129f449caa68ad6854ee5de0650da408858ab1d6e56dcfb3eae4058b0ec",
       "executable": true
     }
   },
@@ -52,7 +57,8 @@
         "backend",
         "ui",
         "tray",
-        "client_data"
+        "client_data",
+        "auth_agent"
       ]
     }
   }
