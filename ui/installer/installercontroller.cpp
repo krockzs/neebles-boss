@@ -7,10 +7,12 @@
 InstallerController::InstallerController(const QStringList &arguments, QObject *parent)
     : QObject(parent)
 {
-    if (arguments.size() >= 4) {
+    if (arguments.size() >= 6) {
         m_installScript = arguments.at(1);
         m_backendBinary = arguments.at(2);
         m_uiBinary = arguments.at(3);
+        m_trayBinary = arguments.at(4);
+        m_clientDataArchive = arguments.at(5);
     }
 
     m_process.setProcessChannelMode(QProcess::MergedChannels);
@@ -28,9 +30,12 @@ void InstallerController::startInstallation()
     if (m_running)
         return;
 
-    if (m_installScript.isEmpty() || m_backendBinary.isEmpty() || m_uiBinary.isEmpty()) {
+    if (m_installScript.isEmpty() || m_backendBinary.isEmpty() || m_uiBinary.isEmpty()
+        || m_trayBinary.isEmpty() || m_clientDataArchive.isEmpty()) {
         setStatus(QStringLiteral("Installer payload is incomplete."));
-        appendLog(QStringLiteral("ERROR: expected installer arguments: <install.sh> <backend> <ui>"));
+        appendLog(QStringLiteral(
+            "ERROR: expected installer arguments: <install.sh> <backend> <ui> <tray> <client-data.tar.gz>"
+        ));
         m_finished = true;
         m_success = false;
         emit finishedChanged();
@@ -39,7 +44,9 @@ void InstallerController::startInstallation()
 
     if (!QFileInfo::exists(m_installScript) ||
         !QFileInfo::exists(m_backendBinary) ||
-        !QFileInfo::exists(m_uiBinary)) {
+        !QFileInfo::exists(m_uiBinary) ||
+        !QFileInfo::exists(m_trayBinary) ||
+        !QFileInfo::exists(m_clientDataArchive)) {
         setStatus(QStringLiteral("Installer payload files are missing."));
         appendLog(QStringLiteral("ERROR: one or more installer payload files do not exist."));
         m_finished = true;
@@ -61,7 +68,9 @@ void InstallerController::startInstallation()
     const QStringList args {
         m_installScript,
         m_backendBinary,
-        m_uiBinary
+        m_uiBinary,
+        m_trayBinary,
+        m_clientDataArchive
     };
 
     m_process.start(QStringLiteral("pkexec"), args);

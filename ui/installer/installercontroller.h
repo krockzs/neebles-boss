@@ -45,6 +45,8 @@ private:
     QString m_installScript;
     QString m_backendBinary;
     QString m_uiBinary;
+    QString m_trayBinary;
+    QString m_clientDataArchive;
     QProcess m_process;
     QByteArray m_buffer;
     int m_progress = 0;

@@ -46,20 +46,43 @@ jobs:
           cmake -S ui/installer -B ui/installer/build -DCMAKE_BUILD_TYPE=Release
           cmake --build ui/installer/build --parallel
 
+      - name: Build tray
+        run: |
+          cmake -S client/tray -B client/tray/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build client/tray/build --parallel
+
       - name: Stage release assets
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p dist
+
           cp target/release/neebles-backend dist/neebles-backend
           cp ui/client/build/neebles-ui dist/neebles-ui
           cp ui/installer/build/neebles-installer dist/neebles-installer
+          cp client/tray/build/neebles-tray dist/neebles-tray
           cp scripts/install.sh dist/install.sh
-          chmod +x dist/neebles-backend dist/neebles-ui dist/neebles-installer dist/install.sh
+
+          tar -C client -czf dist/client-data.tar.gz \
+            assets \
+            languages \
+            config \
+            launcher \
+            notifications
+
+          chmod +x \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-tray \
+            dist/install.sh
 
           BACKEND_SHA="$(sha256sum dist/neebles-backend | awk '{print $1}')"
           UI_SHA="$(sha256sum dist/neebles-ui | awk '{print $1}')"
           INSTALLER_SHA="$(sha256sum dist/neebles-installer | awk '{print $1}')"
+          TRAY_SHA="$(sha256sum dist/neebles-tray | awk '{print $1}')"
+          CLIENT_DATA_SHA="$(sha256sum dist/client-data.tar.gz | awk '{print $1}')"
           INSTALL_SHA="$(sha256sum dist/install.sh | awk '{print $1}')"
 
           cat > dist/bootstrap.json <<EOF
@@ -82,6 +105,14 @@ jobs:
                   "file": "neebles-installer",
                   "sha256": "${INSTALLER_SHA}"
                 },
+                "tray": {
+                  "file": "neebles-tray",
+                  "sha256": "${TRAY_SHA}"
+                },
+                "client_data": {
+                  "file": "client-data.tar.gz",
+                  "sha256": "${CLIENT_DATA_SHA}"
+                },
                 "install": {
                   "file": "install.sh",
                   "sha256": "${INSTALL_SHA}"
@@ -95,6 +126,8 @@ jobs:
             dist/neebles-backend \
             dist/neebles-ui \
             dist/neebles-installer \
+            dist/neebles-tray \
+            dist/client-data.tar.gz \
             dist/install.sh \
             dist/bootstrap.json \
             | tee dist/SHA256SUMS
@@ -108,12 +141,15 @@ jobs:
           body: |
             N.E.E.B.L.E.S. Boss 1.0.0 stable bootstrap milestone.
 
-            Publishes the Rust Boss backend, Qt client UI, graphical Qt installer,
-            privileged install script and Bootstrap Schema 2 manifest.
+            Publishes the Rust Boss backend, Qt client UI, graphical installer,
+            tray client, complete client data payload, privileged install script
+            and Bootstrap Schema 2 manifest.
           files: |
             dist/neebles-backend
             dist/neebles-ui
             dist/neebles-installer
+            dist/neebles-tray
+            dist/client-data.tar.gz
             dist/install.sh
             dist/bootstrap.json
             dist/SHA256SUMS

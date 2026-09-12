@@ -23,20 +23,37 @@ if [[ ${EUID} -ne 0 ]]; then
     exit 1
 fi
 
-if [[ $# -lt 2 ]]; then
-    echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> [neebles-tray-binary] [client-data-dir]" >&2
+if [[ $# -lt 5 ]]; then
+    echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <neebles-tray-binary> <client-data.tar.gz>" >&2
     exit 1
 fi
 
 BACKEND_SOURCE="$1"
 UI_SOURCE="$2"
-TRAY_SOURCE="${3:-}"
-CLIENT_DATA_SOURCE="${4:-}"
+TRAY_SOURCE="$3"
+CLIENT_DATA_ARCHIVE="$4"
+CLIENT_DATA_SOURCE=""
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_CLIENT_DIR="$(cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd)/client"
 
-if [[ -z "$CLIENT_DATA_SOURCE" && -d "$REPO_CLIENT_DIR" ]]; then
-    CLIENT_DATA_SOURCE="$REPO_CLIENT_DIR"
+CLIENT_DATA_TMP=""
+
+cleanup() {
+    if [[ -n "$CLIENT_DATA_TMP" && -d "$CLIENT_DATA_TMP" ]]; then
+        rm -rf "$CLIENT_DATA_TMP"
+    fi
+}
+trap cleanup EXIT
+
+if [[ -f "$CLIENT_DATA_ARCHIVE" ]]; then
+    CLIENT_DATA_TMP="$(mktemp -d)"
+    tar -xzf "$CLIENT_DATA_ARCHIVE" -C "$CLIENT_DATA_TMP"
+    CLIENT_DATA_SOURCE="$CLIENT_DATA_TMP"
+elif [[ -d "$CLIENT_DATA_ARCHIVE" ]]; then
+    CLIENT_DATA_SOURCE="$CLIENT_DATA_ARCHIVE"
+else
+    echo "Client data payload not found: $CLIENT_DATA_ARCHIVE" >&2
+    exit 1
 fi
 
 progress 5
@@ -46,9 +63,11 @@ progress 10
 status "Validating N.E.E.B.L.E.S. payload..."
 [[ -f "$BACKEND_SOURCE" ]] || { echo "Backend binary not found: $BACKEND_SOURCE" >&2; exit 1; }
 [[ -f "$UI_SOURCE" ]] || { echo "UI binary not found: $UI_SOURCE" >&2; exit 1; }
-if [[ -n "$TRAY_SOURCE" ]]; then
-    [[ -f "$TRAY_SOURCE" ]] || { echo "Tray binary not found: $TRAY_SOURCE" >&2; exit 1; }
-fi
+[[ -f "$TRAY_SOURCE" ]] || { echo "Tray binary not found: $TRAY_SOURCE" >&2; exit 1; }
+[[ -f "$CLIENT_DATA_ARCHIVE" || -d "$CLIENT_DATA_ARCHIVE" ]] || {
+    echo "Client data payload not found: $CLIENT_DATA_ARCHIVE" >&2
+    exit 1
+}
 
 progress 16
 status "Checking Boss runtime dependencies..."
