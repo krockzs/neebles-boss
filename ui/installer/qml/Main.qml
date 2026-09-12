@@ -146,21 +146,6 @@ ApplicationWindow {
             /*
              * STATUS TEXT
              */
-            Label {
-                Layout.fillWidth: true
-
-                text:
-                    typeof installer !== "undefined"
-                    ? installer.status
-                    : ""
-
-                color: "#F5F5F5"
-
-                font.pixelSize: 18
-
-                wrapMode:
-                    Text.WordWrap
-            }
 
             /*
              * CUSTOM N.E.E.B.L.E.S.

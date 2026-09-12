@@ -504,20 +504,6 @@ ApplicationWindow {
                     Layout.fillWidth: true
                 }
 
-                Label {
-                    text:
-                        typeof boss !== "undefined"
-                        ? boss.statusText
-                        : ""
-
-                    color:
-                        text === "ERROR"
-                        ? "#F87171"
-                        : "#71717A"
-
-                    visible:
-                        text.length > 0
-                }
             }
 
             Rectangle {
