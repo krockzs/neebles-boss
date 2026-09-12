@@ -31,6 +31,19 @@ pub struct ModuleManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct ModuleLanguageEntry {
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ModuleLanguageManifest {
+    #[serde(default)]
+    pub default: String,
+    #[serde(default)]
+    pub languages: Vec<ModuleLanguageEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryModule {
     pub repo: String,
     #[serde(default)]
@@ -695,6 +708,85 @@ pub fn set_enabled(
     Ok(())
 }
 
+fn resolve_module_language(
+    module_dir: &Path,
+    requested: &str,
+) -> Result<String, String> {
+    let manifest_path =
+        module_dir.join("languages").join("manifest.json");
+
+    /*
+     * Legacy modules may not implement the N.E.E.B.L.E.S.
+     * language contract yet. Preserve the historical behavior
+     * and pass the Boss language unchanged.
+     */
+    if !manifest_path.exists() {
+        return Ok(requested.to_string());
+    }
+
+    let raw =
+        fs::read_to_string(&manifest_path)
+            .map_err(|error| {
+                format!(
+                    "could not read module language manifest {}: {error}",
+                    manifest_path.display()
+                )
+            })?;
+
+    let manifest: ModuleLanguageManifest =
+        serde_json::from_str(&raw)
+            .map_err(|error| {
+                format!(
+                    "invalid module language manifest {}: {error}",
+                    manifest_path.display()
+                )
+            })?;
+
+    if manifest.languages.is_empty() {
+        return Err(format!(
+            "module language manifest {} declares no languages",
+            manifest_path.display()
+        ));
+    }
+
+    let requested =
+        languages::normalize_locale(requested);
+
+    if let Some(language) =
+        manifest.languages.iter().find(|language| {
+            languages::normalize_locale(&language.code)
+                == requested
+        })
+    {
+        return Ok(language.code.clone());
+    }
+
+    let default =
+        manifest.default.trim();
+
+    if !default.is_empty() {
+        let normalized_default =
+            languages::normalize_locale(default);
+
+        if let Some(language) =
+            manifest.languages.iter().find(|language| {
+                languages::normalize_locale(&language.code)
+                    == normalized_default
+            })
+        {
+            return Ok(language.code.clone());
+        }
+
+        return Err(format!(
+            "module language manifest {} defines default '{}' but that language is not declared",
+            manifest_path.display(),
+            manifest.default
+        ));
+    }
+
+    Ok(manifest.languages[0].code.clone())
+}
+
 pub fn execute(
     name: &str,
     args: &[String],
@@ -745,8 +837,14 @@ pub fn execute(
         ));
     }
 
-    let language =
+    let requested_language =
         config::load_or_initialize()?.language;
+
+    let language =
+        resolve_module_language(
+            &module_dir,
+            &requested_language,
+        )?;
 
     let config_path =
         config::config_path()?;

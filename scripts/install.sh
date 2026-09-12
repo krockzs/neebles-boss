@@ -25,8 +25,8 @@ if [[ ${EUID} -ne 0 ]]; then
     exit 1
 fi
 
-if [[ $# -lt 4 ]]; then
-    echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <neebles-tray-binary> <client-data.tar.gz>" >&2
+if [[ $# -lt 5 ]]; then
+    echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <neebles-tray-binary> <client-data.tar.gz> <neebles-auth-agent-binary>" >&2
     exit 1
 fi
 
@@ -34,7 +34,7 @@ BACKEND_SOURCE="$1"
 UI_SOURCE="$2"
 TRAY_SOURCE="$3"
 CLIENT_DATA_ARCHIVE="$4"
-AUTH_AGENT_SOURCE="${5:-}"
+AUTH_AGENT_SOURCE="$5"
 CLIENT_DATA_SOURCE=""
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_CLIENT_DIR="$(cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd)/client"
@@ -98,16 +98,16 @@ progress 50
 status "Installing N.E.E.B.L.E.S. UI..."
 install -m 0755 "$UI_SOURCE" "$UI_DIR/neebles-ui"
 
-if [[ -n "$AUTH_AGENT_SOURCE" ]]; then
-    status "Installing N.E.E.B.L.E.S. authorization agent..."
+status "Installing N.E.E.B.L.E.S. authorization agent..."
 
-    [[ -x "$AUTH_AGENT_SOURCE" ]] || {
-        echo "Authorization agent not found or not executable: $AUTH_AGENT_SOURCE" >&2
-        exit 1
-    }
+[[ -x "$AUTH_AGENT_SOURCE" ]] || {
+    echo "Authorization agent not found or not executable: $AUTH_AGENT_SOURCE" >&2
+    exit 1
+}
 
-    install -m 0755         "$AUTH_AGENT_SOURCE"         "$AUTH_DIR/neebles-auth-agent"
-fi
+install -m 0755 \
+    "$AUTH_AGENT_SOURCE" \
+    "$AUTH_DIR/neebles-auth-agent"
 
 if [[ -n "$TRAY_SOURCE" ]]; then
     progress 58

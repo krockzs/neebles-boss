@@ -168,7 +168,7 @@ void InstallerController::startInstallation()
 
         /*
          * install.sh receives the auth agent as
-         * optional fifth payload and installs it
+         * mandatory fifth payload and installs it
          * permanently with Boss.
          */
         authAgent

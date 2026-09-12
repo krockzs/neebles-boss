@@ -1,0 +1,267 @@
+name: Build and release NEEBLES Boss 1.0.4
+
+on:
+  push:
+    paths:
+      - "release/trigger-v1.0.4"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    container:
+      image: debian:trixie-slim
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            ca-certificates \
+            git \
+            curl \
+            build-essential \
+            cmake \
+            pkg-config \
+            rustc \
+            cargo \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            libgl1-mesa-dev \
+            libpolkit-qt6-1-dev
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Rust backend
+        run: |
+          cargo build --release
+
+      - name: Build client UI
+        run: |
+          cmake \
+            -S ui/client \
+            -B ui/client/build \
+            -DCMAKE_BUILD_TYPE=Release
+
+          cmake \
+            --build ui/client/build \
+            --parallel
+
+      - name: Build installer UI
+        run: |
+          cmake \
+            -S ui/installer \
+            -B ui/installer/build \
+            -DCMAKE_BUILD_TYPE=Release
+
+          cmake \
+            --build ui/installer/build \
+            --parallel
+
+      - name: Build authorization agent
+        run: |
+          cmake \
+            -S ui/auth-agent \
+            -B ui/auth-agent/build \
+            -DCMAKE_BUILD_TYPE=Release
+
+          cmake \
+            --build ui/auth-agent/build \
+            --parallel
+
+      - name: Build tray
+        run: |
+          cmake \
+            -S client/tray \
+            -B client/tray/build \
+            -DCMAKE_BUILD_TYPE=Release
+
+          cmake \
+            --build client/tray/build \
+            --parallel
+
+      - name: Stage release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+
+          cp \
+            target/release/neebles-backend \
+            dist/neebles-backend
+
+          cp \
+            ui/client/build/neebles-ui \
+            dist/neebles-ui
+
+          cp \
+            ui/installer/build/neebles-installer \
+            dist/neebles-installer
+
+          cp \
+            client/tray/build/neebles-tray \
+            dist/neebles-tray
+
+          cp \
+            ui/auth-agent/build/neebles-auth-agent \
+            dist/neebles-auth-agent
+
+          cp \
+            scripts/install.sh \
+            dist/install.sh
+
+          tar \
+            -C client \
+            -czf dist/client-data.tar.gz \
+            assets \
+            languages \
+            config \
+            launcher \
+            spacer \
+            notifications
+
+          chmod +x \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-tray \
+            dist/neebles-auth-agent \
+            dist/install.sh
+
+          BACKEND_SHA="$(
+            sha256sum dist/neebles-backend |
+            awk '{print $1}'
+          )"
+
+          UI_SHA="$(
+            sha256sum dist/neebles-ui |
+            awk '{print $1}'
+          )"
+
+          INSTALLER_SHA="$(
+            sha256sum dist/neebles-installer |
+            awk '{print $1}'
+          )"
+
+          TRAY_SHA="$(
+            sha256sum dist/neebles-tray |
+            awk '{print $1}'
+          )"
+
+          AUTH_AGENT_SHA="$(
+            sha256sum dist/neebles-auth-agent |
+            awk '{print $1}'
+          )"
+
+          CLIENT_DATA_SHA="$(
+            sha256sum dist/client-data.tar.gz |
+            awk '{print $1}'
+          )"
+
+          INSTALL_SHA="$(
+            sha256sum dist/install.sh |
+            awk '{print $1}'
+          )"
+
+          cat > dist/bootstrap.json <<EOF
+          {
+            "schema": 2,
+            "channel": "stable",
+            "stable": {
+              "version": "1.0.4",
+              "base_url": "https://github.com/krockzs/neebles-boss/releases/download/v1.0.4",
+              "assets": {
+                "backend": {
+                  "file": "neebles-backend",
+                  "sha256": "${BACKEND_SHA}"
+                },
+                "ui": {
+                  "file": "neebles-ui",
+                  "sha256": "${UI_SHA}"
+                },
+                "installer": {
+                  "file": "neebles-installer",
+                  "sha256": "${INSTALLER_SHA}"
+                },
+                "tray": {
+                  "file": "neebles-tray",
+                  "sha256": "${TRAY_SHA}"
+                },
+                "auth_agent": {
+                  "file": "neebles-auth-agent",
+                  "sha256": "${AUTH_AGENT_SHA}"
+                },
+                "client_data": {
+                  "file": "client-data.tar.gz",
+                  "sha256": "${CLIENT_DATA_SHA}"
+                },
+                "install": {
+                  "file": "install.sh",
+                  "sha256": "${INSTALL_SHA}"
+                }
+              }
+            }
+          }
+          EOF
+
+          sha256sum \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-tray \
+            dist/neebles-auth-agent \
+            dist/client-data.tar.gz \
+            dist/install.sh \
+            dist/bootstrap.json \
+            | tee dist/SHA256SUMS
+
+      - name: Publish v1.0.4 release
+        uses: softprops/action-gh-release@v2
+
+        with:
+          tag_name: v1.0.4
+          target_commitish: main
+          name: N.E.E.B.L.E.S. Boss v1.0.4
+
+          body: |
+            N.E.E.B.L.E.S. Boss 1.0.4 stable release.
+
+            Major Boss lifecycle, authorization and module-contract update.
+
+            Changes:
+            - Custom N.E.E.B.L.E.S. Polkit authorization agent.
+            - Authorization agent included as a mandatory Boss component.
+            - Explicit module install, update and uninstall authorization.
+            - Safe module update flow for running applications.
+            - Periodic module update checking.
+            - Update action shown only when an update is available.
+            - Open action hidden while an update is pending.
+            - Module runtime lifecycle synchronization.
+            - Module language contract with locale fallback.
+            - Module language manifests require at least one available language.
+            - Boss language strings expanded for authorization and modules.
+            - Spanish Refresh label corrected to Refrescar.
+            - Internal debug/status state retained without visual status clutter.
+            - Boss UI, installer, tray, launcher and authorization agent aligned to 1.0.4.
+            - Bootstrap Schema 2 now includes the authorization agent asset.
+
+            Publishes the Rust Boss backend, Qt client UI, graphical installer,
+            tray client, N.E.E.B.L.E.S. authorization agent, complete client
+            data payload, privileged install script and Bootstrap Schema 2
+            manifest.
+
+          files: |
+            dist/neebles-backend
+            dist/neebles-ui
+            dist/neebles-installer
+            dist/neebles-tray
+            dist/neebles-auth-agent
+            dist/client-data.tar.gz
+            dist/install.sh
+            dist/bootstrap.json
+            dist/SHA256SUMS
