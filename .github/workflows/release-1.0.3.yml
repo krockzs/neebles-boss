@@ -1,0 +1,168 @@
+name: Build and release NEEBLES Boss 1.0.3
+
+on:
+  push:
+    paths:
+      - "release/trigger-v1.0.3"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie-slim
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            ca-certificates \
+            git \
+            curl \
+            build-essential \
+            cmake \
+            rustc \
+            cargo \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            libgl1-mesa-dev
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Rust backend
+        run: cargo build --release
+
+      - name: Build client UI
+        run: |
+          cmake -S ui/client -B ui/client/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build ui/client/build --parallel
+
+      - name: Build installer UI
+        run: |
+          cmake -S ui/installer -B ui/installer/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build ui/installer/build --parallel
+
+      - name: Build tray
+        run: |
+          cmake -S client/tray -B client/tray/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build client/tray/build --parallel
+
+      - name: Stage release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+
+          cp target/release/neebles-backend dist/neebles-backend
+          cp ui/client/build/neebles-ui dist/neebles-ui
+          cp ui/installer/build/neebles-installer dist/neebles-installer
+          cp client/tray/build/neebles-tray dist/neebles-tray
+          cp scripts/install.sh dist/install.sh
+
+          tar -C client -czf dist/client-data.tar.gz \
+            assets \
+            languages \
+            config \
+            launcher \
+            spacer \
+            notifications
+
+          chmod +x \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-tray \
+            dist/install.sh
+
+          BACKEND_SHA="$(sha256sum dist/neebles-backend | awk '{print $1}')"
+          UI_SHA="$(sha256sum dist/neebles-ui | awk '{print $1}')"
+          INSTALLER_SHA="$(sha256sum dist/neebles-installer | awk '{print $1}')"
+          TRAY_SHA="$(sha256sum dist/neebles-tray | awk '{print $1}')"
+          CLIENT_DATA_SHA="$(sha256sum dist/client-data.tar.gz | awk '{print $1}')"
+          INSTALL_SHA="$(sha256sum dist/install.sh | awk '{print $1}')"
+
+          cat > dist/bootstrap.json <<EOF
+          {
+            "schema": 2,
+            "channel": "stable",
+            "stable": {
+              "version": "1.0.3",
+              "base_url": "https://github.com/krockzs/neebles-boss/releases/download/v1.0.3",
+              "assets": {
+                "backend": {
+                  "file": "neebles-backend",
+                  "sha256": "${BACKEND_SHA}"
+                },
+                "ui": {
+                  "file": "neebles-ui",
+                  "sha256": "${UI_SHA}"
+                },
+                "installer": {
+                  "file": "neebles-installer",
+                  "sha256": "${INSTALLER_SHA}"
+                },
+                "tray": {
+                  "file": "neebles-tray",
+                  "sha256": "${TRAY_SHA}"
+                },
+                "client_data": {
+                  "file": "client-data.tar.gz",
+                  "sha256": "${CLIENT_DATA_SHA}"
+                },
+                "install": {
+                  "file": "install.sh",
+                  "sha256": "${INSTALL_SHA}"
+                }
+              }
+            }
+          }
+          EOF
+
+          sha256sum \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-tray \
+            dist/client-data.tar.gz \
+            dist/install.sh \
+            dist/bootstrap.json \
+            | tee dist/SHA256SUMS
+
+      - name: Publish v1.0.3 release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.3
+          target_commitish: main
+          name: N.E.E.B.L.E.S. Boss v1.0.3
+          body: |
+            N.E.E.B.L.E.S. Boss 1.0.3 stable release.
+
+            Maintenance release for the Boss desktop integration.
+
+            Changes:
+            - Single-instance Boss UI integration.
+            - Functional Tray ON/OFF runtime switch.
+            - Functional Launcher ON/OFF runtime switch.
+            - Correct Plasma launcher positioning beside Kickoff.
+            - Correct launcher sizing.
+            - 20 px N.E.E.B.L.E.S. panel spacer.
+            - Notifications enabled/disabled state feedback.
+            - Updated client payload including the spacer package.
+
+            Publishes the Rust Boss backend, Qt client UI, graphical installer,
+            tray client, complete client data payload, privileged install script
+            and Bootstrap Schema 2 manifest.
+          files: |
+            dist/neebles-backend
+            dist/neebles-ui
+            dist/neebles-installer
+            dist/neebles-tray
+            dist/client-data.tar.gz
+            dist/install.sh
+            dist/bootstrap.json
+            dist/SHA256SUMS
