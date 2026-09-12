@@ -65,7 +65,11 @@ pub fn modules_root() -> PathBuf {
 
 fn registry_url() -> String {
     env::var("NEEBLES_MODULES_REGISTRY").unwrap_or_else(|_| {
-        "https://raw.githubusercontent.com/krockzs/neebles-registry/main/modules.json".to_string()
+        concat!(
+            "https:",
+            "//raw.githubusercontent.com/krockzs/neebles-boss/main/registry/modules.json"
+        )
+        .to_string()
     })
 }
 

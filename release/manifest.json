@@ -1,32 +1,59 @@
 {
-  "schema": 2,
-  "name": "N.E.E.B.L.E.S. Boss",
+  "schema": 1,
+  "channel": "stable",
   "version": "1.0.0",
-  "components": {
-    "installer": "neebles-installer",
-    "backend": "neebles-backend",
-    "ui": "neebles-ui",
-    "tray": "neebles-tray",
-    "launcher": "org.neebles.launcher",
-    "notifications": "boss-routed-plasma"
+  "base_url": "https://github.com/krockzs/neebles-boss/releases/download/v1.0.0",
+  "assets": {
+    "backend": {
+      "file": "neebles-backend",
+      "sha256": "ef4c8c0668dfdafc651fa017156d550c28bd4d0456451a09808d500f51c13c67",
+      "executable": true
+    },
+    "ui": {
+      "file": "neebles-ui",
+      "sha256": "af2c598dc8839b67d96528c2f14ac8f8d3a24375da358a685fc0e0a14e081033",
+      "executable": true
+    },
+    "installer": {
+      "file": "neebles-installer",
+      "sha256": "f811c39485cf567346678c1f7ada44d2d167653da3c61c1dbf30df724251ec66",
+      "executable": true
+    },
+    "tray": {
+      "file": "neebles-tray",
+      "sha256": "d0686b06b4852f66140e36b71fb8c5b85b7dcec7243b3f8c54454b50b6e74503",
+      "executable": true
+    },
+    "client_data": {
+      "file": "client-data.tar.gz",
+      "sha256": "1170a93766eaee7f893c1732e8e9ee8492b2945759f8f7e3957f9fd34a988a8a",
+      "executable": false
+    },
+    "install": {
+      "file": "install.sh",
+      "sha256": "02483bb7546889ef06c89aa1558c1fbe77aaa2f0d7ab7f2984b55bf1ae6b6777",
+      "executable": true
+    }
   },
-  "install_root": "/opt/neebles",
-  "paths": {
-    "client_root": "/opt/neebles/client",
-    "backend": "/opt/neebles/client/backend/neebles-backend",
-    "ui": "/opt/neebles/client/ui/neebles-ui",
-    "tray": "/opt/neebles/client/tray/neebles-tray",
-    "launcher": "/opt/neebles/client/launcher",
-    "notifications": "/opt/neebles/client/notifications",
-    "languages": "/opt/neebles/client/languages",
-    "config_defaults": "/opt/neebles/client/config",
-    "os_entrypoint": "/opt/neebles/client/bin/neebles",
-    "command": "/usr/local/bin/neebles",
-    "modules_root": "/opt/neebles/modules",
-    "shared_root": "/opt/neebles/shared"
-  },
-  "registry_manifests": {
-    "checking": "https://raw.githubusercontent.com/krockzs/neebles-registry/main/boss/checking.json",
-    "critical_update": "https://raw.githubusercontent.com/krockzs/neebles-registry/main/boss/critical-update.json"
+  "launch": {
+    "interactive": {
+      "entrypoint": "installer",
+      "args": [
+        "install",
+        "backend",
+        "ui",
+        "tray",
+        "client_data"
+      ]
+    },
+    "headless": {
+      "entrypoint": "install",
+      "args": [
+        "backend",
+        "ui",
+        "tray",
+        "client_data"
+      ]
+    }
   }
 }

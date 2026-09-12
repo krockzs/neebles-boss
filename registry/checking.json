@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "target": "neebles-boss",
+  "channel": "stable",
+  "stable_version": "1.0.0",
+  "checks": [
+    {
+      "id": "client-root",
+      "type": "directory",
+      "path": "/opt/neebles/client",
+      "required": true,
+      "mode": "0755"
+    },
+    {
+      "id": "backend-root",
+      "type": "directory",
+      "path": "/opt/neebles/client/backend",
+      "required": true,
+      "mode": "0755"
+    },
+    {
+      "id": "boss-backend",
+      "type": "file",
+      "path": "/opt/neebles/client/backend/neebles-backend",
+      "required": true,
+      "mode": "0755",
+      "sha256": "2ee14c10000f5beba69034c8823741d0b6bd00475f0c17bce3f0698925971e8d",
+      "restore": {
+        "source": "bootstrap",
+        "asset": "backend"
+      }
+    },
+    {
+      "id": "ui-root",
+      "type": "directory",
+      "path": "/opt/neebles/client/ui",
+      "required": true,
+      "mode": "0755"
+    },
+    {
+      "id": "boss-ui",
+      "type": "file",
+      "path": "/opt/neebles/client/ui/neebles-ui",
+      "required": true,
+      "mode": "0755",
+      "sha256": "941948d86ccbc341b73b5722f0461dab849f3416df895afa0900f03c7ca57042",
+      "restore": {
+        "source": "bootstrap",
+        "asset": "ui"
+      }
+    },
+    {
+      "id": "bin-root",
+      "type": "directory",
+      "path": "/opt/neebles/client/bin",
+      "required": true,
+      "mode": "0755"
+    },
+    {
+      "id": "client-entrypoint",
+      "type": "symlink",
+      "path": "/opt/neebles/client/bin/neebles",
+      "target": "/opt/neebles/client/backend/neebles-backend",
+      "required": true,
+      "restore": {
+        "source": "symlink",
+        "target": "/opt/neebles/client/backend/neebles-backend"
+      }
+    },
+    {
+      "id": "global-command",
+      "type": "symlink",
+      "path": "/usr/local/bin/neebles",
+      "target": "/opt/neebles/client/bin/neebles",
+      "required": true,
+      "restore": {
+        "source": "symlink",
+        "target": "/opt/neebles/client/bin/neebles"
+      }
+    },
+    {
+      "id": "modules-root",
+      "type": "directory",
+      "path": "/opt/neebles/modules",
+      "required": true,
+      "mode": "0755"
+    },
+    {
+      "id": "shared-root",
+      "type": "directory",
+      "path": "/opt/neebles/shared",
+      "required": true,
+      "mode": "0755"
+    }
+  ]
+}
