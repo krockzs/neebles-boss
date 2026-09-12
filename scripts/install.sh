@@ -23,7 +23,7 @@ if [[ ${EUID} -ne 0 ]]; then
     exit 1
 fi
 
-if [[ $# -lt 5 ]]; then
+if [[ $# -lt 4 ]]; then
     echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <neebles-tray-binary> <client-data.tar.gz>" >&2
     exit 1
 fi
