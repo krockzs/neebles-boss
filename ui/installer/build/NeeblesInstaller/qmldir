@@ -1,6 +1,0 @@
-module NeeblesInstaller
-typeinfo neebles-installer.qmltypes
-prefer :/qt/qml/NeeblesInstaller/
-Main 1.0 qml/Main.qml
-depends QtQuick
-

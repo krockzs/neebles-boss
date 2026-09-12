@@ -1,0 +1,5 @@
+/target/
+/ui/client/build/
+/ui/installer/build/
+/client/tray/build/
+/dist/

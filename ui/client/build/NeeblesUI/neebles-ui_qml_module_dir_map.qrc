@@ -1,6 +1,0 @@
-<RCC>
-  <qresource prefix="/">
-    <file alias="/qt/qml/NeeblesUI">/home/thomyorke/NEEBLES/neebles-boss/ui/client/build/NeeblesUI</file>
-
-  </qresource>
-</RCC>

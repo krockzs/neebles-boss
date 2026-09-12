@@ -1,5 +1,0 @@
---resource
-/home/thomyorke/NEEBLES/neebles-boss/ui/client/build/.qt/rcc/qmake_NeeblesUI.qrc
---resource
-/home/thomyorke/NEEBLES/neebles-boss/ui/client/build/.qt/rcc/neebles-ui_raw_qml_0.qrc
-/qt/qml/NeeblesUI/qml/Main.qml

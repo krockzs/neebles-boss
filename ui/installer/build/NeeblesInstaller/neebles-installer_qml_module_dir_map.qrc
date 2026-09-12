@@ -1,6 +1,0 @@
-<RCC>
-  <qresource prefix="/">
-    <file alias="/qt/qml/NeeblesInstaller">/home/thomyorke/NEEBLES/neebles-boss/ui/installer/build/NeeblesInstaller</file>
-
-  </qresource>
-</RCC>
