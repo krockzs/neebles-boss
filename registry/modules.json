@@ -3,7 +3,7 @@
   "modules": {
     "test-module": {
       "repo": "https://github.com/krockzs/neebles-test-module.git",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "branch": "main",
       "folder": "test-module"
     }
