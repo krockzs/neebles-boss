@@ -6,6 +6,7 @@ use std::process::Command;
 
 const CURRENT_ARCHITECTURE: &str = "amd64";
 const CURRENT_DISTRIBUTION: &str = "debian";
+const NEEBLES_OS_REPOSITORY: &str = "https://github.com/krockzs/neebles-os.git";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedOperation {
@@ -571,6 +572,13 @@ fn resolve_flow_item(
                 )
             })?;
 
+            if values.is_empty() {
+                return Err(format!(
+                    "variable '{}' must contain at least one value for operand_list",
+                    source
+                ));
+            }
+
             for value in values {
                 args.push(scalar_to_string(value, kind)?);
             }
@@ -675,49 +683,43 @@ fn validate_expect(
 }
 
 fn fetch_dictionary() -> Result<Value, String> {
-    const MAIN_REF_URL: &str =
-        "https://api.github.com/repos/krockzs/neebles-os/git/ref/heads/main";
-
-    let ref_output = Command::new("curl")
+    let ref_output = Command::new("git")
         .args([
-            "-fsSL",
-            "--max-time",
-            "15",
-            "-H",
-            "Accept: application/vnd.github+json",
-            "-H",
-            "X-GitHub-Api-Version: 2022-11-28",
-            MAIN_REF_URL,
+            "ls-remote",
+            NEEBLES_OS_REPOSITORY,
+            "refs/heads/main",
         ])
         .output()
         .map_err(|error| {
             format!(
-                "could not start curl while resolving neebles-os main ref: {error}"
+                "could not start git while resolving neebles-os main ref: {error}"
             )
         })?;
 
     if !ref_output.status.success() {
         return Err(format!(
-            "could not resolve neebles-os main ref from GitHub: {}",
-            ref_output.status
+            "could not resolve neebles-os main ref with git: {}: {}",
+            ref_output.status,
+            String::from_utf8_lossy(&ref_output.stderr).trim()
         ));
     }
 
-    let ref_json: Value = serde_json::from_slice(&ref_output.stdout)
-        .map_err(|error| {
-            format!(
-                "invalid GitHub main ref response: {error}"
-            )
-        })?;
-
-    let commit_sha = ref_json
-        .get("object")
-        .and_then(|value| value.get("sha"))
-        .and_then(Value::as_str)
+    let ref_stdout = String::from_utf8_lossy(&ref_output.stdout);
+    let commit_sha = ref_stdout
+        .split_whitespace()
+        .next()
+        .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            "GitHub main ref response does not contain object.sha"
+            "git ls-remote did not return a commit SHA for neebles-os main"
                 .to_string()
         })?;
+
+    if !commit_sha.chars().all(|value| value.is_ascii_hexdigit()) {
+        return Err(format!(
+            "git ls-remote returned an invalid commit SHA '{}'",
+            commit_sha
+        ));
+    }
 
     let dictionary_url = format!(
         "https://raw.githubusercontent.com/krockzs/neebles-os/{}/config/installers/instaladores_amd64.json",
@@ -740,9 +742,10 @@ fn fetch_dictionary() -> Result<Value, String> {
 
     if !output.status.success() {
         return Err(format!(
-            "could not read installer dictionary from GitHub commit '{}': {}",
+            "could not read installer dictionary from GitHub commit '{}': {}: {}",
             commit_sha,
-            output.status
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
 
