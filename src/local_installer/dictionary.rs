@@ -1,6 +1,7 @@
 use super::LocalInstallerRequest;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
 const CURRENT_ARCHITECTURE: &str = "amd64";
@@ -16,6 +17,23 @@ pub struct ResolvedOperation {
     pub args: Vec<String>,
     pub root_mode: String,
     pub expect: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DictionaryAudit {
+    pub ok: bool,
+    pub architecture: String,
+    pub schema: Option<u64>,
+    pub version: Option<u64>,
+    pub distributions: usize,
+    pub installers: usize,
+    pub operations: usize,
+    pub flow_items: usize,
+    pub root_modes: BTreeMap<String, usize>,
+    pub flow_kinds: BTreeMap<String, usize>,
+    pub variable_sources: BTreeMap<String, usize>,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 pub fn resolve(
@@ -108,11 +126,7 @@ pub fn resolve(
     let mut args = Vec::new();
 
     for item in flow {
-        resolve_flow_item(
-            item,
-            request,
-            &mut args,
-        )?;
+        resolve_flow_item(item, request, &mut args)?;
     }
 
     let root_mode = operation
@@ -127,23 +141,348 @@ pub fn resolve(
         })?
         .to_string();
 
-    let expect =
-        operation.get("expect").cloned();
+    match root_mode.as_str() {
+        "required" | "not_required" | "contextual" => {}
+        other => {
+            return Err(format!(
+                "operation '{}:{}' defines unsupported root_mode '{}'",
+                request.installer,
+                request.operation,
+                other
+            ));
+        }
+    }
+
+    let expect = operation.get("expect").cloned();
+    validate_expect(
+        &format!("{}:{}", request.installer, request.operation),
+        expect.as_ref(),
+    )?;
 
     Ok(ResolvedOperation {
-        architecture:
-            CURRENT_ARCHITECTURE.to_string(),
-        distribution:
-            CURRENT_DISTRIBUTION.to_string(),
-        installer:
-            request.installer.clone(),
-        operation:
-            request.operation.clone(),
+        architecture: CURRENT_ARCHITECTURE.to_string(),
+        distribution: CURRENT_DISTRIBUTION.to_string(),
+        installer: request.installer.clone(),
+        operation: request.operation.clone(),
         command,
         args,
         root_mode,
         expect,
     })
+}
+
+pub fn audit_dictionary() -> Result<DictionaryAudit, String> {
+    let dictionary = fetch_dictionary()?;
+
+    let architecture = dictionary
+        .get("architecture")
+        .and_then(Value::as_str)
+        .unwrap_or("<missing>")
+        .to_string();
+
+    let schema = dictionary.get("schema").and_then(Value::as_u64);
+    let version = dictionary.get("version").and_then(Value::as_u64);
+
+    let mut audit = DictionaryAudit {
+        ok: true,
+        architecture: architecture.clone(),
+        schema,
+        version,
+        distributions: 0,
+        installers: 0,
+        operations: 0,
+        flow_items: 0,
+        root_modes: BTreeMap::new(),
+        flow_kinds: BTreeMap::new(),
+        variable_sources: BTreeMap::new(),
+        errors: Vec::new(),
+        warnings: Vec::new(),
+    };
+
+    if architecture != CURRENT_ARCHITECTURE {
+        audit.errors.push(format!(
+            "dictionary architecture '{}' does not match Boss architecture '{}'",
+            architecture,
+            CURRENT_ARCHITECTURE
+        ));
+    }
+
+    let Some(distributions) = dictionary
+        .get("distributions")
+        .and_then(Value::as_object)
+    else {
+        audit.errors.push(
+            "installer dictionary does not contain a valid 'distributions' object"
+                .to_string(),
+        );
+        audit.ok = false;
+        return Ok(audit);
+    };
+
+    let allowed_root_modes: BTreeSet<&str> =
+        ["required", "not_required", "contextual"]
+            .into_iter()
+            .collect();
+
+    for (distribution_id, distribution) in distributions {
+        audit.distributions += 1;
+
+        let Some(installers) = distribution
+            .get("installers")
+            .and_then(Value::as_object)
+        else {
+            audit.errors.push(format!(
+                "distribution '{}' does not contain a valid installers object",
+                distribution_id
+            ));
+            continue;
+        };
+
+        for (installer_id, installer) in installers {
+            audit.installers += 1;
+
+            let Some(operations) = installer
+                .get("operations")
+                .and_then(Value::as_object)
+            else {
+                audit.errors.push(format!(
+                    "{}:{} does not contain a valid operations object",
+                    distribution_id,
+                    installer_id
+                ));
+                continue;
+            };
+
+            if operations.is_empty() {
+                audit.errors.push(format!(
+                    "{}:{} contains zero operations",
+                    distribution_id,
+                    installer_id
+                ));
+            }
+
+            for (operation_id, operation) in operations {
+                audit.operations += 1;
+                let prefix = format!(
+                    "{}:{}:{}",
+                    distribution_id,
+                    installer_id,
+                    operation_id
+                );
+
+                let Some(operation_object) = operation.as_object() else {
+                    audit.errors.push(format!(
+                        "{} operation must be a JSON object",
+                        prefix
+                    ));
+                    continue;
+                };
+
+                match operation_object.get("command").and_then(Value::as_str) {
+                    Some(command) if !command.is_empty() => {}
+                    _ => audit.errors.push(format!(
+                        "{} does not define a valid command",
+                        prefix
+                    )),
+                }
+
+                match operation_object
+                    .get("root_mode")
+                    .and_then(Value::as_str)
+                {
+                    Some(root_mode) if allowed_root_modes.contains(root_mode) => {
+                        *audit.root_modes.entry(root_mode.to_string()).or_insert(0) += 1;
+                    }
+                    Some(root_mode) => audit.errors.push(format!(
+                        "{} defines unsupported root_mode '{}'",
+                        prefix,
+                        root_mode
+                    )),
+                    None => audit.errors.push(format!(
+                        "{} does not define root_mode",
+                        prefix
+                    )),
+                }
+
+                let Some(flow) = operation_object
+                    .get("flow")
+                    .and_then(Value::as_array)
+                else {
+                    audit.errors.push(format!(
+                        "{} does not define a flow array",
+                        prefix
+                    ));
+                    continue;
+                };
+
+                for (index, item) in flow.iter().enumerate() {
+                    audit.flow_items += 1;
+                    audit_flow_item(
+                        &prefix,
+                        index,
+                        item,
+                        &mut audit,
+                    );
+                }
+
+                if let Err(error) = validate_expect(
+                    &prefix,
+                    operation_object.get("expect"),
+                ) {
+                    audit.errors.push(error);
+                }
+
+                if let Some(variables) = operation_object
+                    .get("variables")
+                    .and_then(Value::as_object)
+                {
+                    for (name, spec) in variables {
+                        let expected = spec
+                            .get("type")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<missing>");
+                        if !matches!(expected, "scalar" | "array" | "scalar_or_array") {
+                            audit.errors.push(format!(
+                                "{} variable '{}' has unsupported type '{}'",
+                                prefix,
+                                name,
+                                expected
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(stats) = dictionary.get("dictionary_stats") {
+        if let Some(expected) = stats.get("operations").and_then(Value::as_u64) {
+            if expected as usize != audit.operations {
+                audit.warnings.push(format!(
+                    "dictionary_stats.operations={} but audit counted {}",
+                    expected,
+                    audit.operations
+                ));
+            }
+        }
+    }
+
+    audit.ok = audit.errors.is_empty();
+    Ok(audit)
+}
+
+fn audit_flow_item(
+    prefix: &str,
+    index: usize,
+    item: &Value,
+    audit: &mut DictionaryAudit,
+) {
+    let Some(object) = item.as_object() else {
+        audit.errors.push(format!(
+            "{} flow[{}] is not an object",
+            prefix,
+            index
+        ));
+        return;
+    };
+
+    let Some(kind) = object.get("kind").and_then(Value::as_str) else {
+        audit.errors.push(format!(
+            "{} flow[{}] does not define kind",
+            prefix,
+            index
+        ));
+        return;
+    };
+
+    *audit.flow_kinds.entry(kind.to_string()).or_insert(0) += 1;
+
+    if let Some(source) = object.get("source").and_then(Value::as_str) {
+        *audit
+            .variable_sources
+            .entry(source.to_string())
+            .or_insert(0) += 1;
+    }
+
+    let result = validate_flow_shape(object, kind);
+    if let Err(error) = result {
+        audit.errors.push(format!(
+            "{} flow[{}]: {}",
+            prefix,
+            index,
+            error
+        ));
+    }
+}
+
+fn validate_flow_shape(
+    object: &Map<String, Value>,
+    kind: &str,
+) -> Result<(), String> {
+    match kind {
+        "subcommand" | "flag" | "literal" | "separator" => {
+            let value = object
+                .get("value")
+                .ok_or_else(|| {
+                    format!("flow kind '{}' requires value", kind)
+                })?;
+            scalar_to_string(value, kind).map(|_| ())
+        }
+        "operand" => {
+            validate_value_or_source_shape(object, kind)
+        }
+        "operand_list" => {
+            object
+                .get("source")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    "flow kind 'operand_list' requires source"
+                        .to_string()
+                })?;
+            Ok(())
+        }
+        "option" => {
+            object
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    "flow kind 'option' requires name"
+                        .to_string()
+                })?;
+            validate_value_or_source_shape(object, kind)
+        }
+        other => Err(format!(
+            "unsupported flow kind '{}'",
+            other
+        )),
+    }
+}
+
+fn validate_value_or_source_shape(
+    object: &Map<String, Value>,
+    kind: &str,
+) -> Result<(), String> {
+    let has_value = object.contains_key("value");
+    let has_source = object
+        .get("source")
+        .and_then(Value::as_str)
+        .map(|value| !value.is_empty())
+        .unwrap_or(false);
+
+    if has_value == has_source {
+        return Err(format!(
+            "flow kind '{}' requires exactly one of value/source",
+            kind
+        ));
+    }
+
+    if let Some(value) = object.get("value") {
+        scalar_to_string(value, kind)?;
+    }
+
+    Ok(())
 }
 
 fn validate_architecture(
@@ -173,15 +512,13 @@ fn resolve_flow_item(
     request: &LocalInstallerRequest,
     args: &mut Vec<String>,
 ) -> Result<(), String> {
-    let object = item
-        .as_object()
-        .ok_or_else(|| {
-            format!(
-                "operation '{}:{}' contains a non-object flow item",
-                request.installer,
-                request.operation
-            )
-        })?;
+    let object = item.as_object().ok_or_else(|| {
+        format!(
+            "operation '{}:{}' contains a non-object flow item",
+            request.installer,
+            request.operation
+        )
+    })?;
 
     let kind = object
         .get("kind")
@@ -194,52 +531,26 @@ fn resolve_flow_item(
             )
         })?;
 
+    validate_flow_shape(object, kind)?;
+
     match kind {
-        "subcommand"
-        | "flag"
-        | "literal"
-        | "separator" => {
-            let value = object
-                .get("value")
-                .ok_or_else(|| {
-                    format!(
-                        "flow kind '{}' requires value",
-                        kind
-                    )
-                })?;
-
-            args.push(
-                scalar_to_string(
-                    value,
-                    kind,
-                )?
-            );
+        "subcommand" | "flag" | "literal" | "separator" => {
+            let value = object.get("value").expect("validated value");
+            args.push(scalar_to_string(value, kind)?);
         }
-
         "operand" => {
-            let value =
-                resolve_value_or_source(
-                    object,
-                    request,
-                    kind,
-                )?;
-
-            args.push(
-                scalar_to_string(
-                    value,
-                    kind,
-                )?
-            );
+            let value = resolve_value_or_source(
+                object,
+                request,
+                kind,
+            )?;
+            args.push(scalar_to_string(value, kind)?);
         }
-
         "operand_list" => {
             let source = object
                 .get("source")
                 .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    "flow kind 'operand_list' requires source"
-                        .to_string()
-                })?;
+                .expect("validated source");
 
             let value = request
                 .variables
@@ -253,71 +564,44 @@ fn resolve_flow_item(
                     )
                 })?;
 
-            let values = value
-                .as_array()
-                .ok_or_else(|| {
-                    format!(
-                        "variable '{}' must be an array for operand_list",
-                        source
-                    )
-                })?;
+            let values = value.as_array().ok_or_else(|| {
+                format!(
+                    "variable '{}' must be an array for operand_list",
+                    source
+                )
+            })?;
 
             for value in values {
-                args.push(
-                    scalar_to_string(
-                        value,
-                        kind,
-                    )?
-                );
+                args.push(scalar_to_string(value, kind)?);
             }
         }
-
         "option" => {
             let name = object
                 .get("name")
                 .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    "flow kind 'option' requires name"
-                        .to_string()
-                })?;
+                .expect("validated option name");
 
-            let value =
-                resolve_value_or_source(
-                    object,
-                    request,
-                    kind,
-                )?;
+            let value = resolve_value_or_source(
+                object,
+                request,
+                kind,
+            )?;
 
             args.push(name.to_string());
-            args.push(
-                scalar_to_string(
-                    value,
-                    kind,
-                )?
-            );
+            args.push(scalar_to_string(value, kind)?);
         }
-
-        other => {
-            return Err(format!(
-                "unsupported flow kind '{}' for installer '{}', operation '{}'",
-                other,
-                request.installer,
-                request.operation
-            ));
-        }
+        _ => unreachable!("validated flow kind"),
     }
 
     Ok(())
 }
 
 fn resolve_value_or_source<'a>(
-    object: &'a serde_json::Map<String, Value>,
+    object: &'a Map<String, Value>,
     request: &'a LocalInstallerRequest,
     kind: &str,
 ) -> Result<&'a Value, String> {
-    if let Some(value) =
-        object.get("value")
-    {
+    if let Some(value) = object.get("value") {
         return Ok(value);
     }
 
@@ -331,17 +615,14 @@ fn resolve_value_or_source<'a>(
             )
         })?;
 
-    request
-        .variables
-        .get(source)
-        .ok_or_else(|| {
-            format!(
-                "missing variable '{}' for installer '{}', operation '{}'",
-                source,
-                request.installer,
-                request.operation
-            )
-        })
+    request.variables.get(source).ok_or_else(|| {
+        format!(
+            "missing variable '{}' for installer '{}', operation '{}'",
+            source,
+            request.installer,
+            request.operation
+        )
+    })
 }
 
 fn scalar_to_string(
@@ -349,20 +630,48 @@ fn scalar_to_string(
     context: &str,
 ) -> Result<String, String> {
     match value {
-        Value::String(value) =>
-            Ok(value.clone()),
-
-        Value::Number(value) =>
-            Ok(value.to_string()),
-
-        Value::Bool(value) =>
-            Ok(value.to_string()),
-
+        Value::String(value) => Ok(value.clone()),
+        Value::Number(value) => Ok(value.to_string()),
+        Value::Bool(value) => Ok(value.to_string()),
         _ => Err(format!(
             "{} requires a scalar JSON value",
             context
         )),
     }
+}
+
+fn validate_expect(
+    context: &str,
+    expect: Option<&Value>,
+) -> Result<(), String> {
+    let Some(expect) = expect else {
+        return Ok(());
+    };
+
+    let object = expect.as_object().ok_or_else(|| {
+        format!("{} expect field must be a JSON object", context)
+    })?;
+
+    for key in object.keys() {
+        if key != "stdout_equals" {
+            return Err(format!(
+                "{} uses unsupported expectation key '{}'",
+                context,
+                key
+            ));
+        }
+    }
+
+    if let Some(value) = object.get("stdout_equals") {
+        if !value.is_string() {
+            return Err(format!(
+                "{} expect.stdout_equals must be a string",
+                context
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn fetch_dictionary() -> Result<Value, String> {
@@ -394,13 +703,12 @@ fn fetch_dictionary() -> Result<Value, String> {
         ));
     }
 
-    let ref_json: Value =
-        serde_json::from_slice(&ref_output.stdout)
-            .map_err(|error| {
-                format!(
-                    "invalid GitHub main ref response: {error}"
-                )
-            })?;
+    let ref_json: Value = serde_json::from_slice(&ref_output.stdout)
+        .map_err(|error| {
+            format!(
+                "invalid GitHub main ref response: {error}"
+            )
+        })?;
 
     let commit_sha = ref_json
         .get("object")
