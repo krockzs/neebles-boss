@@ -1,3 +1,4 @@
+use super::distribution;
 use super::LocalInstallerRequest;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -5,13 +6,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
 const CURRENT_ARCHITECTURE: &str = "amd64";
-const CURRENT_DISTRIBUTION: &str = "debian";
 const NEEBLES_OS_REPOSITORY: &str = "https://github.com/krockzs/neebles-os.git";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedOperation {
     pub architecture: String,
+    pub detected_distribution: String,
     pub distribution: String,
+    pub distribution_match: String,
+    pub distribution_candidates: Vec<String>,
     pub installer: String,
     pub operation: String,
     pub command: String,
@@ -52,12 +55,18 @@ pub fn resolve(
                 .to_string()
         })?;
 
+    let distribution_resolution =
+        distribution::resolve(distributions)?;
+
+    let selected_distribution =
+        &distribution_resolution.distribution;
+
     let distribution = distributions
-        .get(CURRENT_DISTRIBUTION)
+        .get(selected_distribution)
         .ok_or_else(|| {
             format!(
-                "distribution '{}' does not exist in installer dictionary",
-                CURRENT_DISTRIBUTION
+                "resolved distribution '{}' does not exist in installer dictionary",
+                selected_distribution
             )
         })?;
 
@@ -67,7 +76,7 @@ pub fn resolve(
         .ok_or_else(|| {
             format!(
                 "distribution '{}' does not contain a valid installers object",
-                CURRENT_DISTRIBUTION
+                selected_distribution
             )
         })?;
 
@@ -77,7 +86,7 @@ pub fn resolve(
             format!(
                 "installer '{}' does not exist for distribution '{}'",
                 request.installer,
-                CURRENT_DISTRIBUTION
+                selected_distribution
             )
         })?;
 
@@ -162,7 +171,13 @@ pub fn resolve(
 
     Ok(ResolvedOperation {
         architecture: CURRENT_ARCHITECTURE.to_string(),
-        distribution: CURRENT_DISTRIBUTION.to_string(),
+        detected_distribution:
+            distribution_resolution.detected.id.clone(),
+        distribution: selected_distribution.clone(),
+        distribution_match:
+            distribution_resolution.matched_by.clone(),
+        distribution_candidates:
+            distribution_resolution.candidates.clone(),
         installer: request.installer.clone(),
         operation: request.operation.clone(),
         command,
