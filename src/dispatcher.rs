@@ -1,4 +1,5 @@
 use crate::modules;
+use crate::local_installer;
 use crate::notifications::{self, Severity};
 use crate::request::{ExecutionRequest, ExecutionResponse};
 use serde_json::json;
@@ -38,6 +39,43 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
             Ok(()) => ExecutionResponse::ok(None),
             Err(error) => ExecutionResponse::fail(1, "ui_launch", error),
         },
+        Some("local-installer") => {
+            let Some(raw) = request.args.first() else {
+                return ExecutionResponse::fail(
+                    2,
+                    "missing_local_installer_request",
+                    "Boss local-installer requires a JSON request",
+                );
+            };
+
+            let parsed: local_installer::LocalInstallerRequest =
+                match serde_json::from_str(raw) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return ExecutionResponse::fail(
+                            2,
+                            "invalid_local_installer_request",
+                            format!("invalid local-installer request: {error}"),
+                        );
+                    }
+                };
+
+            match local_installer::handle(parsed) {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(value) => ExecutionResponse::ok(Some(value)),
+                    Err(error) => ExecutionResponse::fail(
+                        1,
+                        "local_installer_serialization",
+                        format!("could not serialize local-installer result: {error}"),
+                    ),
+                },
+                Err(error) => ExecutionResponse::fail(
+                    1,
+                    "local_installer",
+                    error,
+                ),
+            }
+        }
         Some(other) => ExecutionResponse::fail(2, "unknown_boss_action", format!("unknown Boss action: {other}")),
         None => ExecutionResponse::fail(2, "missing_boss_action", "Boss request requires an action"),
     }

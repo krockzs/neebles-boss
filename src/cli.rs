@@ -27,6 +27,7 @@ pub fn run(args: Vec<String>) -> i32 {
         "i18n" => i18n_command(&args[1..]),
         "modules" => modules_command(&args[1..]),
         "notify" => notify_command(&args[1..]),
+        "socket" => socket_command(&args[1..]),
         target => module_command(target, &args[1..]),
     }
 }
@@ -224,6 +225,13 @@ fn modules_command(args: &[String]) -> i32 {
     }
 }
 
+fn socket_command(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("serve") => result(crate::ipc::serve()),
+        _ => fail("usage: neebles socket serve".to_string()),
+    }
+}
+
 fn notify_command(args: &[String]) -> i32 {
     let Some(severity) = args.first() else {
         return fail("notify requires a severity".to_string());
@@ -314,5 +322,7 @@ fn print_help() {
     println!("  neebles modules update <module> --close-running");
     println!("  neebles modules enable|disable <module>");
     println!("  neebles notify <info|success|warning|critical|fatal> <title> <message>");
+    println!("  neebles socket serve");
+    println!("  neebles boss local-installer '<LocalInstallerRequest JSON>'");
     println!("  neebles --request-json '<ExecutionRequest JSON>'");
 }

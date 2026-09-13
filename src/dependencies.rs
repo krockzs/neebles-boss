@@ -71,9 +71,8 @@ fn resolve_one(dependency: &SystemDependency) -> Result<(), String> {
 
 fn dependency_satisfied(dependency: &SystemDependency) -> Result<bool, String> {
     let provider_ok = match dependency.provider.as_str() {
-        "apt" => command_success(
-            "dpkg-query",
-            &["-W", "-f=${Status}", dependency.package.as_str()],
+        "apt" => apt_package_installed(
+            dependency.package.as_str()
         ),
         "snap" => {
             command_exists("snap") && command_success("snap", &["list", dependency.package.as_str()])
@@ -95,6 +94,32 @@ fn dependency_satisfied(dependency: &SystemDependency) -> Result<bool, String> {
 
     Ok(true)
 }
+
+fn apt_package_installed(package: &str) -> bool {
+    let output = match Command::new("dpkg-query")
+        .args([
+            "-W",
+            "-f=${Status}",
+            package,
+        ])
+        .output()
+    {
+        Ok(output) => output,
+        Err(_) => return false,
+    };
+
+    if !output.status.success() {
+        return false;
+    }
+
+    let status =
+        String::from_utf8_lossy(
+            &output.stdout
+        );
+
+    status.trim() == "install ok installed"
+}
+
 
 fn ensure_provider(provider: &str) -> Result<(), String> {
     match provider {
