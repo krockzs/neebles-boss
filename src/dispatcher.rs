@@ -1,5 +1,5 @@
-use crate::modules;
 use crate::local_installer;
+use crate::modules;
 use crate::notifications::{self, Severity};
 use crate::request::{ExecutionRequest, ExecutionResponse};
 use serde_json::json;
@@ -39,6 +39,23 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
             Ok(()) => ExecutionResponse::ok(None),
             Err(error) => ExecutionResponse::fail(1, "ui_launch", error),
         },
+        Some("local-installer-audit") => {
+            match local_installer::audit_dictionary() {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(value) => ExecutionResponse::ok(Some(value)),
+                    Err(error) => ExecutionResponse::fail(
+                        1,
+                        "local_installer_audit_serialization",
+                        format!("could not serialize local-installer audit: {error}"),
+                    ),
+                },
+                Err(error) => ExecutionResponse::fail(
+                    1,
+                    "local_installer_audit",
+                    error,
+                ),
+            }
+        }
         Some("local-installer-resolve") => {
             let Some(raw) = request.args.first() else {
                 return ExecutionResponse::fail(
