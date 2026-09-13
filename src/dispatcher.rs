@@ -39,6 +39,47 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
             Ok(()) => ExecutionResponse::ok(None),
             Err(error) => ExecutionResponse::fail(1, "ui_launch", error),
         },
+        Some("local-installer-resolve") => {
+            let Some(raw) = request.args.first() else {
+                return ExecutionResponse::fail(
+                    2,
+                    "missing_local_installer_request",
+                    "Boss local-installer-resolve requires a JSON request",
+                );
+            };
+
+            let parsed: local_installer::LocalInstallerRequest =
+                match serde_json::from_str(raw) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return ExecutionResponse::fail(
+                            2,
+                            "invalid_local_installer_request",
+                            format!(
+                                "invalid local-installer-resolve request: {error}"
+                            ),
+                        );
+                    }
+                };
+
+            match local_installer::resolve_only(&parsed) {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(value) => ExecutionResponse::ok(Some(value)),
+                    Err(error) => ExecutionResponse::fail(
+                        1,
+                        "local_installer_resolution_serialization",
+                        format!(
+                            "could not serialize local-installer resolution: {error}"
+                        ),
+                    ),
+                },
+                Err(error) => ExecutionResponse::fail(
+                    1,
+                    "local_installer_resolution",
+                    error,
+                ),
+            }
+        }
         Some("local-installer") => {
             let Some(raw) = request.args.first() else {
                 return ExecutionResponse::fail(
