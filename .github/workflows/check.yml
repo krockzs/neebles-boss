@@ -25,3 +25,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Cargo check
         run: cargo check --locked
+      - name: Audit remote AMD64 installer dictionary
+        run: |
+          cargo run --locked -- --request-json '{
+            "target":"boss",
+            "action":"local-installer-audit",
+            "args":[],
+            "context":{"caller":"ci"}
+          }'
