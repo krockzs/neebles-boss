@@ -4,7 +4,6 @@
     "test-module": {
       "repo": "https://github.com/krockzs/neebles-test-module.git",
       "version": "1.0.3",
-      "branch": "main",
       "folder": "test-module",
       "commit": "2247bdce8c595ca6bf43d3ad418ae8a4ad578b53"
     }

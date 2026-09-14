@@ -108,9 +108,6 @@ pub struct RegistryModule {
     pub version: Option<String>,
 
     #[serde(default)]
-    pub branch: Option<String>,
-
-    #[serde(default)]
     pub folder: Option<String>,
 }
 
@@ -540,13 +537,15 @@ fn local_module_icon(module_dir: &Path) -> String {
     String::new()
 }
 
-fn github_raw_base(repo: &str, branch: &str) -> Option<String> {
+fn github_raw_base(repo: &str, revision: &str) -> Option<String> {
     let repo = repo
         .strip_prefix("https://github.com/")?
         .trim_end_matches(".git")
         .trim_end_matches('/');
 
-    Some(format!("https://raw.githubusercontent.com/{repo}/{branch}"))
+    Some(format!(
+        "https://raw.githubusercontent.com/{repo}/{revision}"
+    ))
 }
 
 fn remote_module_icon(repo: &str, commit: &str) -> String {
@@ -664,89 +663,98 @@ fn write_runtime_marker(name: &str, pid: u32) -> Result<(), String> {
     })
 }
 
-fn module_pid(name: &str) -> Option<u32> {
+fn probe_module_pid(name: &str) -> Result<Option<u32>, String> {
     let path = runtime_marker_path(name);
 
-    let raw = fs::read_to_string(&path).ok()?;
+    let raw = match fs::read_to_string(&path) {
+        Ok(value) => value,
 
-    let pid = match raw.trim().parse::<u32>() {
-        Ok(pid) => pid,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
 
-        Err(_) => {
-            clear_runtime_marker(name);
-            return None;
+        Err(error) => {
+            return Err(format!(
+                "could not read module runtime marker {}: {error}",
+                path.display()
+            ));
         }
     };
+
+    let pid = raw.trim().parse::<u32>().map_err(|error| {
+        format!(
+            "module '{}' has an invalid runtime marker {}: {error}",
+            name,
+            path.display()
+        )
+    })?;
 
     let process_path = PathBuf::from(format!("/proc/{pid}"));
 
     if !process_path.exists() {
         clear_runtime_marker_if_pid(name, pid);
-        return None;
+
+        return Ok(None);
     }
 
     /*
-     * Never trust a PID marker by itself.
+     * From here onward a live PID exists.
      *
-     * Linux can reuse process ids. Verify that the
-     * process still belongs to this module's declared
-     * entrypoint before treating it as tracked runtime.
+     * Failure to prove ownership must NEVER be converted
+     * into "not running". That would allow destructive
+     * operations to proceed while an unknown process may
+     * still be using the installed module.
      */
-    let module_dir = match find_module_dir(name) {
-        Ok(path) => path,
 
-        Err(_) => {
-            clear_runtime_marker_if_pid(name, pid);
-            return None;
-        }
-    };
+    let module_dir = find_module_dir(name).map_err(|error| {
+        format!(
+            "module '{}' runtime process {} exists, but its installation cannot be resolved: {}",
+            name, pid, error
+        )
+    })?;
 
-    let manifest = match read_manifest(&module_dir.join("manifest.json")) {
-        Ok(manifest) => manifest,
+    let manifest = read_manifest(&module_dir.join("manifest.json")).map_err(|error| {
+        format!(
+            "module '{}' runtime process {} exists, but its manifest cannot be verified: {}",
+            name, pid, error
+        )
+    })?;
 
-        Err(_) => {
-            clear_runtime_marker_if_pid(name, pid);
-            return None;
-        }
-    };
-
-    let expected = match resolve_entrypoint(&module_dir, &manifest.entrypoint) {
-        Ok(path) => path,
-
-        Err(_) => {
-            clear_runtime_marker_if_pid(name, pid);
-            return None;
-        }
-    };
+    let expected = resolve_entrypoint(&module_dir, &manifest.entrypoint).map_err(|error| {
+        format!(
+            "module '{}' runtime process {} exists, but its entrypoint cannot be verified: {}",
+            name, pid, error
+        )
+    })?;
 
     /*
-     * Native executable:
-     * /proc/<pid>/exe equals the declared entrypoint.
+     * Native executable.
      */
     let proc_exe = PathBuf::from(format!("/proc/{pid}/exe"));
 
     if let Ok(actual_exe) = fs::read_link(&proc_exe) {
         if let Ok(actual_exe) = actual_exe.canonicalize() {
             if actual_exe == expected {
-                return Some(pid);
+                return Ok(Some(pid));
             }
         }
     }
 
     /*
      * Interpreted entrypoint:
-     * Bash/Python/Node/etc. expose their interpreter
-     * through /proc/<pid>/exe, so the script itself
-     * must appear as one exact argv item.
+     * Bash/Python/Node/etc.
      */
-    let cmdline = match fs::read(format!("/proc/{pid}/cmdline")) {
-        Ok(value) => value,
-
-        Err(_) => {
-            clear_runtime_marker_if_pid(name, pid);
-            return None;
-        }
-    };
+    let cmdline =
+        fs::read(
+            format!("/proc/{pid}/cmdline")
+        )
+        .map_err(|error| {
+            format!(
+                "module '{}' runtime process {} exists, but its command line cannot be inspected: {error}",
+                name,
+                pid
+            )
+        })?;
 
     let expected_bytes = expected.as_os_str().as_bytes();
 
@@ -756,20 +764,36 @@ fn module_pid(name: &str) -> Option<u32> {
         .any(|argument| argument == expected_bytes);
 
     if matches_entrypoint {
-        return Some(pid);
+        return Ok(Some(pid));
     }
 
-    clear_runtime_marker_if_pid(name, pid);
-
-    None
+    /*
+     * PID exists, marker exists, but ownership cannot be
+     * proven. Preserve the marker and fail closed.
+     */
+    Err(format!(
+        "module '{}' runtime marker points to live process {}, but Boss cannot verify that the process still belongs to the declared entrypoint",
+        name,
+        pid
+    ))
 }
 
 pub fn module_running(name: &str) -> bool {
-    module_pid(name).is_some()
+    match probe_module_pid(name) {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+
+        /*
+         * Unknown runtime state is treated as running in
+         * non-destructive views. This prevents the UI from
+         * presenting an unsafe false "stopped" state.
+         */
+        Err(_) => true,
+    }
 }
 
 fn stop_module(name: &str) -> Result<(), String> {
-    let Some(pid) = module_pid(name) else {
+    let Some(pid) = probe_module_pid(name)? else {
         return Ok(());
     };
 
@@ -789,11 +813,11 @@ fn stop_module(name: &str) -> Result<(), String> {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
 
-    while module_pid(name) == Some(pid) && std::time::Instant::now() < deadline {
+    while probe_module_pid(name)? == Some(pid) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if module_pid(name) != Some(pid) {
+    if probe_module_pid(name)? != Some(pid) {
         clear_runtime_marker_if_pid(name, pid);
         return Ok(());
     }
@@ -815,11 +839,11 @@ fn stop_module(name: &str) -> Result<(), String> {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 
-    while module_pid(name) == Some(pid) && std::time::Instant::now() < deadline {
+    while probe_module_pid(name)? == Some(pid) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if module_pid(name) == Some(pid) {
+    if probe_module_pid(name)? == Some(pid) {
         return Err(format!(
             "module '{name}' process {pid} did not terminate after SIGKILL"
         ));
@@ -832,10 +856,6 @@ fn stop_module(name: &str) -> Result<(), String> {
 
 fn tray_runtime_marker_path(name: &str) -> PathBuf {
     runtime_modules_root().join(format!("{name}.tray.pid"))
-}
-
-fn clear_tray_runtime_marker(name: &str) {
-    let _ = fs::remove_file(tray_runtime_marker_path(name));
 }
 
 fn clear_tray_runtime_marker_if_pid(name: &str, pid: u32) {
@@ -871,73 +891,134 @@ fn write_tray_runtime_marker(name: &str, pid: u32) -> Result<(), String> {
     })
 }
 
-fn tray_provider_pid(name: &str) -> Option<u32> {
+fn probe_tray_provider_pid(name: &str) -> Result<Option<u32>, String> {
     let path = tray_runtime_marker_path(name);
 
-    let raw = fs::read_to_string(&path).ok()?;
+    let raw = match fs::read_to_string(&path) {
+        Ok(value) => value,
 
-    let pid = match raw.trim().parse::<u32>() {
-        Ok(pid) => pid,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
 
-        Err(_) => {
-            clear_tray_runtime_marker(name);
-
-            return None;
+        Err(error) => {
+            return Err(format!(
+                "could not read tray provider runtime marker {}: {error}",
+                path.display()
+            ));
         }
     };
+
+    let pid = raw.trim().parse::<u32>().map_err(|error| {
+        format!(
+            "module '{}' has an invalid tray provider runtime marker {}: {error}",
+            name,
+            path.display()
+        )
+    })?;
 
     let process_path = PathBuf::from(format!("/proc/{pid}"));
 
     if !process_path.exists() {
-        clear_tray_runtime_marker(name);
+        clear_tray_runtime_marker_if_pid(name, pid);
 
-        return None;
+        return Ok(None);
     }
 
     /*
-     * Do not trust a PID marker by itself.
+     * A live PID exists.
      *
-     * Linux may reuse process ids. Verify that the
-     * process command line still references the
-     * provider declared by this module.
+     * From this point onward every inability to prove
+     * provider ownership is an UNKNOWN/UNSAFE runtime
+     * state, never "not running".
      */
-    let contract = match resolved_tray_contract(name) {
-        Ok(contract) => contract,
+    let contract =
+        resolved_tray_contract(name)
+            .map_err(|error| {
+                format!(
+                    "module '{}' tray provider process {} exists, but its tray contract cannot be verified: {}",
+                    name,
+                    pid,
+                    error
+                )
+            })?;
 
-        Err(_) => {
-            clear_tray_runtime_marker(name);
+    let expected =
+        PathBuf::from(
+            &contract.provider
+        )
+        .canonicalize()
+        .map_err(|error| {
+            format!(
+                "module '{}' tray provider process {} exists, but its provider path cannot be canonicalized: {error}",
+                name,
+                pid
+            )
+        })?;
 
-            return None;
+    /*
+     * Native provider.
+     */
+    let proc_exe = PathBuf::from(format!("/proc/{pid}/exe"));
+
+    if let Ok(actual_exe) = fs::read_link(&proc_exe) {
+        if let Ok(actual_exe) = actual_exe.canonicalize() {
+            if actual_exe == expected {
+                return Ok(Some(pid));
+            }
         }
-    };
-
-    let cmdline = match fs::read(format!("/proc/{pid}/cmdline")) {
-        Ok(value) => value,
-
-        Err(_) => {
-            clear_tray_runtime_marker(name);
-
-            return None;
-        }
-    };
-
-    let provider = contract.provider.as_bytes();
-
-    let belongs_to_provider = cmdline
-        .split(|byte| *byte == 0)
-        .any(|argument| argument == provider);
-
-    if !belongs_to_provider {
-        clear_tray_runtime_marker(name);
-
-        return None;
     }
 
-    Some(pid)
+    /*
+     * Interpreted provider:
+     * Python/Bash/Node/etc.
+     */
+    let cmdline =
+        fs::read(
+            format!("/proc/{pid}/cmdline")
+        )
+        .map_err(|error| {
+            format!(
+                "module '{}' tray provider process {} exists, but its command line cannot be inspected: {error}",
+                name,
+                pid
+            )
+        })?;
+
+    let expected_bytes = expected.as_os_str().as_bytes();
+
+    let matches_provider = cmdline
+        .split(|byte| *byte == 0)
+        .filter(|argument| !argument.is_empty())
+        .any(|argument| argument == expected_bytes);
+
+    if matches_provider {
+        return Ok(Some(pid));
+    }
+
+    /*
+     * Preserve the marker. A live PID with unverified
+     * ownership requires explicit intervention.
+     */
+    Err(format!(
+        "module '{}' tray provider marker points to live process {}, but Boss cannot verify that the process still belongs to the declared provider",
+        name,
+        pid
+    ))
 }
 
 pub fn tray_provider_running(name: &str) -> bool {
-    tray_provider_pid(name).is_some()
+    match probe_tray_provider_pid(name) {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+
+        /*
+         * Unknown provider state is reported as running
+         * to avoid presenting an unsafe false "stopped"
+         * state.
+         */
+        Err(_) => true,
+    }
 }
 
 pub fn verify_tray_provider_process(name: &str, pid: u32) -> Result<(), String> {
@@ -1105,7 +1186,7 @@ pub fn start_tray_provider(name: &str) -> Result<bool, String> {
 }
 
 pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
-    let Some(pid) = tray_provider_pid(name) else {
+    let Some(pid) = probe_tray_provider_pid(name)? else {
         return Ok(false);
     };
 
@@ -1128,11 +1209,11 @@ pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
 
-    while tray_provider_pid(name) == Some(pid) && std::time::Instant::now() < deadline {
+    while probe_tray_provider_pid(name)? == Some(pid) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if tray_provider_pid(name) != Some(pid) {
+    if probe_tray_provider_pid(name)? != Some(pid) {
         clear_tray_runtime_marker_if_pid(name, pid);
         return Ok(true);
     }
@@ -1160,11 +1241,11 @@ pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 
-    while tray_provider_pid(name) == Some(pid) && std::time::Instant::now() < deadline {
+    while probe_tray_provider_pid(name)? == Some(pid) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if tray_provider_pid(name) == Some(pid) {
+    if probe_tray_provider_pid(name)? == Some(pid) {
         return Err(format!(
             "tray provider for module '{}' process {} did not terminate after SIGKILL",
             name, pid
@@ -1593,7 +1674,7 @@ fn install_internal(
 }
 
 pub fn uninstall(name: &str) -> Result<(), String> {
-    if module_running(name) {
+    if probe_module_pid(name)?.is_some() {
         return Err(format!("module '{name}' is currently running"));
     }
 
@@ -1604,7 +1685,7 @@ pub fn uninstall(name: &str) -> Result<(), String> {
 }
 
 pub fn update(name: &str, close_running: bool) -> Result<(), String> {
-    if module_running(name) {
+    if probe_module_pid(name)?.is_some() {
         if !close_running {
             return Err(format!("module '{name}' is currently running"));
         }
@@ -1619,11 +1700,11 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
 
-        while module_running(name) && std::time::Instant::now() < deadline {
+        while probe_module_pid(name)?.is_some() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
 
-        if module_running(name) {
+        if probe_module_pid(name)?.is_some() {
             return Err(format!("module '{name}' did not close in time"));
         }
     }
