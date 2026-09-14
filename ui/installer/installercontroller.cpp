@@ -269,7 +269,7 @@ void InstallerController::startTray()
 {
     const QString trayPath =
         QStringLiteral(
-            "/opt/neebles/client/tray/neebles-tray"
+            "/opt/neebles/client/tray-host/neebles-tray-host"
         );
 
     if (!QFileInfo::exists(trayPath)) {

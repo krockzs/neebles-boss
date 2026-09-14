@@ -31,6 +31,7 @@ jobs:
             qt6-base-dev \
             qt6-declarative-dev \
             libgl1-mesa-dev \
+            liblayershellqtinterface-dev \
             libpolkit-qt6-1-dev
 
       - name: Checkout repository
@@ -73,15 +74,15 @@ jobs:
             --build ui/auth-agent/build \
             --parallel
 
-      - name: Build tray
+      - name: Build Tray Host
         run: |
           cmake \
-            -S client/tray \
-            -B client/tray/build \
+            -S client/tray-host \
+            -B client/tray-host/build \
             -DCMAKE_BUILD_TYPE=Release
 
           cmake \
-            --build client/tray/build \
+            --build client/tray-host/build \
             --parallel
 
       - name: Stage release assets
@@ -104,8 +105,8 @@ jobs:
             dist/neebles-installer
 
           cp \
-            client/tray/build/neebles-tray \
-            dist/neebles-tray
+            client/tray-host/build/neebles-tray-host \
+            dist/neebles-tray-host
 
           cp \
             ui/auth-agent/build/neebles-auth-agent \
@@ -129,7 +130,7 @@ jobs:
             dist/neebles-backend \
             dist/neebles-ui \
             dist/neebles-installer \
-            dist/neebles-tray \
+            dist/neebles-tray-host \
             dist/neebles-auth-agent \
             dist/install.sh
 
@@ -149,7 +150,7 @@ jobs:
           )"
 
           TRAY_SHA="$(
-            sha256sum dist/neebles-tray |
+            sha256sum dist/neebles-tray-host |
             awk '{print $1}'
           )"
 
@@ -189,7 +190,7 @@ jobs:
                   "sha256": "${INSTALLER_SHA}"
                 },
                 "tray": {
-                  "file": "neebles-tray",
+                  "file": "neebles-tray-host",
                   "sha256": "${TRAY_SHA}"
                 },
                 "auth_agent": {
@@ -213,7 +214,7 @@ jobs:
             dist/neebles-backend \
             dist/neebles-ui \
             dist/neebles-installer \
-            dist/neebles-tray \
+            dist/neebles-tray-host \
             dist/neebles-auth-agent \
             dist/client-data.tar.gz \
             dist/install.sh \
@@ -251,7 +252,7 @@ jobs:
             - Bootstrap Schema 2 now includes the authorization agent asset.
 
             Publishes the Rust Boss backend, Qt client UI, graphical installer,
-            tray client, N.E.E.B.L.E.S. authorization agent, complete client
+            Tray Host, N.E.E.B.L.E.S. authorization agent, complete client
             data payload, privileged install script and Bootstrap Schema 2
             manifest.
 
@@ -259,7 +260,7 @@ jobs:
             dist/neebles-backend
             dist/neebles-ui
             dist/neebles-installer
-            dist/neebles-tray
+            dist/neebles-tray-host
             dist/neebles-auth-agent
             dist/client-data.tar.gz
             dist/install.sh

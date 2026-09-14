@@ -7,6 +7,8 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -14,6 +16,20 @@ use std::process::{Command, Stdio};
 pub struct CommandContract {
     #[serde(default)]
     pub requires_root: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrayContract {
+    #[serde(default = "default_tray_protocol")]
+    pub protocol: u32,
+
+    pub icon: String,
+
+    pub provider: String,
+}
+
+fn default_tray_protocol() -> u32 {
+    crate::tray::protocol::TRAY_PROTOCOL_VERSION
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +44,9 @@ pub struct ModuleManifest {
     pub commands: BTreeMap<String, CommandContract>,
     #[serde(default)]
     pub dependencies: DependencySet,
+
+    #[serde(default)]
+    pub tray: Option<TrayContract>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +83,143 @@ pub struct Registry {
 
 fn default_schema() -> u32 {
     1
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedTrayContract {
+    pub protocol: u32,
+    pub module_version: String,
+    pub icon: String,
+    pub provider: String,
+}
+
+fn resolve_module_contract_path(
+    module_dir: &Path,
+    value: &str,
+    field: &str,
+) -> Result<PathBuf, String> {
+    let value = value.trim();
+
+    if value.is_empty() {
+        return Err(format!("module tray {field} cannot be empty"));
+    }
+
+    let relative = Path::new(value);
+
+    if relative.is_absolute() {
+        return Err(format!(
+            "module tray {field} must be relative to the module directory"
+        ));
+    }
+
+    for component in relative.components() {
+        use std::path::Component;
+
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(format!(
+                    "module tray {field} contains an invalid path: {value}"
+                ));
+            }
+        }
+    }
+
+    let candidate = module_dir.join(relative);
+
+    let canonical = candidate.canonicalize().map_err(|error| {
+        format!(
+            "could not resolve module tray {field} {}: {error}",
+            candidate.display()
+        )
+    })?;
+
+    let canonical_module = module_dir.canonicalize().map_err(|error| {
+        format!(
+            "could not resolve module directory {}: {error}",
+            module_dir.display()
+        )
+    })?;
+
+    if !canonical.starts_with(&canonical_module) {
+        return Err(format!("module tray {field} escapes module directory"));
+    }
+
+    if !canonical.is_file() {
+        return Err(format!(
+            "module tray {field} is not a file: {}",
+            canonical.display()
+        ));
+    }
+
+    Ok(canonical)
+}
+
+pub fn installed_module_manifest(name: &str) -> Result<ModuleManifest, String> {
+    if !valid_module_id(name) {
+        return Err(format!("invalid module id: {name}"));
+    }
+
+    let module_dir = find_module_dir(name)?;
+
+    read_manifest(&module_dir.join("manifest.json"))
+}
+
+fn resolve_tray_contract_from(
+    module_dir: &Path,
+    manifest: &ModuleManifest,
+) -> Result<ResolvedTrayContract, String> {
+    let tray = manifest.tray.as_ref().ok_or_else(|| {
+        format!(
+            "module '{}' does not declare a tray capability",
+            manifest.name
+        )
+    })?;
+
+    if tray.protocol != crate::tray::protocol::TRAY_PROTOCOL_VERSION {
+        return Err(format!(
+            "module '{}' declares unsupported tray protocol {}; expected {}",
+            manifest.name,
+            tray.protocol,
+            crate::tray::protocol::TRAY_PROTOCOL_VERSION
+        ));
+    }
+
+    let icon = resolve_module_contract_path(module_dir, &tray.icon, "icon")?;
+
+    let provider = resolve_module_contract_path(module_dir, &tray.provider, "provider")?;
+
+    let metadata = fs::metadata(&provider).map_err(|error| {
+        format!(
+            "could not inspect module '{}' tray provider {}: {error}",
+            manifest.name,
+            provider.display()
+        )
+    })?;
+
+    if metadata.permissions().mode() & 0o111 == 0 {
+        return Err(format!(
+            "module '{}' tray provider is not executable: {}",
+            manifest.name,
+            provider.display()
+        ));
+    }
+
+    Ok(ResolvedTrayContract {
+        protocol: tray.protocol,
+        module_version: manifest.version.clone(),
+        icon: icon.display().to_string(),
+        provider: provider.display().to_string(),
+    })
+}
+
+pub fn resolved_tray_contract(name: &str) -> Result<ResolvedTrayContract, String> {
+    let module_dir = find_module_dir(name)?;
+
+    let manifest = installed_module_manifest(name)?;
+
+    resolve_tray_contract_from(&module_dir, &manifest)
 }
 
 const MODULE_ICON_EXTENSIONS: &[&str] = &["svg", "png", "webp", "jpg", "jpeg"];
@@ -296,6 +452,382 @@ fn stop_module(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn tray_runtime_marker_path(name: &str) -> PathBuf {
+    runtime_modules_root().join(format!("{name}.tray.pid"))
+}
+
+fn clear_tray_runtime_marker(name: &str) {
+    let _ = fs::remove_file(tray_runtime_marker_path(name));
+}
+
+fn clear_tray_runtime_marker_if_pid(name: &str, pid: u32) {
+    let path = tray_runtime_marker_path(name);
+
+    let matches = fs::read_to_string(&path)
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        == Some(pid);
+
+    if matches {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn write_tray_runtime_marker(name: &str, pid: u32) -> Result<(), String> {
+    let root = runtime_modules_root();
+
+    fs::create_dir_all(&root).map_err(|error| {
+        format!(
+            "could not create module runtime directory {}: {error}",
+            root.display()
+        )
+    })?;
+
+    let path = tray_runtime_marker_path(name);
+
+    fs::write(&path, format!("{pid}\n")).map_err(|error| {
+        format!(
+            "could not write tray provider runtime marker {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn tray_provider_pid(name: &str) -> Option<u32> {
+    let path = tray_runtime_marker_path(name);
+
+    let raw = fs::read_to_string(&path).ok()?;
+
+    let pid = match raw.trim().parse::<u32>() {
+        Ok(pid) => pid,
+
+        Err(_) => {
+            clear_tray_runtime_marker(name);
+
+            return None;
+        }
+    };
+
+    let process_path = PathBuf::from(format!("/proc/{pid}"));
+
+    if !process_path.exists() {
+        clear_tray_runtime_marker(name);
+
+        return None;
+    }
+
+    /*
+     * Do not trust a PID marker by itself.
+     *
+     * Linux may reuse process ids. Verify that the
+     * process command line still references the
+     * provider declared by this module.
+     */
+    let contract = match resolved_tray_contract(name) {
+        Ok(contract) => contract,
+
+        Err(_) => {
+            clear_tray_runtime_marker(name);
+
+            return None;
+        }
+    };
+
+    let cmdline = match fs::read(format!("/proc/{pid}/cmdline")) {
+        Ok(value) => value,
+
+        Err(_) => {
+            clear_tray_runtime_marker(name);
+
+            return None;
+        }
+    };
+
+    let provider = contract.provider.as_bytes();
+
+    let belongs_to_provider = cmdline
+        .split(|byte| *byte == 0)
+        .any(|argument| argument == provider);
+
+    if !belongs_to_provider {
+        clear_tray_runtime_marker(name);
+
+        return None;
+    }
+
+    Some(pid)
+}
+
+pub fn tray_provider_running(name: &str) -> bool {
+    tray_provider_pid(name).is_some()
+}
+
+pub fn verify_tray_provider_process(name: &str, pid: u32) -> Result<(), String> {
+    let contract = resolved_tray_contract(name)?;
+
+    let expected = PathBuf::from(&contract.provider)
+        .canonicalize()
+        .map_err(|error| {
+            format!(
+                "could not canonicalize tray provider for module '{}': {error}",
+                name
+            )
+        })?;
+
+    /*
+     * Native binary:
+     *
+     * /proc/<pid>/exe points directly to the
+     * executable declared by the module.
+     */
+    let proc_exe = PathBuf::from(format!("/proc/{pid}/exe"));
+
+    if let Ok(actual_exe) = fs::read_link(&proc_exe) {
+        if let Ok(actual_exe) = actual_exe.canonicalize() {
+            if actual_exe == expected {
+                return Ok(());
+            }
+        }
+    }
+
+    /*
+     * Interpreted provider:
+     *
+     * Python, Bash, Node, etc. expose the runtime
+     * through /proc/<pid>/exe. The provider script
+     * must therefore appear as one exact argv entry.
+     */
+    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).map_err(|error| {
+        format!(
+            "could not inspect tray provider process {} for module '{}': {error}",
+            pid, name
+        )
+    })?;
+
+    let expected_bytes = expected.as_os_str().as_bytes();
+
+    let matches_provider = cmdline
+        .split(|byte| *byte == 0)
+        .filter(|argument| !argument.is_empty())
+        .any(|argument| argument == expected_bytes);
+
+    if matches_provider {
+        return Ok(());
+    }
+
+    Err(format!(
+        "process {} is not the tray provider declared by module '{}'",
+        pid, name
+    ))
+}
+
+pub fn start_tray_provider(name: &str) -> Result<bool, String> {
+    if !config::module_enabled(name)? {
+        return Ok(false);
+    }
+
+    let module_dir = find_module_dir(name)?;
+
+    let manifest = read_manifest(&module_dir.join("manifest.json"))?;
+
+    /*
+     * No tray capability means there is no tray
+     * lifecycle to manage. This is not an error.
+     */
+    if manifest.tray.is_none() {
+        return Ok(false);
+    }
+
+    if tray_provider_running(name) {
+        return Ok(false);
+    }
+
+    let socket_path = crate::tray::protocol::socket_path();
+
+    /*
+     * The provider belongs to the Tray Manager
+     * lifecycle. If no manager socket exists yet,
+     * enabling/installing the module remains valid;
+     * the provider will be started when tray serve
+     * comes online.
+     */
+    if !socket_path.exists() {
+        return Ok(false);
+    }
+
+    let contract = resolved_tray_contract(name)?;
+
+    let provider = PathBuf::from(&contract.provider);
+
+    let metadata = fs::metadata(&provider).map_err(|error| {
+        format!(
+            "could not inspect tray provider {}: {error}",
+            provider.display()
+        )
+    })?;
+
+    if metadata.permissions().mode() & 0o111 == 0 {
+        return Err(format!(
+            "module '{}' tray provider is not executable: {}",
+            name,
+            provider.display()
+        ));
+    }
+
+    let config_path = config::config_path()?;
+
+    let requested_language = config::load_or_initialize()?.language;
+
+    let language = resolve_module_language(&module_dir, &requested_language)?;
+
+    let mut command = Command::new(&provider);
+
+    command
+        .current_dir(&module_dir)
+        .env("NEEBLES_LANGUAGE", language)
+        .env("NEEBLES_CALLER", "tray-manager")
+        .env("NEEBLES_MODULE", name)
+        .env("NEEBLES_CONFIG", config_path)
+        .env("NEEBLES_TRAY_SOCKET", socket_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    let mut child = command.spawn().map_err(|error| {
+        format!(
+            "could not launch tray provider for module '{}': {error}",
+            name
+        )
+    })?;
+
+    let pid = child.id();
+
+    if let Err(error) = write_tray_runtime_marker(name, pid) {
+        let _ = child.kill();
+        let _ = child.wait();
+
+        return Err(error);
+    }
+
+    let owned_name = name.to_string();
+
+    /*
+     * Reap the provider when it exits and remove
+     * only the marker belonging to this exact PID.
+     * This avoids zombies and avoids an old provider
+     * deleting a marker belonging to a newer one.
+     */
+    std::thread::spawn(move || {
+        let _ = child.wait();
+
+        clear_tray_runtime_marker_if_pid(&owned_name, pid);
+    });
+
+    Ok(true)
+}
+
+pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
+    let Some(pid) = tray_provider_pid(name) else {
+        return Ok(false);
+    };
+
+    let status = Command::new("kill")
+        .args(["-TERM", pid.to_string().as_str()])
+        .status()
+        .map_err(|error| {
+            format!(
+                "could not stop tray provider for module '{}' process {}: {error}",
+                name, pid
+            )
+        })?;
+
+    if !status.success() {
+        return Err(format!(
+            "could not stop tray provider for module '{}' process {}",
+            name, pid
+        ));
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+
+    while tray_provider_running(name) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    if tray_provider_running(name) {
+        return Err(format!(
+            "tray provider for module '{}' did not close in time",
+            name
+        ));
+    }
+
+    Ok(true)
+}
+
+pub fn start_enabled_tray_providers() -> Result<(), String> {
+    let root = modules_root();
+
+    if !root.exists() {
+        return Ok(());
+    }
+
+    let mut errors = Vec::new();
+
+    for entry in fs::read_dir(&root)
+        .map_err(|error| format!("could not read {}: {error}", root.display()))?
+    {
+        let entry =
+            entry.map_err(|error| format!("could not read module directory entry: {error}"))?;
+
+        if !entry.path().is_dir() {
+            continue;
+        }
+
+        let manifest_path = entry.path().join("manifest.json");
+
+        if !manifest_path.exists() {
+            continue;
+        }
+
+        let manifest = match read_manifest(&manifest_path) {
+            Ok(manifest) => manifest,
+
+            Err(error) => {
+                errors.push(error);
+                continue;
+            }
+        };
+
+        if manifest.tray.is_none() {
+            continue;
+        }
+
+        match config::module_enabled(&manifest.name) {
+            Ok(true) => {}
+
+            Ok(false) => continue,
+
+            Err(error) => {
+                errors.push(error);
+                continue;
+            }
+        }
+
+        if let Err(error) = start_tray_provider(&manifest.name) {
+            errors.push(error);
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "one or more tray providers could not be started: {}",
+            errors.join(" | ")
+        ))
+    }
+}
+
 fn registry_url() -> Result<String, String> {
     /*
      * Explicit override is respected exactly.
@@ -407,14 +939,29 @@ pub fn installed_modules_json() -> Result<Value, String> {
         let icon = local_module_icon(&entry.path());
         let running = module_running(&manifest.name);
 
-        result.push(json!({
+        let mut item = json!({
             "name": manifest.name,
             "version": manifest.version,
             "enabled": enabled,
             "running": running,
             "path": entry.path(),
             "icon": icon,
-        }));
+        });
+
+        if let Some(tray) = manifest.tray.as_ref() {
+            item.as_object_mut()
+                .expect("module JSON must be an object")
+                .insert(
+                    "tray".to_string(),
+                    json!({
+                        "protocol": tray.protocol,
+                        "icon": tray.icon,
+                        "provider": tray.provider,
+                    }),
+                );
+        }
+
+        result.push(item);
     }
 
     result.sort_by(|a, b| {
@@ -533,6 +1080,10 @@ fn install_internal(
         }
     }
 
+    if manifest.tray.is_some() {
+        resolve_tray_contract_from(staging.path(), &manifest)?;
+    }
+
     dependencies::resolve_system_dependencies(&manifest.dependencies.system)?;
 
     for dependency in &manifest.dependencies.modules {
@@ -562,6 +1113,7 @@ fn install_internal(
     staging.commit(&destination)?;
 
     visiting.remove(name);
+
     Ok(())
 }
 
@@ -654,16 +1206,38 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
         }
     }
 
-    dependencies::resolve_system_dependencies(&manifest.dependencies.system)
+    if manifest.tray.is_some() {
+        resolve_tray_contract_from(&path, &manifest)?;
+    }
+
+    dependencies::resolve_system_dependencies(&manifest.dependencies.system)?;
+
+    Ok(())
 }
 pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
     let _ = find_module_dir(name)?;
 
     if !enabled {
+        stop_tray_provider(name)?;
         stop_module(name)?;
+
+        config::set_module_enabled(name, false)?;
+
+        return Ok(());
     }
 
-    config::set_module_enabled(name, enabled)?;
+    config::set_module_enabled(name, true)?;
+
+    if let Err(error) = start_tray_provider(name) {
+        /*
+         * Enabling is one operation. Do not leave
+         * Boss saying "enabled" when the declared
+         * tray lifecycle could not be started.
+         */
+        let _ = config::set_module_enabled(name, false);
+
+        return Err(error);
+    }
 
     Ok(())
 }

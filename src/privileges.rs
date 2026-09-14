@@ -27,6 +27,10 @@ pub fn reexec_current_with_sudo() -> Result<(), String> {
     if let Ok(path) = crate::config::config_path() {
         command.arg(format!("NEEBLES_CONFIG={}", path.display()));
     }
+    let tray_socket = crate::tray::protocol::socket_path();
+
+    command.arg(format!("NEEBLES_TRAY_SOCKET={}", tray_socket.display()));
+
     for key in [
         "NEEBLES_ROOT",
         "NEEBLES_CLIENT_ROOT",

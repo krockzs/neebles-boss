@@ -5,6 +5,7 @@ use crate::modules;
 use crate::notifications::{self, Severity};
 use crate::privileges;
 use crate::request::{ExecutionContext, ExecutionRequest};
+use crate::tray;
 use serde_json::Value;
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -28,6 +29,7 @@ pub fn run(args: Vec<String>) -> i32 {
         "modules" => modules_command(&args[1..]),
         "notify" => notify_command(&args[1..]),
         "socket" => socket_command(&args[1..]),
+        "tray" => tray_command(&args[1..]),
         target => module_command(target, &args[1..]),
     }
 }
@@ -112,13 +114,70 @@ fn config_command(args: &[String]) -> i32 {
                 Err(error) => return fail(error),
             };
 
-            match config::set_module_visibility(
-                surface,
-                name,
-                visible,
-            ) {
-                Ok(config) => print_json(&config),
-                Err(error) => fail(error),
+            if surface == "tray" {
+                let manifest =
+                    match modules::installed_module_manifest(
+                        name
+                    ) {
+                        Ok(manifest) => manifest,
+                        Err(error) => return fail(error),
+                    };
+
+                if manifest.tray.is_none() {
+                    return fail(format!(
+                        "module '{}' does not declare a tray capability",
+                        name
+                    ));
+                }
+
+                let request =
+                    tray::protocol::TrayMessage::SetVisibility {
+                        tray_id: name.clone(),
+                        visible,
+                    };
+
+                match tray::client::request(
+                    &request
+                ) {
+                    Ok(
+                        tray::protocol::TrayMessage::Ack {
+                            ..
+                        }
+                    ) => {
+                        match config::load_or_initialize() {
+                            Ok(config) =>
+                                print_json(&config),
+
+                            Err(error) =>
+                                fail(error),
+                        }
+                    }
+
+                    Ok(
+                        tray::protocol::TrayMessage::Error {
+                            message
+                        }
+                    ) => fail(message),
+
+                    Ok(response) => fail(format!(
+                        "unexpected tray visibility response: {:?}",
+                        response
+                    )),
+
+                    Err(error) => fail(error),
+                }
+            } else {
+                match config::set_module_visibility(
+                    surface,
+                    name,
+                    visible,
+                ) {
+                    Ok(config) =>
+                        print_json(&config),
+
+                    Err(error) =>
+                        fail(error),
+                }
             }
         }
         Some("module-update-notified") => {
@@ -190,6 +249,74 @@ fn i18n_command(args: &[String]) -> i32 {
     }
 }
 
+fn tray_manager_available() -> bool {
+    tray::protocol::socket_path().exists()
+}
+
+fn request_tray_reconcile() -> Result<(), String> {
+    if !tray_manager_available() {
+        return Ok(());
+    }
+
+    match tray::client::request(&tray::protocol::TrayMessage::Reconcile)? {
+        tray::protocol::TrayMessage::Ack { event, .. } if event == "reconcile" => Ok(()),
+
+        tray::protocol::TrayMessage::Error { message } => Err(message),
+
+        response => Err(format!(
+            "unexpected tray reconcile response: {:?}",
+            response
+        )),
+    }
+}
+
+fn request_tray_provider_stop(name: &str) -> Result<(), String> {
+    if !tray_manager_available() {
+        return Ok(());
+    }
+
+    let manifest = modules::installed_module_manifest(name)?;
+
+    /*
+     * Modules without a tray capability have no
+     * tray lifecycle to coordinate.
+     */
+    if manifest.tray.is_none() {
+        return Ok(());
+    }
+
+    match tray::client::request(&tray::protocol::TrayMessage::StopProvider {
+        tray_id: name.to_string(),
+    })? {
+        tray::protocol::TrayMessage::Ack { event, .. } if event == "stop_provider" => Ok(()),
+
+        tray::protocol::TrayMessage::Error { message } => Err(message),
+
+        response => Err(format!(
+            "unexpected tray stop-provider response: {:?}",
+            response
+        )),
+    }
+}
+
+fn reconcile_after_module_operation(operation: Result<(), String>) -> Result<(), String> {
+    let reconcile = request_tray_reconcile();
+
+    match (operation, reconcile) {
+        (Ok(()), Ok(())) => Ok(()),
+
+        (Err(operation_error), Ok(())) => Err(operation_error),
+
+        (Ok(()), Err(reconcile_error)) => Err(format!(
+            "module operation completed, but tray reconciliation failed: {reconcile_error}"
+        )),
+
+        (Err(operation_error), Err(reconcile_error)) => Err(format!(
+            "{operation_error}; additionally, tray reconciliation failed: {reconcile_error}"
+        )),
+    }
+}
+
 fn modules_command(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("available") | Some("list") => match modules::available_modules_json() {
@@ -204,10 +331,12 @@ fn modules_command(args: &[String]) -> i32 {
             let Some(name) = args.get(1) else {
                 return fail("modules install requires a module name".to_string());
             };
+
             if let Err(error) = privileges::ensure_root(true) {
                 return fail(error);
             }
-            result(modules::install(name))
+
+            result(reconcile_after_module_operation(modules::install(name)))
         }
         Some("update") => {
             let Some(name) = args.get(1) else {
@@ -222,16 +351,29 @@ fn modules_command(args: &[String]) -> i32 {
 
             let close_running = args.iter().any(|value| value == CLOSE_FLAG);
 
-            result(modules::update(name, close_running))
+            if let Err(error) = request_tray_provider_stop(name) {
+                return fail(error);
+            }
+
+            result(reconcile_after_module_operation(modules::update(
+                name,
+                close_running,
+            )))
         }
         Some("uninstall") => {
             let Some(name) = args.get(1) else {
                 return fail("modules uninstall requires a module name".to_string());
             };
+
             if let Err(error) = privileges::ensure_root(true) {
                 return fail(error);
             }
-            result(modules::uninstall(name))
+
+            if let Err(error) = request_tray_provider_stop(name) {
+                return fail(error);
+            }
+
+            result(reconcile_after_module_operation(modules::uninstall(name)))
         }
         Some("enable") => {
             let Some(name) = args.get(1) else {
@@ -249,6 +391,138 @@ fn modules_command(args: &[String]) -> i32 {
             "usage: neebles modules available|installed|install|update|uninstall|enable|disable"
                 .to_string(),
         ),
+    }
+}
+
+fn tray_command(args: &[String]) -> i32 {
+    use tray::protocol::TrayMessage;
+
+    let request = match args.first().map(String::as_str) {
+        Some("serve") => {
+            return result(tray::ipc::serve());
+        }
+
+        Some("host") => {
+            return result(tray::host::run());
+        }
+
+        Some("reconcile") => TrayMessage::Reconcile,
+
+        Some("stop-provider") => {
+            let Some(tray_id) = args.get(1) else {
+                return fail("tray stop-provider requires a tray id".to_string());
+            };
+
+            TrayMessage::StopProvider {
+                tray_id: tray_id.clone(),
+            }
+        }
+
+        Some("list") => TrayMessage::List,
+
+        Some("status") => {
+            let Some(tray_id) = args.get(1) else {
+                return fail("tray status requires a tray id".to_string());
+            };
+
+            TrayMessage::Get {
+                tray_id: tray_id.clone(),
+            }
+        }
+
+        Some("open") => {
+            let Some(tray_id) = args.get(1) else {
+                return fail("tray open requires a tray id".to_string());
+            };
+
+            TrayMessage::Open {
+                tray_id: tray_id.clone(),
+            }
+        }
+
+        Some("close") => {
+            let Some(tray_id) = args.get(1) else {
+                return fail("tray close requires a tray id".to_string());
+            };
+
+            TrayMessage::Close {
+                tray_id: tray_id.clone(),
+            }
+        }
+
+        Some("focus") => {
+            let Some(tray_id) = args.get(1) else {
+                return fail("tray focus requires a tray id".to_string());
+            };
+
+            TrayMessage::Focus {
+                tray_id: tray_id.clone(),
+            }
+        }
+
+        Some("reload") => {
+            let Some(tray_id) = args.get(1) else {
+                return fail("tray reload requires a tray id".to_string());
+            };
+
+            TrayMessage::Reload {
+                tray_id: tray_id.clone(),
+            }
+        }
+
+        Some("resize") => {
+            let Some(tray_id) = args.get(1) else {
+                return fail("tray resize requires a tray id".to_string());
+            };
+
+            let Some(width) = args.get(2) else {
+                return fail("tray resize requires width".to_string());
+            };
+
+            let Some(height) = args.get(3) else {
+                return fail("tray resize requires height".to_string());
+            };
+
+            let width = match width.parse::<u32>() {
+                Ok(value) => value,
+                Err(_) => {
+                    return fail("tray resize width must be an unsigned integer".to_string());
+                }
+            };
+
+            let height = match height.parse::<u32>() {
+                Ok(value) => value,
+                Err(_) => {
+                    return fail("tray resize height must be an unsigned integer".to_string());
+                }
+            };
+
+            TrayMessage::Resize {
+                tray_id: tray_id.clone(),
+                width,
+                height,
+            }
+        }
+
+        _ => {
+            return fail(
+                "usage: neebles tray serve|host|reconcile|stop-provider <id>|list|status <id>|open <id>|close <id>|focus <id>|reload <id>|resize <id> <width> <height>"
+                    .to_string()
+            );
+        }
+    };
+
+    match tray::client::request(&request) {
+        Ok(response) => match serde_json::to_string_pretty(&response) {
+            Ok(json) => {
+                println!("{json}");
+                0
+            }
+
+            Err(error) => fail(format!("could not serialize tray response: {error}")),
+        },
+
+        Err(error) => fail(error),
     }
 }
 

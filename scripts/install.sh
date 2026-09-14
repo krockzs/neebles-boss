@@ -6,7 +6,7 @@ CLIENT_ROOT="$NEEBLES_ROOT/client"
 BIN_DIR="$CLIENT_ROOT/bin"
 BACKEND_DIR="$CLIENT_ROOT/backend"
 UI_DIR="$CLIENT_ROOT/ui"
-TRAY_DIR="$CLIENT_ROOT/tray"
+TRAY_DIR="$CLIENT_ROOT/tray-host"
 AUTH_DIR="$CLIENT_ROOT/auth"
 LAUNCHER_DIR="$CLIENT_ROOT/launcher"
 SPACER_DIR="$CLIENT_ROOT/spacer"
@@ -26,7 +26,7 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 if [[ $# -lt 5 ]]; then
-    echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <neebles-tray-binary> <client-data.tar.gz> <neebles-auth-agent-binary>" >&2
+    echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <neebles-tray-host-binary> <client-data.tar.gz> <neebles-auth-agent-binary>" >&2
     exit 1
 fi
 
@@ -79,6 +79,10 @@ if command -v apt >/dev/null 2>&1; then
     command -v git >/dev/null 2>&1 || MISSING+=(git)
     command -v curl >/dev/null 2>&1 || MISSING+=(curl)
     command -v notify-send >/dev/null 2>&1 || MISSING+=(libnotify-bin)
+
+    dpkg-query -W -f='${Status}' libqt6quick6 2>/dev/null         | grep -q "install ok installed"         || MISSING+=(libqt6quick6)
+
+    dpkg-query -W -f='${Status}' liblayershellqtinterface6 2>/dev/null         | grep -q "install ok installed"         || MISSING+=(liblayershellqtinterface6)
     if (( ${#MISSING[@]} > 0 )); then
         apt install -y "${MISSING[@]}"
     fi
@@ -111,8 +115,8 @@ install -m 0755 \
 
 if [[ -n "$TRAY_SOURCE" ]]; then
     progress 58
-    status "Installing N.E.E.B.L.E.S. tray..."
-    install -m 0755 "$TRAY_SOURCE" "$TRAY_DIR/neebles-tray"
+    status "Installing N.E.E.B.L.E.S. Tray Host..."
+    install -m 0755 "$TRAY_SOURCE" "$TRAY_DIR/neebles-tray-host"
 fi
 
 if [[ -n "$CLIENT_DATA_SOURCE" && -d "$CLIENT_DATA_SOURCE" ]]; then
@@ -143,18 +147,42 @@ if [[ -f "$ASSETS_DIR/branding/neebles-boss-launcher-icon.png" ]]; then
         /usr/share/icons/hicolor/256x256/apps/neebles-boss-launcher-icon.png
 fi
 
-if [[ -x "$TRAY_DIR/neebles-tray" ]]; then
+progress 80
+status "Installing N.E.E.B.L.E.S. Tray Manager user service..."
+install -d /usr/lib/systemd/user
+
+cat > /usr/lib/systemd/user/neebles-tray-manager.service <<SERVICE
+[Unit]
+Description=N.E.E.B.L.E.S. Tray Manager
+After=graphical-session-pre.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=$BACKEND_DIR/neebles-backend tray serve
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=default.target
+SERVICE
+
+install -d /etc/systemd/user/default.target.wants
+ln -sfn     /usr/lib/systemd/user/neebles-tray-manager.service     /etc/systemd/user/default.target.wants/neebles-tray-manager.service
+
+if [[ -x "$TRAY_DIR/neebles-tray-host" ]]; then
     progress 82
-    status "Registering N.E.E.B.L.E.S. tray autostart..."
+    status "Registering N.E.E.B.L.E.S. Tray Host autostart..."
     install -d /etc/xdg/autostart
-    cat > /etc/xdg/autostart/neebles-tray.desktop <<DESKTOP
+    cat > /etc/xdg/autostart/neebles-tray-host.desktop <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=N.E.E.B.L.E.S. Tray
-Exec=$TRAY_DIR/neebles-tray
+Name=N.E.E.B.L.E.S. Tray Host
+Exec=$TRAY_DIR/neebles-tray-host
 Icon=neebles-boss-launcher-icon
 Terminal=false
 X-KDE-autostart-after=panel
+X-KDE-StartupNotify=false
 DESKTOP
 fi
 
@@ -180,6 +208,6 @@ progress 100
 status "N.E.E.B.L.E.S. Boss installed successfully."
 echo "Installed backend: $BACKEND_DIR/neebles-backend"
 echo "Installed UI: $UI_DIR/neebles-ui"
-[[ -x "$TRAY_DIR/neebles-tray" ]] && echo "Installed tray: $TRAY_DIR/neebles-tray"
+[[ -x "$TRAY_DIR/neebles-tray-host" ]] && echo "Installed tray host: $TRAY_DIR/neebles-tray-host"
 echo "OS entrypoint: $BIN_DIR/neebles"
 echo "Global command: /usr/local/bin/neebles"

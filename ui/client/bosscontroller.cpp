@@ -1121,7 +1121,7 @@ void BossController::saveConfig(const QString &language,
         if (trayEnabled && !trayWasEnabled) {
             const QString trayPath =
                 QStringLiteral(
-                    "/opt/neebles/client/tray/neebles-tray"
+                    "/opt/neebles/client/tray-host/neebles-tray-host"
                 );
 
             if (QFileInfo::exists(trayPath))

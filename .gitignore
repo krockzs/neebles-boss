@@ -1,7 +1,7 @@
+
+/client/tray-host/build/
+/dist/
 /target/
+ui/auth-agent/build/
 /ui/client/build/
 /ui/installer/build/
-/client/tray/build/
-/dist/
-
-ui/auth-agent/build/
