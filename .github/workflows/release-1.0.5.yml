@@ -23,6 +23,7 @@ jobs:
             ca-certificates \
             git \
             curl \
+            python3 \
             build-essential \
             cmake \
             pkg-config \
@@ -36,6 +37,33 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Verify target compatibility floor
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_minimum() {
+            local package="$1"
+            local minimum="$2"
+            local installed
+
+            installed="$(dpkg-query -W -f='${Version}' "$package")"
+            if ! dpkg --compare-versions "$installed" ge "$minimum"; then
+              echo "${package} ${installed} is below required floor ${minimum}" >&2
+              exit 1
+            fi
+
+            echo "OK: ${package} ${installed} >= ${minimum}"
+          }
+
+          require_minimum qt6-base-dev 6.8.2
+          require_minimum qt6-declarative-dev 6.8.2
+          require_minimum liblayershellqtinterface-dev 6.3.4
+          require_minimum libpolkit-qt6-1-dev 0.200.0
+
+      - name: Validate Boss language contract
+        run: python3 scripts/validate-languages.py
 
       - name: Build Rust backend
         run: |
@@ -125,6 +153,8 @@ jobs:
             launcher \
             spacer \
             notifications
+
+          python3 scripts/validate-client-payload.py dist/client-data.tar.gz
 
           chmod +x \
             dist/neebles-backend \
