@@ -183,3 +183,18 @@ pub fn mark_module_update_notified(name: &str, version: &str) -> Result<BossConf
     save(&config)?;
     Ok(config)
 }
+
+pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
+    let mut config = load_or_initialize()?;
+
+    config.disabled_modules.retain(|item| item != name);
+
+    config.hidden_tray_modules.retain(|item| item != name);
+
+    config.hidden_launcher_modules.retain(|item| item != name);
+
+    config.module_update_notifications.remove(name);
+
+    save(&config)?;
+    Ok(config)
+}

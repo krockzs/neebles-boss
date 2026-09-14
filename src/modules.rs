@@ -1680,61 +1680,130 @@ fn install_internal(
 }
 
 pub fn uninstall(name: &str) -> Result<(), String> {
+    /*
+     * Uninstall is inherently destructive and therefore
+     * owns the complete module lifecycle.
+     *
+     * A module cannot remain alive after its installation
+     * has been removed.
+     */
     if probe_module_pid(name)?.is_some() {
-        return Err(format!("module '{name}' is currently running"));
-    }
-
-    if probe_tray_provider_pid(name)?.is_some() {
-        stop_tray_provider(name)?;
-    }
-
-    if probe_tray_provider_pid(name)?.is_some() {
-        return Err(format!("module '{name}' tray provider is still running"));
-    }
-
-    let path = find_module_dir(name)?;
-
-    fs::remove_dir_all(&path)
-        .map_err(|error| format!("could not remove module {}: {error}", path.display()))
-}
-
-pub fn update(name: &str, close_running: bool) -> Result<(), String> {
-    if probe_module_pid(name)?.is_some() {
-        if !close_running {
-            return Err(format!("module '{name}' is currently running"));
-        }
-
-        /*
-         * Authorization has already been granted before
-         * this privileged backend process starts.
-         *
-         * Only now may Boss close the running application.
-         */
         stop_module(name)?;
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-
-        while probe_module_pid(name)?.is_some() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
-
         if probe_module_pid(name)?.is_some() {
-            return Err(format!("module '{name}' did not close in time"));
+            return Err(format!(
+                "module '{name}' is still running after uninstall shutdown"
+            ));
         }
     }
 
     if probe_tray_provider_pid(name)?.is_some() {
-        if !close_running {
-            return Err(format!(
-                "module '{name}' tray provider is currently running"
-            ));
-        }
-
         stop_tray_provider(name)?;
 
         if probe_tray_provider_pid(name)?.is_some() {
             return Err(format!(
-                "module '{name}' tray provider did not close in time"
+                "module '{name}' tray provider is still running after uninstall shutdown"
+            ));
+        }
+    }
+
+    let path = find_module_dir(name)?;
+
+    /*
+     * Removing an installed module is transactional at the
+     * active-installation boundary.
+     *
+     * First move it outside modules_root(), so Boss no
+     * longer considers it installed, while retaining the
+     * possibility of restoring it if Boss-owned state
+     * cannot be cleaned.
+     */
+    let removal_root = neebles_root().join("shared/tmp");
+
+    fs::create_dir_all(&removal_root).map_err(|error| {
+        format!(
+            "could not create uninstall staging directory {}: {error}",
+            removal_root.display()
+        )
+    })?;
+
+    let removal_path = removal_root.join(format!("uninstall-{name}-{}", transaction_id()));
+
+    if removal_path.exists() {
+        return Err(format!(
+            "uninstall staging path already exists and will not be overwritten: {}",
+            removal_path.display()
+        ));
+    }
+
+    fs::rename(&path, &removal_path).map_err(|error| {
+        format!(
+            "could not move module '{}' into uninstall staging {}: {error}",
+            name,
+            removal_path.display()
+        )
+    })?;
+
+    /*
+     * Boss-owned state for an uninstalled module must not
+     * survive the uninstall.
+     *
+     * If configuration cleanup fails, restore the module
+     * to its original active path.
+     */
+    if let Err(config_error) = config::remove_module_state(name) {
+        match fs::rename(&removal_path, &path) {
+            Ok(()) => {
+                return Err(format!(
+                    "could not clean Boss state while uninstalling module '{}': {}; module installation was restored",
+                    name,
+                    config_error
+                ));
+            }
+
+            Err(rollback_error) => {
+                return Err(format!(
+                    "CRITICAL: could not clean Boss state while uninstalling module '{}': {}; rollback also failed: {}; module remains at {}",
+                    name,
+                    config_error,
+                    rollback_error,
+                    removal_path.display()
+                ));
+            }
+        }
+    }
+
+    /*
+     * Installation and Boss state are now detached.
+     * Destroy the staged copy last.
+     */
+    fs::remove_dir_all(&removal_path).map_err(|error| {
+        format!(
+            "module '{}' was removed from the active installation and its Boss state was cleaned, but uninstall staging {} could not be deleted: {error}",
+            name,
+            removal_path.display()
+        )
+    })?;
+
+    Ok(())
+}
+
+pub fn update(name: &str, close_running: bool) -> Result<(), String> {
+    /*
+     * Without explicit permission Boss must never close
+     * live module processes as part of an update.
+     *
+     * This first check fails fast, before doing network or
+     * staging work.
+     */
+    if !close_running {
+        if probe_module_pid(name)?.is_some() {
+            return Err(format!("module '{name}' is currently running"));
+        }
+
+        if probe_tray_provider_pid(name)?.is_some() {
+            return Err(format!(
+                "module '{name}' tray provider is currently running"
             ));
         }
     }
@@ -1860,10 +1929,53 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
     }
 
     /*
-     * Candidate is valid.
+     * Candidate is now completely staged and validated.
      *
-     * From this point forward we perform the smallest
-     * possible filesystem transaction:
+     * Only at this boundary may an explicitly authorized
+     * update close live processes. Keeping the currently
+     * installed module alive until this point minimizes
+     * downtime and guarantees that download/validation
+     * failures never stop the working version.
+     *
+     * Re-probe here as well: a process may have started
+     * after the initial preflight.
+     */
+    if probe_module_pid(name)?.is_some() {
+        if !close_running {
+            return Err(format!(
+                "module '{name}' started running while the update was being prepared"
+            ));
+        }
+
+        stop_module(name)?;
+
+        if probe_module_pid(name)?.is_some() {
+            return Err(format!(
+                "module '{name}' is still running after update shutdown"
+            ));
+        }
+    }
+
+    if probe_tray_provider_pid(name)?.is_some() {
+        if !close_running {
+            return Err(format!(
+                "module '{name}' tray provider started running while the update was being prepared"
+            ));
+        }
+
+        stop_tray_provider(name)?;
+
+        if probe_tray_provider_pid(name)?.is_some() {
+            return Err(format!(
+                "module '{name}' tray provider is still running after update shutdown"
+            ));
+        }
+    }
+
+    /*
+     * Candidate is valid and runtime users are out.
+     *
+     * Perform the smallest possible filesystem transaction:
      *
      * current -> backup
      * staged  -> current

@@ -264,35 +264,6 @@ fn request_tray_reconcile() -> Result<(), String> {
     }
 }
 
-fn request_tray_provider_stop(name: &str) -> Result<(), String> {
-    if !tray_manager_available() {
-        return Ok(());
-    }
-
-    let manifest = modules::installed_module_manifest(name)?;
-
-    /*
-     * Modules without a tray capability have no
-     * tray lifecycle to coordinate.
-     */
-    if manifest.tray.is_none() {
-        return Ok(());
-    }
-
-    match tray::client::request(&tray::protocol::TrayMessage::StopProvider {
-        tray_id: name.to_string(),
-    })? {
-        tray::protocol::TrayMessage::Ack { event, .. } if event == "stop_provider" => Ok(()),
-
-        tray::protocol::TrayMessage::Error { message } => Err(message),
-
-        response => Err(format!(
-            "unexpected tray stop-provider response: {:?}",
-            response
-        )),
-    }
-}
-
 fn reconcile_after_module_operation(operation: Result<(), String>) -> Result<(), String> {
     let reconcile = request_tray_reconcile();
 
@@ -345,10 +316,6 @@ fn modules_command(args: &[String]) -> i32 {
 
             let close_running = args.iter().any(|value| value == CLOSE_FLAG);
 
-            if let Err(error) = request_tray_provider_stop(name) {
-                return fail(error);
-            }
-
             result(reconcile_after_module_operation(modules::update(
                 name,
                 close_running,
@@ -360,10 +327,6 @@ fn modules_command(args: &[String]) -> i32 {
             };
 
             if let Err(error) = privileges::ensure_root(true) {
-                return fail(error);
-            }
-
-            if let Err(error) = request_tray_provider_stop(name) {
                 return fail(error);
             }
 
