@@ -135,6 +135,8 @@ fn validate_registry(registry: &Registry) -> Result<(), String> {
         ));
     }
 
+    let mut folder_owners = BTreeMap::<String, String>::new();
+
     for (name, module) in &registry.modules {
         if !valid_module_id(name) {
             return Err(format!("invalid module id in registry: {name}"));
@@ -151,31 +153,39 @@ fn validate_registry(registry: &Registry) -> Result<(), String> {
             ));
         }
 
-        if let Some(version) = module.version.as_deref() {
-            let version = version.trim();
+        let version = module
+            .version
+            .as_deref()
+            .ok_or_else(|| format!("module '{}' registry version is required", name))?;
+        let version = version.trim();
 
-            if version.is_empty() {
-                return Err(format!(
-                    "module '{}' registry version cannot be empty",
-                    name
-                ));
-            }
-
-            Version::parse(version).map_err(|error| {
-                format!(
-                    "module '{}' registry version '{}' is not valid SemVer: {error}",
-                    name, version
-                )
-            })?;
+        if version.is_empty() {
+            return Err(format!(
+                "module '{}' registry version cannot be empty",
+                name
+            ));
         }
 
-        if let Some(folder) = module.folder.as_deref() {
-            if !valid_module_id(folder) {
-                return Err(format!(
-                    "invalid module folder '{}' in registry for '{}'",
-                    folder, name
-                ));
-            }
+        Version::parse(version).map_err(|error| {
+            format!(
+                "module '{}' registry version '{}' is not valid SemVer: {error}",
+                name, version
+            )
+        })?;
+
+        let folder = module.folder.as_deref().unwrap_or(name);
+        if !valid_module_id(folder) {
+            return Err(format!(
+                "invalid module folder '{}' in registry for '{}'",
+                folder, name
+            ));
+        }
+
+        if let Some(owner) = folder_owners.insert(folder.to_string(), name.clone()) {
+            return Err(format!(
+                "module registry folder collision: '{}' is declared by both '{}' and '{}'",
+                folder, owner, name
+            ));
         }
     }
 
@@ -1885,11 +1895,16 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
      * completed successfully.
      */
     if let Err(error) = fs::remove_dir_all(&backup_path) {
-        return Err(format!(
-            "module '{}' update was committed successfully, but transactional backup {} could not be removed: {error}",
+        /*
+         * The new version is already live. Backup cleanup is maintenance,
+         * not transaction failure. Preserve the backup and report a warning
+         * instead of lying to callers that the update failed.
+         */
+        eprintln!(
+            "N.E.E.B.L.E.S.: module '{}' update committed successfully, but transactional backup {} could not be removed: {error}",
             name,
             backup_path.display()
-        ));
+        );
     }
 
     Ok(())
@@ -2397,4 +2412,67 @@ fn valid_module_id(value: &str) -> bool {
 #[allow(dead_code)]
 fn _language_contract_example() -> Result<String, String> {
     Ok(languages::load_manifest()?.default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registry_module(version: Option<&str>, folder: Option<&str>) -> RegistryModule {
+        RegistryModule {
+            repo: "https://github.com/example/module.git".to_string(),
+            commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            version: version.map(str::to_string),
+            folder: folder.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn registry_requires_semver_version() {
+        let mut modules = BTreeMap::new();
+        modules.insert("alpha".to_string(), registry_module(None, None));
+        let registry = Registry {
+            schema: REGISTRY_SCHEMA_VERSION,
+            modules,
+        };
+
+        let error = validate_registry(&registry).expect_err("missing version must fail");
+        assert!(error.contains("version is required"));
+    }
+
+    #[test]
+    fn registry_rejects_effective_folder_collisions() {
+        let mut modules = BTreeMap::new();
+        modules.insert(
+            "alpha".to_string(),
+            registry_module(Some("1.0.0"), Some("shared")),
+        );
+        modules.insert(
+            "beta".to_string(),
+            registry_module(Some("1.0.0"), Some("shared")),
+        );
+        let registry = Registry {
+            schema: REGISTRY_SCHEMA_VERSION,
+            modules,
+        };
+
+        let error = validate_registry(&registry).expect_err("folder collision must fail");
+        assert!(error.contains("folder collision"));
+    }
+
+    #[test]
+    fn registry_accepts_unique_semver_entries() {
+        let mut modules = BTreeMap::new();
+        modules.insert("alpha".to_string(), registry_module(Some("1.2.3"), None));
+        modules.insert(
+            "beta".to_string(),
+            registry_module(Some("2.0.0"), Some("beta-runtime")),
+        );
+        let registry = Registry {
+            schema: REGISTRY_SCHEMA_VERSION,
+            modules,
+        };
+
+        validate_registry(&registry).expect("valid registry must pass");
+    }
 }
