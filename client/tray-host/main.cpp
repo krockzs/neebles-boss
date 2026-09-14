@@ -879,34 +879,6 @@ int main(
             KeyboardInteractivityOnDemand
     );
 
-    auto syncDesiredSize = [
-        window,
-        layerWindow
-    ] {
-        layerWindow->setDesiredSize(
-            QSize(
-                window->width(),
-                window->height()
-            )
-        );
-    };
-
-    syncDesiredSize();
-
-    QObject::connect(
-        window,
-        &QQuickWindow::widthChanged,
-        &app,
-        syncDesiredSize
-    );
-
-    QObject::connect(
-        window,
-        &QQuickWindow::heightChanged,
-        &app,
-        syncDesiredSize
-    );
-
     layerWindow->setCloseOnDismissed(
         false
     );
