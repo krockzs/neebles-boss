@@ -247,11 +247,35 @@ fn expire_stale_providers() -> Result<(), String> {
         guard.remove_stale(crate::tray::protocol::TRAY_HEARTBEAT_TIMEOUT_MS)
     };
 
+    let mut errors = Vec::new();
+
     for tray_id in stale {
+        /*
+         * Remove the provider stream first.
+         *
+         * The disconnected handler cannot accidentally
+         * unregister a newer provider because
+         * remove_provider_if_same() compares Arc identity.
+         */
         if let Some(provider) = take_provider(&tray_id)? {
             if let Ok(stream) = provider.lock() {
                 let _ = stream.shutdown(std::net::Shutdown::Both);
             }
+        }
+
+        /*
+         * A heartbeat timeout means the provider is no
+         * longer trusted as healthy.
+         *
+         * Closing the socket is not enough: a hung process
+         * may remain alive and its PID marker would prevent
+         * reconciliation from starting a replacement.
+         */
+        if let Err(error) = modules::stop_tray_provider(&tray_id) {
+            errors.push(format!(
+                "could not stop stale tray provider '{}': {}",
+                tray_id, error
+            ));
         }
 
         broadcast_event(TrayEvent::Unregistered {
@@ -262,9 +286,41 @@ fn expire_stale_providers() -> Result<(), String> {
             "N.E.E.B.L.E.S.: tray provider '{}' expired after heartbeat timeout",
             tray_id
         );
+
+        /*
+         * If the module is still enabled and still declares
+         * tray capability, immediately reconcile that one
+         * provider.
+         *
+         * Broken providers cannot poison the common Tray
+         * Manager; a future watchdog cycle can retry again.
+         */
+        match config::module_enabled(&tray_id) {
+            Ok(true) => {
+                if let Err(error) = modules::start_tray_provider(&tray_id) {
+                    errors.push(format!(
+                        "could not restart tray provider '{}': {}",
+                        tray_id, error
+                    ));
+                }
+            }
+
+            Ok(false) => {}
+
+            Err(error) => {
+                errors.push(format!(
+                    "could not read enabled state for stale tray provider '{}': {}",
+                    tray_id, error
+                ));
+            }
+        }
     }
 
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join(" | "))
+    }
 }
 
 fn run_watchdog() {

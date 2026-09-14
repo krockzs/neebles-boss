@@ -71,7 +71,7 @@ ApplicationWindow {
     minimumHeight: 520
     visible: true
 
-    title: "N.E.E.B.L.E.S. Boss 1.0.5"
+    title: root.t("app.title")
     color: "#09090B"
 
     property int page: 0
@@ -225,18 +225,7 @@ ApplicationWindow {
                     model:
                         typeof boss !== "undefined"
                         ? boss.languages
-                        : [
-                            {
-                                code: "es_CL",
-                                name: "Español (Chile)",
-                                flag: "cl.svg"
-                            },
-                            {
-                                code: "en_US",
-                                name: "English (United States)",
-                                flag: "us.svg"
-                            }
-                        ]
+                        : []
 
                     Component.onCompleted:
                         syncLanguage()
@@ -248,7 +237,7 @@ ApplicationWindow {
                         const currentLanguage =
                             typeof boss !== "undefined"
                             ? boss.language
-                            : "es_CL"
+                            : ""
 
                         for (let i = 0; i < count; ++i) {
                             if (model[i].code === currentLanguage) {
@@ -601,9 +590,7 @@ ApplicationWindow {
                                 id: traySwitch
 
                                 text:
-                                    typeof boss !== "undefined"
-                                    ? root.t("config.tray")
-                                    : "Tray"
+                                    root.t("config.tray")
 
                                 checked:
                                     typeof boss !== "undefined"
@@ -628,6 +615,7 @@ ApplicationWindow {
                                         ? boss.modules.filter(
                                             function(module) {
                                                 return !!module.installed
+                                                    && !!module.tray
                                             }
                                         )
                                         : []
@@ -711,9 +699,7 @@ ApplicationWindow {
                                 id: launcherSwitch
 
                                 text:
-                                    typeof boss !== "undefined"
-                                    ? root.t("config.launcher")
-                                    : "Launcher"
+                                    root.t("config.launcher")
 
                                 checked:
                                     typeof boss !== "undefined"
@@ -738,6 +724,8 @@ ApplicationWindow {
                                         ? boss.modules.filter(
                                             function(module) {
                                                 return !!module.installed
+                                                    && typeof module.launcher_action === "string"
+                                                    && module.launcher_action.length > 0
                                             }
                                         )
                                         : []
@@ -821,11 +809,9 @@ ApplicationWindow {
                                 id: notificationSwitch
 
                                 text:
-                                    typeof boss !== "undefined"
-                                    ? root.t(
+                                    root.t(
                                         "config.normal_notifications"
                                     )
-                                    : "Notifications"
 
                                 checked:
                                     typeof boss !== "undefined"
@@ -1255,11 +1241,9 @@ ApplicationWindow {
                                                     && !modelData.update_available
 
                                                 text:
-                                                    typeof boss !== "undefined"
-                                                    ? root.t(
+                                                    root.t(
                                                         "common.open"
                                                     )
-                                                    : "Open"
 
                                                 enabled:
                                                     typeof boss !== "undefined"
@@ -1301,11 +1285,9 @@ ApplicationWindow {
                                                     && !!modelData.update_available
 
                                                 text:
-                                                    typeof boss !== "undefined"
-                                                    ? root.t(
+                                                    root.t(
                                                         "common.update"
                                                     )
-                                                    : "Update"
 
                                                 enabled:
                                                     typeof boss !== "undefined"

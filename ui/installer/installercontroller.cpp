@@ -6,9 +6,19 @@
 #include <QLocale>
 #include <QRegularExpression>
 
-InstallerController::InstallerController(const QStringList &arguments, QObject *parent)
-    : QObject(parent)
+InstallerController::InstallerController(
+    const QStringList &arguments,
+    const QVariantMap &strings,
+    QObject *parent
+)
+    : QObject(parent),
+      m_strings(strings)
 {
+    m_status = text(
+        QStringLiteral(
+            "installer.status.waiting_authorization"
+        )
+    );
     if (arguments.size() >= 6) {
         m_installScript = arguments.at(1);
         m_backendBinary = arguments.at(2);
@@ -26,6 +36,16 @@ InstallerController::InstallerController(const QStringList &arguments, QObject *
     connect(&m_process, &QProcess::errorOccurred,
             this, &InstallerController::processError);
 }
+
+QString InstallerController::text(
+    const QString &key
+) const
+{
+    return m_strings
+        .value(key, key)
+        .toString();
+}
+
 
 QString InstallerController::authorizationPath() const
 {
@@ -86,10 +106,20 @@ void InstallerController::startInstallation()
 
     if (m_installScript.isEmpty() || m_backendBinary.isEmpty() || m_uiBinary.isEmpty()
         || m_trayBinary.isEmpty() || m_clientDataArchive.isEmpty()) {
-        setStatus(QStringLiteral("Installer payload is incomplete."));
-        appendLog(QStringLiteral(
-            "ERROR: expected installer arguments: <install.sh> <backend> <ui> <tray> <client-data.tar.gz>"
-        ));
+        setStatus(
+            text(
+                QStringLiteral(
+                    "installer.status.payload_incomplete"
+                )
+            )
+        );
+        appendLog(
+            text(
+                QStringLiteral(
+                    "installer.log.expected_arguments"
+                )
+            )
+        );
         m_finished = true;
         m_success = false;
         emit finishedChanged();
@@ -101,8 +131,20 @@ void InstallerController::startInstallation()
         !QFileInfo::exists(m_uiBinary) ||
         !QFileInfo::exists(m_trayBinary) ||
         !QFileInfo::exists(m_clientDataArchive)) {
-        setStatus(QStringLiteral("Installer payload files are missing."));
-        appendLog(QStringLiteral("ERROR: one or more installer payload files do not exist."));
+        setStatus(
+            text(
+                QStringLiteral(
+                    "installer.status.payload_missing"
+                )
+            )
+        );
+        appendLog(
+            text(
+                QStringLiteral(
+                    "installer.log.payload_missing"
+                )
+            )
+        );
         m_finished = true;
         m_success = false;
         emit finishedChanged();
@@ -115,23 +157,39 @@ void InstallerController::startInstallation()
     emit runningChanged();
     emit finishedChanged();
 
-    setStatus(QStringLiteral("Waiting for administrator authorization..."));
+    setStatus(
+        text(
+            QStringLiteral(
+                "installer.status.waiting_authorization"
+            )
+        )
+    );
     setProgress(2);
-    appendLog(QStringLiteral("Requesting administrator privileges through Polkit..."));
+    appendLog(
+        text(
+            QStringLiteral(
+                "installer.log.requesting_privileges"
+            )
+        )
+    );
 
     const QString authAgent =
         authorizationPath();
 
     if (authAgent.isEmpty()) {
         setStatus(
-            QStringLiteral(
-                "N.E.E.B.L.E.S. authorization agent was not found."
+            text(
+                QStringLiteral(
+                    "installer.status.auth_agent_missing"
+                )
             )
         );
 
         appendLog(
-            QStringLiteral(
-                "ERROR: N.E.E.B.L.E.S. authorization agent was not found."
+            text(
+                QStringLiteral(
+                    "installer.log.auth_agent_missing"
+                )
             )
         );
 
@@ -231,12 +289,36 @@ void InstallerController::processFinished(int exitCode, QProcess::ExitStatus exi
 
     if (m_success) {
         setProgress(100);
-        setStatus(QStringLiteral("N.E.E.B.L.E.S. installation completed."));
-        appendLog(QStringLiteral("Installation completed successfully."));
+        setStatus(
+            text(
+                QStringLiteral(
+                    "installer.status.completed"
+                )
+            )
+        );
+        appendLog(
+            text(
+                QStringLiteral(
+                    "installer.log.completed"
+                )
+            )
+        );
         integrateDesktop();
     } else {
-        setStatus(QStringLiteral("Installation was cancelled or failed."));
-        appendLog(QStringLiteral("Installer exited with code %1.").arg(exitCode));
+        setStatus(
+            text(
+                QStringLiteral(
+                    "installer.status.cancelled_or_failed"
+                )
+            )
+        );
+        appendLog(
+            text(
+                QStringLiteral(
+                    "installer.log.exit_code"
+                )
+            ).arg(exitCode)
+        );
     }
 
     emit finishedChanged();
@@ -255,8 +337,22 @@ void InstallerController::processError(QProcess::ProcessError error)
     emit runningChanged();
     emit finishedChanged();
 
-    setStatus(QStringLiteral("Could not start the privileged installer."));
-    appendLog(QStringLiteral("ERROR: %1").arg(m_process.errorString()));
+    setStatus(
+        text(
+            QStringLiteral(
+                "installer.status.start_failed"
+            )
+        )
+    );
+    appendLog(
+        text(
+            QStringLiteral(
+                "installer.log.process_error"
+            )
+        ).arg(
+            m_process.errorString()
+        )
+    );
 }
 
 void InstallerController::integrateDesktop()
@@ -274,8 +370,10 @@ void InstallerController::startTray()
 
     if (!QFileInfo::exists(trayPath)) {
         appendLog(
-            QStringLiteral(
-                "WARNING: tray binary not found."
+            text(
+                QStringLiteral(
+                    "installer.log.tray_missing"
+                )
             )
         );
         return;
@@ -286,11 +384,15 @@ void InstallerController::startTray()
 
     appendLog(
         started
-            ? QStringLiteral(
-                  "N.E.E.B.L.E.S. tray started."
+            ? text(
+                  QStringLiteral(
+                      "installer.log.tray_started"
+                  )
               )
-            : QStringLiteral(
-                  "WARNING: could not start N.E.E.B.L.E.S. tray."
+            : text(
+                  QStringLiteral(
+                      "installer.log.tray_start_failed"
+                  )
               )
     );
 }
@@ -307,8 +409,10 @@ void InstallerController::installLauncherIntoPanel()
             + QStringLiteral("/metadata.json")
         )) {
         appendLog(
-            QStringLiteral(
-                "WARNING: Plasma launcher package not found."
+            text(
+                QStringLiteral(
+                    "installer.log.launcher_missing"
+                )
             )
         );
         return;
@@ -330,8 +434,10 @@ void InstallerController::installLauncherIntoPanel()
         qdbus = QStringLiteral("/usr/bin/qdbus");
     else {
         appendLog(
-            QStringLiteral(
-                "WARNING: qdbus was not found; launcher was installed but could not be added to the panel."
+            text(
+                QStringLiteral(
+                    "installer.log.qdbus_missing"
+                )
             )
         );
         return;
@@ -436,16 +542,20 @@ if (targetPanel) {
         || process.exitCode() != 0
     ) {
         appendLog(
-            QStringLiteral(
-                "WARNING: launcher package installed, but Plasma panel integration failed."
+            text(
+                QStringLiteral(
+                    "installer.log.launcher_integration_failed"
+                )
             )
         );
         return;
     }
 
     appendLog(
-        QStringLiteral(
-            "N.E.E.B.L.E.S. launcher added to Plasma."
+        text(
+            QStringLiteral(
+                "installer.log.launcher_added"
+            )
         )
     );
 }

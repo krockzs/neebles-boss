@@ -2,6 +2,7 @@ use crate::config;
 use crate::dependencies::{self, DependencySet};
 use crate::languages;
 use crate::privileges;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
@@ -12,10 +13,28 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+pub const MODULE_SCHEMA_VERSION: u32 = 3;
+pub const MODULE_LANGUAGE_SCHEMA_VERSION: u32 = 1;
+pub const MODULE_NOTIFICATIONS_PROTOCOL_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandLifecycle {
+    #[default]
+    Oneshot,
+    Tracked,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CommandContract {
     #[serde(default)]
     pub requires_root: bool,
+
+    #[serde(default)]
+    pub lifecycle: CommandLifecycle,
+
+    #[serde(default)]
+    pub launcher: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +52,16 @@ fn default_tray_protocol() -> u32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationContract {
+    #[serde(default = "default_notifications_protocol")]
+    pub protocol: u32,
+}
+
+fn default_notifications_protocol() -> u32 {
+    MODULE_NOTIFICATIONS_PROTOCOL_VERSION
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleManifest {
     #[serde(default = "default_schema")]
     pub schema: u32,
@@ -47,6 +76,9 @@ pub struct ModuleManifest {
 
     #[serde(default)]
     pub tray: Option<TrayContract>,
+
+    #[serde(default)]
+    pub notifications: Option<NotificationContract>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,9 +88,10 @@ struct ModuleLanguageEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModuleLanguageManifest {
-    #[serde(default)]
+    pub schema: u32,
+
     pub default: String,
-    #[serde(default)]
+
     pub languages: Vec<ModuleLanguageEntry>,
 }
 
@@ -382,6 +415,19 @@ fn clear_runtime_marker(name: &str) {
     let _ = fs::remove_file(runtime_marker_path(name));
 }
 
+fn clear_runtime_marker_if_pid(name: &str, pid: u32) {
+    let path = runtime_marker_path(name);
+
+    let matches = fs::read_to_string(&path)
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        == Some(pid);
+
+    if matches {
+        let _ = fs::remove_file(path);
+    }
+}
+
 fn write_runtime_marker(name: &str, pid: u32) -> Result<(), String> {
     let root = runtime_modules_root();
 
@@ -409,6 +455,7 @@ fn module_pid(name: &str) -> Option<u32> {
 
     let pid = match raw.trim().parse::<u32>() {
         Ok(pid) => pid,
+
         Err(_) => {
             clear_runtime_marker(name);
             return None;
@@ -418,11 +465,87 @@ fn module_pid(name: &str) -> Option<u32> {
     let process_path = PathBuf::from(format!("/proc/{pid}"));
 
     if !process_path.exists() {
-        clear_runtime_marker(name);
+        clear_runtime_marker_if_pid(name, pid);
         return None;
     }
 
-    Some(pid)
+    /*
+     * Never trust a PID marker by itself.
+     *
+     * Linux can reuse process ids. Verify that the
+     * process still belongs to this module's declared
+     * entrypoint before treating it as tracked runtime.
+     */
+    let module_dir = match find_module_dir(name) {
+        Ok(path) => path,
+
+        Err(_) => {
+            clear_runtime_marker_if_pid(name, pid);
+            return None;
+        }
+    };
+
+    let manifest = match read_manifest(&module_dir.join("manifest.json")) {
+        Ok(manifest) => manifest,
+
+        Err(_) => {
+            clear_runtime_marker_if_pid(name, pid);
+            return None;
+        }
+    };
+
+    let expected = match resolve_entrypoint(&module_dir, &manifest.entrypoint) {
+        Ok(path) => path,
+
+        Err(_) => {
+            clear_runtime_marker_if_pid(name, pid);
+            return None;
+        }
+    };
+
+    /*
+     * Native executable:
+     * /proc/<pid>/exe equals the declared entrypoint.
+     */
+    let proc_exe = PathBuf::from(format!("/proc/{pid}/exe"));
+
+    if let Ok(actual_exe) = fs::read_link(&proc_exe) {
+        if let Ok(actual_exe) = actual_exe.canonicalize() {
+            if actual_exe == expected {
+                return Some(pid);
+            }
+        }
+    }
+
+    /*
+     * Interpreted entrypoint:
+     * Bash/Python/Node/etc. expose their interpreter
+     * through /proc/<pid>/exe, so the script itself
+     * must appear as one exact argv item.
+     */
+    let cmdline = match fs::read(format!("/proc/{pid}/cmdline")) {
+        Ok(value) => value,
+
+        Err(_) => {
+            clear_runtime_marker_if_pid(name, pid);
+            return None;
+        }
+    };
+
+    let expected_bytes = expected.as_os_str().as_bytes();
+
+    let matches_entrypoint = cmdline
+        .split(|byte| *byte == 0)
+        .filter(|argument| !argument.is_empty())
+        .any(|argument| argument == expected_bytes);
+
+    if matches_entrypoint {
+        return Some(pid);
+    }
+
+    clear_runtime_marker_if_pid(name, pid);
+
+    None
 }
 
 pub fn module_running(name: &str) -> bool {
@@ -435,10 +558,7 @@ fn stop_module(name: &str) -> Result<(), String> {
     };
 
     /*
-     * Boss owns module lifecycle.
-     *
-     * SIGTERM gives the application an opportunity
-     * to close normally instead of killing it abruptly.
+     * Graceful shutdown first.
      */
     let status = Command::new("kill")
         .args(["-TERM", pid.to_string().as_str()])
@@ -446,8 +566,50 @@ fn stop_module(name: &str) -> Result<(), String> {
         .map_err(|error| format!("could not stop module '{name}' process {pid}: {error}"))?;
 
     if !status.success() {
-        return Err(format!("could not stop module '{name}' process {pid}"));
+        return Err(format!(
+            "could not send SIGTERM to module '{name}' process {pid}"
+        ));
     }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+
+    while module_pid(name) == Some(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    if module_pid(name) != Some(pid) {
+        clear_runtime_marker_if_pid(name, pid);
+        return Ok(());
+    }
+
+    /*
+     * A tracked process that ignores SIGTERM must not
+     * block Boss lifecycle forever.
+     */
+    let status = Command::new("kill")
+        .args(["-KILL", pid.to_string().as_str()])
+        .status()
+        .map_err(|error| format!("could not force-stop module '{name}' process {pid}: {error}"))?;
+
+    if !status.success() {
+        return Err(format!(
+            "could not send SIGKILL to module '{name}' process {pid}"
+        ));
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+
+    while module_pid(name) == Some(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    if module_pid(name) == Some(pid) {
+        return Err(format!(
+            "module '{name}' process {pid} did not terminate after SIGKILL"
+        ));
+    }
+
+    clear_runtime_marker_if_pid(name, pid);
 
     Ok(())
 }
@@ -743,23 +905,57 @@ pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
 
     if !status.success() {
         return Err(format!(
-            "could not stop tray provider for module '{}' process {}",
+            "could not send SIGTERM to tray provider for module '{}' process {}",
             name, pid
         ));
     }
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
 
-    while tray_provider_running(name) && std::time::Instant::now() < deadline {
+    while tray_provider_pid(name) == Some(pid) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if tray_provider_running(name) {
+    if tray_provider_pid(name) != Some(pid) {
+        clear_tray_runtime_marker_if_pid(name, pid);
+        return Ok(true);
+    }
+
+    /*
+     * A stale or broken provider must not permanently
+     * block reconciliation.
+     */
+    let status = Command::new("kill")
+        .args(["-KILL", pid.to_string().as_str()])
+        .status()
+        .map_err(|error| {
+            format!(
+                "could not force-stop tray provider for module '{}' process {}: {error}",
+                name, pid
+            )
+        })?;
+
+    if !status.success() {
         return Err(format!(
-            "tray provider for module '{}' did not close in time",
-            name
+            "could not send SIGKILL to tray provider for module '{}' process {}",
+            name, pid
         ));
     }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+
+    while tray_provider_pid(name) == Some(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    if tray_provider_pid(name) == Some(pid) {
+        return Err(format!(
+            "tray provider for module '{}' process {} did not terminate after SIGKILL",
+            name, pid
+        ));
+    }
+
+    clear_tray_runtime_marker_if_pid(name, pid);
 
     Ok(true)
 }
@@ -939,6 +1135,8 @@ pub fn installed_modules_json() -> Result<Value, String> {
         let icon = local_module_icon(&entry.path());
         let running = module_running(&manifest.name);
 
+        let launcher_action = launcher_action(&manifest)?;
+
         let mut item = json!({
             "name": manifest.name,
             "version": manifest.version,
@@ -946,6 +1144,12 @@ pub fn installed_modules_json() -> Result<Value, String> {
             "running": running,
             "path": entry.path(),
             "icon": icon,
+            "launcher_action": launcher_action,
+            "notifications": manifest.notifications.as_ref().map(|contract| {
+                json!({
+                    "protocol": contract.protocol,
+                })
+            }),
         });
 
         if let Some(tray) = manifest.tray.as_ref() {
@@ -1009,6 +1213,53 @@ pub fn install(name: &str) -> Result<(), String> {
     let registry = fetch_registry()?;
     let mut visiting = HashSet::new();
     install_internal(name, &registry, &mut visiting)
+}
+
+fn ensure_minimum_module_version(name: &str, minimum_version: Option<&str>) -> Result<(), String> {
+    let Some(minimum_version) = minimum_version else {
+        return Ok(());
+    };
+
+    let minimum_version = Version::parse(minimum_version.trim()).map_err(|error| {
+        format!(
+            "invalid minimum version '{}' requested for module '{}': {error}",
+            minimum_version, name
+        )
+    })?;
+
+    let manifest = installed_module_manifest(name)?;
+
+    let installed_version = Version::parse(manifest.version.trim()).map_err(|error| {
+        format!(
+            "installed module '{}' has invalid semantic version '{}': {error}",
+            name, manifest.version
+        )
+    })?;
+
+    if installed_version < minimum_version {
+        return Err(format!(
+            "module '{}' version {} is installed but version {} or newer is required",
+            name, installed_version, minimum_version
+        ));
+    }
+
+    Ok(())
+}
+
+fn resolve_module_dependency(
+    dependency: &dependencies::ModuleDependency,
+    registry: &Registry,
+    visiting: &mut HashSet<String>,
+) -> Result<(), String> {
+    /*
+     * Installed dependencies are not blindly accepted:
+     * their declared version must still satisfy the contract.
+     */
+    if find_module_dir(&dependency.name).is_err() {
+        install_internal(&dependency.name, registry, visiting)?;
+    }
+
+    ensure_minimum_module_version(&dependency.name, dependency.minimum_version.as_deref())
 }
 
 fn install_internal(
@@ -1087,11 +1338,18 @@ fn install_internal(
     dependencies::resolve_system_dependencies(&manifest.dependencies.system)?;
 
     for dependency in &manifest.dependencies.modules {
-        match install_internal(&dependency.name, registry, visiting) {
+        match resolve_module_dependency(dependency, registry, visiting) {
             Ok(()) => {}
-            Err(error) if dependency.required => return Err(error),
+
+            Err(error) if dependency.required => {
+                return Err(format!(
+                    "required module dependency '{}' could not be resolved: {error}",
+                    dependency.name
+                ));
+            }
+
             Err(error) => eprintln!(
-                "N.E.E.B.L.E.S.: optional module dependency '{}' could not be installed: {error}",
+                "N.E.E.B.L.E.S.: optional module dependency '{}' could not be resolved: {error}",
                 dependency.name
             ),
         }
@@ -1153,11 +1411,7 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
         }
     }
 
-    let path = find_module_dir(name)?;
-
-    if !path.join(".git").exists() {
-        return Err(format!("module '{name}' is not backed by a git checkout"));
-    }
+    let current_path = find_module_dir(name)?;
 
     let registry = fetch_registry()?;
 
@@ -1166,51 +1420,207 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
         .get(name)
         .ok_or_else(|| format!("module '{name}' does not exist in the N.E.E.B.L.E.S. registry"))?;
 
+    if !dependencies::command_exists("git") {
+        return Err("git is required by Boss to update modules from repositories".to_string());
+    }
+
     let branch = entry.branch.as_deref().unwrap_or("main");
 
-    let fetch_status = Command::new("git")
-        .arg("-C")
-        .arg(&path)
-        .args(["fetch", "--depth", "1", "origin", branch])
-        .status()
-        .map_err(|error| format!("could not fetch update for '{name}': {error}"))?;
+    /*
+     * Stage the candidate INSIDE modules_root().
+     *
+     * That keeps the final rename on the same filesystem,
+     * allowing the commit/rollback operation to remain
+     * atomic at filesystem rename level.
+     */
+    let root = modules_root();
 
-    if !fetch_status.success() {
+    fs::create_dir_all(&root)
+        .map_err(|error| format!("could not create module root {}: {error}", root.display()))?;
+
+    let staging_path = root.join(format!(".neebles-update-{}-{}", name, std::process::id()));
+
+    let backup_path = root.join(format!(".neebles-backup-{}-{}", name, std::process::id()));
+
+    /*
+     * A previous interrupted development run may have
+     * left a staging directory using this PID-shaped name.
+     *
+     * The live module path is NEVER removed here.
+     */
+    if staging_path.exists() {
+        fs::remove_dir_all(&staging_path).map_err(|error| {
+            format!(
+                "could not clear stale update staging directory {}: {error}",
+                staging_path.display()
+            )
+        })?;
+    }
+
+    /*
+     * If the real module exists, an old backup with this
+     * exact transient name cannot be the active copy.
+     */
+    if backup_path.exists() {
+        fs::remove_dir_all(&backup_path).map_err(|error| {
+            format!(
+                "could not clear stale module backup {}: {error}",
+                backup_path.display()
+            )
+        })?;
+    }
+
+    let staging = ModuleInstallStaging::prepare(staging_path.clone())?;
+
+    /*
+     * Clone the candidate instead of mutating the current
+     * checkout with git reset.
+     */
+    let status = Command::new("git")
+        .arg("clone")
+        .arg("--depth")
+        .arg("1")
+        .arg("--branch")
+        .arg(branch)
+        .arg(&entry.repo)
+        .arg(staging.path())
+        .status()
+        .map_err(|error| format!("could not start staged update clone for '{name}': {error}"))?;
+
+    if !status.success() {
         return Err(format!(
-            "git fetch failed for module '{name}' with status {fetch_status}"
+            "git clone failed while staging update for module '{name}' with status {status}"
         ));
     }
 
-    let reset_status = Command::new("git")
-        .arg("-C")
-        .arg(&path)
-        .args(["reset", "--hard", "FETCH_HEAD"])
-        .status()
-        .map_err(|error| format!("could not apply update for '{name}': {error}"))?;
+    /*
+     * read_manifest() is now the schema-3 gate.
+     *
+     * Before touching the installed copy this validates:
+     * - schema
+     * - name format
+     * - semantic version
+     * - entrypoint
+     * - commands
+     * - lifecycle values through serde
+     * - launcher contract
+     * - tray contract
+     * - notifications protocol
+     * - language contract
+     * - dependency declarations
+     * - safe paths
+     */
+    let manifest = read_manifest(&staging.path().join("manifest.json"))?;
 
-    if !reset_status.success() {
+    if manifest.name != name {
         return Err(format!(
-            "git reset failed for module '{name}' with status {reset_status}"
+            "staged module manifest name '{}' does not match registry id '{name}'",
+            manifest.name
         ));
     }
-
-    let manifest = read_manifest(&path.join("manifest.json"))?;
 
     if let Some(expected_version) = entry.version.as_deref() {
-        if !expected_version.is_empty() && manifest.version != expected_version {
+        if !expected_version.trim().is_empty() && manifest.version != expected_version {
             return Err(format!(
-                "module '{name}' updated but manifest version '{}' does not match registry version '{}'",
-                manifest.version,
-                expected_version
+                "module '{}' staged version '{}' does not match registry version '{}'",
+                name, manifest.version, expected_version
             ));
         }
     }
 
-    if manifest.tray.is_some() {
-        resolve_tray_contract_from(&path, &manifest)?;
+    /*
+     * Resolve every dependency while the old module is
+     * still intact.
+     */
+    dependencies::resolve_system_dependencies(&manifest.dependencies.system)?;
+
+    let mut visiting = HashSet::new();
+    visiting.insert(name.to_string());
+
+    for dependency in &manifest.dependencies.modules {
+        match resolve_module_dependency(
+            dependency,
+            &registry,
+            &mut visiting,
+        ) {
+            Ok(()) => {}
+
+            Err(error) if dependency.required => {
+                return Err(format!(
+                    "required module dependency '{}' could not be resolved before updating '{}': {error}",
+                    dependency.name,
+                    name
+                ));
+            }
+
+            Err(error) => eprintln!(
+                "N.E.E.B.L.E.S.: optional module dependency '{}' could not be resolved before updating '{}': {error}",
+                dependency.name,
+                name
+            ),
+        }
     }
 
-    dependencies::resolve_system_dependencies(&manifest.dependencies.system)?;
+    /*
+     * Candidate is valid.
+     *
+     * From this point forward we perform the smallest
+     * possible filesystem transaction:
+     *
+     * current -> backup
+     * staged  -> current
+     */
+    fs::rename(&current_path, &backup_path).map_err(|error| {
+        format!(
+            "could not move current module '{}' into transactional backup {}: {error}",
+            name,
+            backup_path.display()
+        )
+    })?;
+
+    match staging.commit(&current_path) {
+        Ok(()) => {}
+
+        Err(commit_error) => {
+            /*
+             * The new version could not take the live path.
+             * Restore the previous known-good copy.
+             */
+            match fs::rename(&backup_path, &current_path) {
+                Ok(()) => {
+                    return Err(format!(
+                        "could not commit staged update for module '{}': {}; previous version was restored",
+                        name,
+                        commit_error
+                    ));
+                }
+
+                Err(rollback_error) => {
+                    return Err(format!(
+                        "CRITICAL: could not commit staged update for module '{}': {}; rollback also failed: {}; previous module remains at {}",
+                        name,
+                        commit_error,
+                        rollback_error,
+                        backup_path.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    /*
+     * The new copy is now live.
+     *
+     * Remove the old known-good copy only after the swap
+     * completed successfully.
+     */
+    if let Err(error) = fs::remove_dir_all(&backup_path) {
+        return Err(format!(
+            "module '{}' update was committed successfully, but transactional backup {} could not be removed: {error}",
+            name,
+            backup_path.display()
+        ));
+    }
 
     Ok(())
 }
@@ -1246,13 +1656,10 @@ fn resolve_module_language(module_dir: &Path, requested: &str) -> Result<String,
     let manifest_path = module_dir.join("languages").join("manifest.json");
 
     /*
-     * Legacy modules may not implement the N.E.E.B.L.E.S.
-     * language contract yet. Preserve the historical behavior
-     * and pass the Boss language unchanged.
+     * Schema 3 modules always have a validated language
+     * contract. No implicit legacy behavior exists here.
      */
-    if !manifest_path.exists() {
-        return Ok(requested.to_string());
-    }
+    validate_module_language_contract(module_dir)?;
 
     let raw = fs::read_to_string(&manifest_path).map_err(|error| {
         format!(
@@ -1268,13 +1675,6 @@ fn resolve_module_language(module_dir: &Path, requested: &str) -> Result<String,
         )
     })?;
 
-    if manifest.languages.is_empty() {
-        return Err(format!(
-            "module language manifest {} declares no languages",
-            manifest_path.display()
-        ));
-    }
-
     let requested = languages::normalize_locale(requested);
 
     if let Some(language) = manifest
@@ -1285,27 +1685,21 @@ fn resolve_module_language(module_dir: &Path, requested: &str) -> Result<String,
         return Ok(language.code.clone());
     }
 
-    let default = manifest.default.trim();
+    let normalized_default = languages::normalize_locale(manifest.default.trim());
 
-    if !default.is_empty() {
-        let normalized_default = languages::normalize_locale(default);
+    let language = manifest
+        .languages
+        .iter()
+        .find(|language| languages::normalize_locale(&language.code) == normalized_default)
+        .ok_or_else(|| {
+            format!(
+                "module language manifest {} defines invalid default '{}'",
+                manifest_path.display(),
+                manifest.default
+            )
+        })?;
 
-        if let Some(language) = manifest
-            .languages
-            .iter()
-            .find(|language| languages::normalize_locale(&language.code) == normalized_default)
-        {
-            return Ok(language.code.clone());
-        }
-
-        return Err(format!(
-            "module language manifest {} defines default '{}' but that language is not declared",
-            manifest_path.display(),
-            manifest.default
-        ));
-    }
-
-    Ok(manifest.languages[0].code.clone())
+    Ok(language.code.clone())
 }
 
 pub fn execute(name: &str, args: &[String], caller: &str) -> Result<i32, String> {
@@ -1319,28 +1713,20 @@ pub fn execute(name: &str, args: &[String], caller: &str) -> Result<i32, String>
 
     let action = args.first().map(String::as_str).unwrap_or("default");
 
-    let track_runtime = action == "open";
+    let contract = manifest
+        .commands
+        .get(action)
+        .ok_or_else(|| format!("module '{}' does not declare command '{}'", name, action))?;
+
+    let track_runtime = contract.lifecycle == CommandLifecycle::Tracked;
 
     if track_runtime && module_running(name) {
         return Err(format!("module '{name}' is already running"));
     }
 
-    let requires_root = manifest
-        .commands
-        .get(action)
-        .map(|contract| contract.requires_root)
-        .unwrap_or(false);
+    privileges::ensure_root(contract.requires_root)?;
 
-    privileges::ensure_root(requires_root)?;
-
-    let entrypoint = resolve_entrypoint(&module_dir, &manifest.entrypoint);
-
-    if !entrypoint.exists() {
-        return Err(format!(
-            "module entrypoint does not exist: {}",
-            entrypoint.display()
-        ));
-    }
+    let entrypoint = resolve_entrypoint(&module_dir, &manifest.entrypoint)?;
 
     let requested_language = config::load_or_initialize()?.language;
 
@@ -1355,6 +1741,7 @@ pub fn execute(name: &str, args: &[String], caller: &str) -> Result<i32, String>
         .current_dir(&module_dir)
         .env("NEEBLES_LANGUAGE", language)
         .env("NEEBLES_CALLER", caller)
+        .env("NEEBLES_MODULE", name)
         .env("NEEBLES_CONFIG", config_path)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -1414,20 +1801,320 @@ pub fn find_module_dir(name: &str) -> Result<PathBuf, String> {
     Err(format!("module '{name}' is not installed"))
 }
 
+fn validate_module_language_contract(module_dir: &Path) -> Result<(), String> {
+    let manifest_path = module_dir.join("languages").join("manifest.json");
+
+    if !manifest_path.is_file() {
+        return Err(format!(
+            "module schema {} requires a language manifest: {}",
+            MODULE_SCHEMA_VERSION,
+            manifest_path.display()
+        ));
+    }
+
+    let raw = fs::read_to_string(&manifest_path).map_err(|error| {
+        format!(
+            "could not read module language manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+
+    let manifest: ModuleLanguageManifest = serde_json::from_str(&raw).map_err(|error| {
+        format!(
+            "invalid module language manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+
+    if manifest.schema != MODULE_LANGUAGE_SCHEMA_VERSION {
+        return Err(format!(
+            "module language manifest {} declares unsupported schema {}; expected {}",
+            manifest_path.display(),
+            manifest.schema,
+            MODULE_LANGUAGE_SCHEMA_VERSION
+        ));
+    }
+
+    if manifest.languages.is_empty() {
+        return Err(format!(
+            "module language manifest {} declares no languages",
+            manifest_path.display()
+        ));
+    }
+
+    let mut normalized_languages = HashSet::new();
+
+    for language in &manifest.languages {
+        let code = language.code.trim();
+
+        if code.is_empty() {
+            return Err(format!(
+                "module language manifest {} contains an empty language code",
+                manifest_path.display()
+            ));
+        }
+
+        let normalized = languages::normalize_locale(code);
+
+        if normalized.is_empty() {
+            return Err(format!(
+                "module language manifest {} contains invalid language code '{}'",
+                manifest_path.display(),
+                language.code
+            ));
+        }
+
+        if !normalized_languages.insert(normalized.clone()) {
+            return Err(format!(
+                "module language manifest {} declares duplicate language '{}'",
+                manifest_path.display(),
+                normalized
+            ));
+        }
+    }
+
+    let default = manifest.default.trim();
+
+    if default.is_empty() {
+        return Err(format!(
+            "module language manifest {} must declare a default language",
+            manifest_path.display()
+        ));
+    }
+
+    let normalized_default = languages::normalize_locale(default);
+
+    if !normalized_languages.contains(&normalized_default) {
+        return Err(format!(
+            "module language manifest {} defines default '{}' but that language is not declared",
+            manifest_path.display(),
+            manifest.default
+        ));
+    }
+
+    Ok(())
+}
+
+fn resolve_module_file(module_dir: &Path, value: &str, field: &str) -> Result<PathBuf, String> {
+    let value = value.trim();
+
+    if value.is_empty() {
+        return Err(format!("module {field} cannot be empty"));
+    }
+
+    let relative = Path::new(value);
+
+    if relative.is_absolute() {
+        return Err(format!(
+            "module {field} must be relative to the module directory"
+        ));
+    }
+
+    for component in relative.components() {
+        use std::path::Component;
+
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("module {field} contains an invalid path: {value}"));
+            }
+        }
+    }
+
+    let candidate = module_dir.join(relative);
+
+    let canonical = candidate.canonicalize().map_err(|error| {
+        format!(
+            "could not resolve module {field} {}: {error}",
+            candidate.display()
+        )
+    })?;
+
+    let canonical_module = module_dir.canonicalize().map_err(|error| {
+        format!(
+            "could not resolve module directory {}: {error}",
+            module_dir.display()
+        )
+    })?;
+
+    if !canonical.starts_with(&canonical_module) {
+        return Err(format!("module {field} escapes module directory"));
+    }
+
+    if !canonical.is_file() {
+        return Err(format!(
+            "module {field} is not a file: {}",
+            canonical.display()
+        ));
+    }
+
+    Ok(canonical)
+}
+
+fn launcher_action(manifest: &ModuleManifest) -> Result<Option<String>, String> {
+    let actions: Vec<&String> = manifest
+        .commands
+        .iter()
+        .filter_map(|(name, command)| command.launcher.then_some(name))
+        .collect();
+
+    match actions.as_slice() {
+        [] => Ok(None),
+        [action] => Ok(Some((*action).clone())),
+        _ => Err(format!(
+            "module '{}' declares more than one launcher command",
+            manifest.name
+        )),
+    }
+}
+
+pub fn installed_module_launcher_action(name: &str) -> Result<Option<String>, String> {
+    let manifest = installed_module_manifest(name)?;
+    launcher_action(&manifest)
+}
+
+fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Result<(), String> {
+    if manifest.schema != MODULE_SCHEMA_VERSION {
+        return Err(format!(
+            "module '{}' declares unsupported schema {}; expected {}",
+            manifest.name, manifest.schema, MODULE_SCHEMA_VERSION
+        ));
+    }
+
+    if !valid_module_id(&manifest.name) {
+        return Err(format!("invalid module id: {}", manifest.name));
+    }
+
+    if manifest.version.trim().is_empty() {
+        return Err(format!("module '{}' must declare a version", manifest.name));
+    }
+
+    Version::parse(manifest.version.trim()).map_err(|error| {
+        format!(
+            "module '{}' declares invalid semantic version '{}': {error}",
+            manifest.name, manifest.version
+        )
+    })?;
+
+    for dependency in &manifest.dependencies.modules {
+        if !valid_module_id(&dependency.name) {
+            return Err(format!(
+                "module '{}' declares invalid module dependency id '{}'",
+                manifest.name, dependency.name
+            ));
+        }
+
+        if dependency.name == manifest.name {
+            return Err(format!(
+                "module '{}' cannot depend on itself",
+                manifest.name
+            ));
+        }
+
+        if let Some(minimum_version) = dependency.minimum_version.as_deref() {
+            let minimum_version = minimum_version.trim();
+
+            if minimum_version.is_empty() {
+                return Err(format!(
+                    "module '{}' declares an empty minimum_version for dependency '{}'",
+                    manifest.name, dependency.name
+                ));
+            }
+
+            Version::parse(minimum_version).map_err(|error| {
+                format!(
+                    "module '{}' declares invalid minimum_version '{}' for dependency '{}': {error}",
+                    manifest.name, minimum_version, dependency.name
+                )
+            })?;
+        }
+    }
+
+    let entrypoint = resolve_module_file(module_dir, &manifest.entrypoint, "entrypoint")?;
+
+    let metadata = fs::metadata(&entrypoint).map_err(|error| {
+        format!(
+            "could not inspect module '{}' entrypoint {}: {error}",
+            manifest.name,
+            entrypoint.display()
+        )
+    })?;
+
+    if metadata.permissions().mode() & 0o111 == 0 {
+        return Err(format!(
+            "module '{}' entrypoint is not executable: {}",
+            manifest.name,
+            entrypoint.display()
+        ));
+    }
+
+    if manifest.commands.is_empty() {
+        return Err(format!(
+            "module '{}' must declare at least one command",
+            manifest.name
+        ));
+    }
+
+    for action in manifest.commands.keys() {
+        if !valid_module_id(action) {
+            return Err(format!(
+                "module '{}' declares invalid command id '{}'",
+                manifest.name, action
+            ));
+        }
+    }
+
+    let _ = launcher_action(manifest)?;
+
+    if let Some(tray) = &manifest.tray {
+        if tray.protocol != crate::tray::protocol::TRAY_PROTOCOL_VERSION {
+            return Err(format!(
+                "module '{}' declares unsupported tray protocol {}; expected {}",
+                manifest.name,
+                tray.protocol,
+                crate::tray::protocol::TRAY_PROTOCOL_VERSION
+            ));
+        }
+
+        let _ = resolve_module_contract_path(module_dir, &tray.icon, "icon")?;
+        let _ = resolve_module_contract_path(module_dir, &tray.provider, "provider")?;
+    }
+
+    if let Some(notifications) = &manifest.notifications {
+        if notifications.protocol != MODULE_NOTIFICATIONS_PROTOCOL_VERSION {
+            return Err(format!(
+                "module '{}' declares unsupported notifications protocol {}; expected {}",
+                manifest.name, notifications.protocol, MODULE_NOTIFICATIONS_PROTOCOL_VERSION
+            ));
+        }
+    }
+
+    validate_module_language_contract(module_dir)?;
+
+    Ok(())
+}
+
 fn read_manifest(path: &Path) -> Result<ModuleManifest, String> {
     let raw = fs::read_to_string(path)
         .map_err(|error| format!("could not read module manifest {}: {error}", path.display()))?;
-    serde_json::from_str(&raw)
-        .map_err(|error| format!("invalid module manifest {}: {error}", path.display()))
+
+    let manifest: ModuleManifest = serde_json::from_str(&raw)
+        .map_err(|error| format!("invalid module manifest {}: {error}", path.display()))?;
+
+    let module_dir = path.parent().ok_or_else(|| {
+        format!(
+            "module manifest has no parent directory: {}",
+            path.display()
+        )
+    })?;
+
+    validate_module_manifest(module_dir, &manifest)?;
+
+    Ok(manifest)
 }
 
-fn resolve_entrypoint(module_dir: &Path, entrypoint: &str) -> PathBuf {
-    let path = PathBuf::from(entrypoint);
-    if path.is_absolute() {
-        path
-    } else {
-        module_dir.join(path)
-    }
+fn resolve_entrypoint(module_dir: &Path, entrypoint: &str) -> Result<PathBuf, String> {
+    resolve_module_file(module_dir, entrypoint, "entrypoint")
 }
 
 fn valid_module_id(value: &str) -> bool {

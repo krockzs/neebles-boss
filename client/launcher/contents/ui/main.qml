@@ -65,9 +65,15 @@ PlasmoidItem {
                 const installed = JSON.parse(output)
 
                 modules = installed.filter(function(module) {
-                    return root.hiddenLauncherModules.indexOf(
-                        module.name
-                    ) === -1
+                    return (
+                        typeof module.launcher_action === "string"
+                        && module.launcher_action.length > 0
+                        && root.safeModuleId(module.name)
+                        && root.safeModuleId(module.launcher_action)
+                        && root.hiddenLauncherModules.indexOf(
+                            module.name
+                        ) === -1
+                    )
                 })
             } catch (e) {
                 modules = []
@@ -82,8 +88,8 @@ PlasmoidItem {
         )
     }
 
-    function t(key, fallback) {
-        return strings[key] || fallback
+    function t(key) {
+        return strings[key] || key
     }
 
     onExpandedChanged: {
@@ -304,14 +310,16 @@ PlasmoidItem {
 
                                 text:
                                     root.t(
-                                        "common.open",
-                                        "Open"
+                                        "common.open"
                                     )
 
                                 enabled:
                                     modelData.enabled
                                     && root.safeModuleId(
                                         modelData.name
+                                    )
+                                    && root.safeModuleId(
+                                        modelData.launcher_action
                                     )
 
                                 background: Rectangle {
@@ -355,7 +363,8 @@ PlasmoidItem {
                                     root.exec(
                                         "neebles "
                                         + modelData.name
-                                        + " open",
+                                        + " "
+                                        + modelData.launcher_action,
                                         function() {}
                                     )
                             }
@@ -369,12 +378,10 @@ PlasmoidItem {
                                 text:
                                     modelData.enabled
                                     ? root.t(
-                                        "common.disable",
-                                        "Disable"
+                                        "common.disable"
                                     )
                                     : root.t(
-                                        "common.enable",
-                                        "Enable"
+                                        "common.enable"
                                     )
 
                                 enabled:
@@ -449,8 +456,7 @@ PlasmoidItem {
 
                     text:
                         root.t(
-                            "modules.empty",
-                            "No modules are installed."
+                            "modules.empty"
                         )
 
                     color: "#71717A"
@@ -476,8 +482,7 @@ PlasmoidItem {
 
                 text:
                     root.t(
-                        "launcher.open_boss",
-                        "Open Boss"
+                        "launcher.open_boss"
                     )
 
                 enabled: !root.bossRunning

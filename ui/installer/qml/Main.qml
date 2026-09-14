@@ -14,10 +14,23 @@ ApplicationWindow {
 
     visible: true
 
-    title: "N.E.E.B.L.E.S. Installer " + Qt.application.version
+    title:
+        window.t("installer.title")
+        + " "
+        + Qt.application.version
     color: "#09090B"
 
     property bool detailsVisible: false
+
+    function t(key) {
+        if (
+            typeof bossStrings !== "undefined"
+            && bossStrings[key] !== undefined
+        )
+            return bossStrings[key]
+
+        return key
+    }
 
     property url sourceBrandingRoot:
         Qt.resolvedUrl(
@@ -600,8 +613,8 @@ ApplicationWindow {
                 text:
                     typeof installer !== "undefined"
                     && installer.success
-                    ? "N.E.E.B.L.E.S. is ready."
-                    : "Installation did not complete. Review the details above."
+                    ? window.t("installer.success")
+                    : window.t("installer.failure")
 
                 color:
                     typeof installer !== "undefined"

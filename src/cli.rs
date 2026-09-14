@@ -115,13 +115,10 @@ fn config_command(args: &[String]) -> i32 {
             };
 
             if surface == "tray" {
-                let manifest =
-                    match modules::installed_module_manifest(
-                        name
-                    ) {
-                        Ok(manifest) => manifest,
-                        Err(error) => return fail(error),
-                    };
+                let manifest = match modules::installed_module_manifest(name) {
+                    Ok(manifest) => manifest,
+                    Err(error) => return fail(error),
+                };
 
                 if manifest.tray.is_none() {
                     return fail(format!(
@@ -130,34 +127,20 @@ fn config_command(args: &[String]) -> i32 {
                     ));
                 }
 
-                let request =
-                    tray::protocol::TrayMessage::SetVisibility {
-                        tray_id: name.clone(),
-                        visible,
-                    };
+                let request = tray::protocol::TrayMessage::SetVisibility {
+                    tray_id: name.clone(),
+                    visible,
+                };
 
-                match tray::client::request(
-                    &request
-                ) {
-                    Ok(
-                        tray::protocol::TrayMessage::Ack {
-                            ..
-                        }
-                    ) => {
+                match tray::client::request(&request) {
+                    Ok(tray::protocol::TrayMessage::Ack { .. }) => {
                         match config::load_or_initialize() {
-                            Ok(config) =>
-                                print_json(&config),
-
-                            Err(error) =>
-                                fail(error),
+                            Ok(config) => print_json(&config),
+                            Err(error) => fail(error),
                         }
                     }
 
-                    Ok(
-                        tray::protocol::TrayMessage::Error {
-                            message
-                        }
-                    ) => fail(message),
+                    Ok(tray::protocol::TrayMessage::Error { message }) => fail(message),
 
                     Ok(response) => fail(format!(
                         "unexpected tray visibility response: {:?}",
@@ -166,18 +149,29 @@ fn config_command(args: &[String]) -> i32 {
 
                     Err(error) => fail(error),
                 }
-            } else {
-                match config::set_module_visibility(
-                    surface,
-                    name,
-                    visible,
-                ) {
-                    Ok(config) =>
-                        print_json(&config),
+            } else if surface == "launcher" {
+                match modules::installed_module_launcher_action(name) {
+                    Ok(Some(_)) => {}
 
-                    Err(error) =>
-                        fail(error),
+                    Ok(None) => {
+                        return fail(format!(
+                            "module '{}' does not declare a launcher action",
+                            name
+                        ));
+                    }
+
+                    Err(error) => return fail(error),
                 }
+
+                match config::set_module_visibility(surface, name, visible) {
+                    Ok(config) => print_json(&config),
+                    Err(error) => fail(error),
+                }
+            } else {
+                fail(format!(
+                    "unknown module visibility surface: {}",
+                    surface
+                ))
             }
         }
         Some("module-update-notified") => {
@@ -546,9 +540,20 @@ fn notify_command(args: &[String]) -> i32 {
     } else {
         String::new()
     };
-    match Severity::parse(severity)
-        .and_then(|severity| notifications::emit(severity, &title, &message))
-    {
+    let severity = match Severity::parse(severity) {
+        Ok(severity) => severity,
+        Err(error) => return fail(error),
+    };
+
+    let result = match std::env::var("NEEBLES_MODULE") {
+        Ok(module) if !module.trim().is_empty() => {
+            notifications::emit_for_module(module.trim(), severity, &title, &message)
+        }
+
+        _ => notifications::emit(severity, &title, &message),
+    };
+
+    match result {
         Ok(()) => 0,
         Err(error) => fail(error),
     }

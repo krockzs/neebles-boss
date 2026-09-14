@@ -1,5 +1,6 @@
 use crate::config;
 use crate::dependencies;
+use crate::modules;
 use std::process::Command;
 
 #[derive(Debug, Clone, Copy)]
@@ -36,8 +37,18 @@ impl Severity {
     }
 }
 
-pub fn emit(severity: Severity, title: &str, message: &str) -> Result<(), String> {
+fn emit_transport(
+    severity: Severity,
+    application: &str,
+    title: &str,
+    message: &str,
+) -> Result<(), String> {
     let config = config::load_or_initialize()?;
+
+    /*
+     * Normal notifications obey the user's Boss policy.
+     * Critical/Fatal notifications remain mandatory.
+     */
     if !severity.mandatory() && !config.normal_notifications {
         return Ok(());
     }
@@ -53,7 +64,7 @@ pub fn emit(severity: Severity, title: &str, message: &str) -> Result<(), String
         crate::languages::client_root().join("assets/branding/neebles-boss-launcher-icon.png");
 
     let status = Command::new("notify-send")
-        .args(["-a", "N.E.E.B.L.E.S.", "-u", severity.urgency()])
+        .args(["-a", application, "-u", severity.urgency()])
         .arg("-i")
         .arg(icon)
         .arg(title)
@@ -66,4 +77,53 @@ pub fn emit(severity: Severity, title: &str, message: &str) -> Result<(), String
     } else {
         Err(format!("notify-send exited with status {status}"))
     }
+}
+
+pub fn emit(severity: Severity, title: &str, message: &str) -> Result<(), String> {
+    emit_transport(severity, "N.E.E.B.L.E.S.", title, message)
+}
+
+pub fn emit_for_module(
+    module: &str,
+    severity: Severity,
+    title: &str,
+    message: &str,
+) -> Result<(), String> {
+    let manifest = modules::installed_module_manifest(module)?;
+
+    if !config::module_enabled(module)? {
+        return Err(format!(
+            "module '{}' is disabled and cannot emit notifications",
+            module
+        ));
+    }
+
+    let contract = manifest.notifications.as_ref().ok_or_else(|| {
+        format!(
+            "module '{}' does not declare a notifications capability",
+            module
+        )
+    })?;
+
+    if contract.protocol != modules::MODULE_NOTIFICATIONS_PROTOCOL_VERSION {
+        return Err(format!(
+            "module '{}' declares unsupported notifications protocol {}; expected {}",
+            module,
+            contract.protocol,
+            modules::MODULE_NOTIFICATIONS_PROTOCOL_VERSION
+        ));
+    }
+
+    /*
+     * The module owns title/message and resolves them using
+     * its own NEEBLES_LANGUAGE contract.
+     *
+     * Boss only governs transport and policy.
+     */
+    emit_transport(
+        severity,
+        &format!("N.E.E.B.L.E.S. · {}", manifest.name),
+        title,
+        message,
+    )
 }

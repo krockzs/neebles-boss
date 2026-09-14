@@ -1,8 +1,12 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocale>
 #include <QProcess>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -100,6 +104,103 @@ static QString extractClientData(const QStringList &arguments,
     return temporary.path();
 }
 
+static QString normalizeLocale(QString value)
+{
+    value.replace(QLatin1Char('-'), QLatin1Char('_'));
+
+    const QStringList parts =
+        value.split(
+            QLatin1Char('_'),
+            Qt::SkipEmptyParts
+        );
+
+    if (parts.isEmpty())
+        return QStringLiteral("en_US");
+
+    if (parts.size() == 1)
+        return parts.at(0).toLower();
+
+    return parts.at(0).toLower()
+        + QLatin1Char('_')
+        + parts.at(1).toUpper();
+}
+
+static QVariantMap loadInstallerStrings(
+    const QString &payloadRoot
+)
+{
+    QString language =
+        qEnvironmentVariable(
+            "NEEBLES_LANGUAGE"
+        );
+
+    if (language.trimmed().isEmpty())
+        language = QLocale::system().name();
+
+    language =
+        normalizeLocale(language);
+
+    const QString clientRoot =
+        qEnvironmentVariable(
+            "NEEBLES_CLIENT_ROOT"
+        );
+
+    const QStringList roots = {
+        payloadRoot,
+        clientRoot,
+        QDir::current().filePath(
+            QStringLiteral("client")
+        ),
+        QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath(
+            QStringLiteral("../../client")
+        ),
+        QStringLiteral("/opt/neebles/client")
+    };
+
+    auto load = [&roots](const QString &code)
+        -> QVariantMap
+    {
+        for (const QString &root : roots) {
+            if (root.trimmed().isEmpty())
+                continue;
+
+            const QString path =
+                QDir(root).filePath(
+                    QStringLiteral("languages/")
+                    + code
+                    + QStringLiteral(".json")
+                );
+
+            QFile file(path);
+
+            if (!file.open(QIODevice::ReadOnly))
+                continue;
+
+            const QJsonDocument document =
+                QJsonDocument::fromJson(
+                    file.readAll()
+                );
+
+            if (document.isObject())
+                return document.object().toVariantMap();
+        }
+
+        return {};
+    };
+
+    QVariantMap strings =
+        load(language);
+
+    if (!strings.isEmpty())
+        return strings;
+
+    return load(
+        QStringLiteral("en_US")
+    );
+}
+
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
@@ -135,8 +236,14 @@ int main(int argc, char *argv[])
     if (!iconPath.isEmpty())
         app.setWindowIcon(QIcon(iconPath));
 
+    const QVariantMap bossStrings =
+        loadInstallerStrings(
+            payloadRoot
+        );
+
     InstallerController installer(
-        app.arguments()
+        app.arguments(),
+        bossStrings
     );
 
     QQmlApplicationEngine engine;
@@ -144,6 +251,11 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(
         QStringLiteral("installer"),
         &installer
+    );
+
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("bossStrings"),
+        bossStrings
     );
 
     const QString wallPath =

@@ -1079,7 +1079,9 @@ void BossController::saveConfig(const QString &language,
             QStringLiteral("notify"),
             QStringLiteral("info"),
             QStringLiteral("N.E.E.B.L.E.S."),
-            QStringLiteral("Notificaciones desactivadas")
+            text(
+                QStringLiteral("notifications.disabled")
+            )
         }, false, 5000, &notificationOk);
     }
 
@@ -1107,7 +1109,9 @@ void BossController::saveConfig(const QString &language,
             QStringLiteral("notify"),
             QStringLiteral("success"),
             QStringLiteral("N.E.E.B.L.E.S."),
-            QStringLiteral("Notificaciones activadas")
+            text(
+                QStringLiteral("notifications.enabled")
+            )
         }, false, 5000, &notificationOk);
     }
 
@@ -1136,8 +1140,10 @@ void BossController::saveConfig(const QString &language,
         if (launcherEnabled != launcherWasEnabled) {
             if (!applyLauncherPanelState(launcherEnabled))
                 setStatusText(
-                    QStringLiteral(
-                        "Could not update Plasma launcher state"
+                    text(
+                        QStringLiteral(
+                            "launcher.update_failed"
+                        )
                     )
                 );
         }
@@ -1145,8 +1151,14 @@ void BossController::saveConfig(const QString &language,
         reload();
 
         if (statusText().isEmpty()
-            || statusText() == QStringLiteral("OK")) {
-            setStatusText(QStringLiteral("OK"));
+            || statusText() == text(
+                QStringLiteral("common.ok")
+            )) {
+            setStatusText(
+                text(
+                    QStringLiteral("common.ok")
+                )
+            );
         }
     }
 
@@ -1367,8 +1379,10 @@ void BossController::startModuleProcess(
 
     appendModuleOperationLog(
         name,
-        QStringLiteral(
-            "N.E.E.B.L.E.S. %1: %2"
+        text(
+            QStringLiteral(
+                "modules.operation.header"
+            )
         ).arg(
             operation,
             name
@@ -1557,8 +1571,10 @@ void BossController::startModuleProcess(
         ) {
             appendModuleOperationLog(
                 name,
-                QStringLiteral(
-                    "QProcess error: %1"
+                text(
+                    QStringLiteral(
+                        "modules.operation.process_error"
+                    )
                 ).arg(
                     static_cast<int>(error)
                 )
@@ -1610,8 +1626,10 @@ void BossController::startModuleProcess(
             ) {
                 appendModuleOperationLog(
                     name,
-                    QStringLiteral(
-                        "Enabling module..."
+                    text(
+                        QStringLiteral(
+                            "modules.operation.enabling"
+                        )
                     )
                 );
 
@@ -1634,11 +1652,15 @@ void BossController::startModuleProcess(
                 appendModuleOperationLog(
                     name,
                     enabled
-                    ? QStringLiteral(
-                        "Module enabled."
+                    ? text(
+                        QStringLiteral(
+                            "modules.operation.enabled"
+                        )
                     )
-                    : QStringLiteral(
-                        "Could not enable module."
+                    : text(
+                        QStringLiteral(
+                            "modules.operation.enable_failed"
+                        )
                     )
                 );
             }
@@ -1664,23 +1686,31 @@ void BossController::startModuleProcess(
 
                 appendModuleOperationLog(
                     name,
-                    QStringLiteral(
-                        "Completed successfully."
+                    text(
+                        QStringLiteral(
+                            "modules.operation.completed"
+                        )
                     )
                 );
             } else {
                 appendModuleOperationLog(
                     name,
-                    QStringLiteral(
-                        "Operation failed."
+                    text(
+                        QStringLiteral(
+                            "modules.operation.failed"
+                        )
                     )
                 );
             }
 
             setStatusText(
                 success
-                ? QStringLiteral("OK")
-                : QStringLiteral("ERROR")
+                ? text(
+                    QStringLiteral("common.ok")
+                )
+                : text(
+                    QStringLiteral("common.error")
+                )
             );
 
             m_moduleOperationProcess =
@@ -1730,8 +1760,12 @@ void BossController::runModuleOperation(
 
     setStatusText(
         ok
-        ? QStringLiteral("OK")
-        : QStringLiteral("ERROR")
+        ? text(
+            QStringLiteral("common.ok")
+        )
+        : text(
+            QStringLiteral("common.error")
+        )
     );
 
     loadModules();
@@ -1818,6 +1852,16 @@ void BossController::openModule(
         )
             return;
 
+        const QString launcherAction =
+            module.value(
+                QStringLiteral(
+                    "launcher_action"
+                )
+            ).toString();
+
+        if (launcherAction.isEmpty())
+            return;
+
         qint64 processId = 0;
 
         const bool started =
@@ -1825,7 +1869,7 @@ void BossController::openModule(
                 commandPath(),
                 {
                     name,
-                    QStringLiteral("open")
+                    launcherAction
                 },
                 QString(),
                 &processId
@@ -1833,8 +1877,10 @@ void BossController::openModule(
 
         if (!started) {
             setStatusText(
-                QStringLiteral(
-                    "Could not open module: %1"
+                text(
+                    QStringLiteral(
+                        "modules.open_failed"
+                    )
                 ).arg(name)
             );
             return;

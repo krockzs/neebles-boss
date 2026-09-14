@@ -11,7 +11,7 @@ Window {
 
     visible: true
 
-    title: "N.E.E.B.L.E.S. Tray"
+    title: root.t("tray.title")
 
     flags:
         Qt.FramelessWindowHint
@@ -19,6 +19,16 @@ Window {
     color: "transparent"
 
     property string selectedTrayId: ""
+
+    function t(key) {
+        if (
+            typeof bossStrings !== "undefined"
+            && bossStrings[key] !== undefined
+        )
+            return bossStrings[key]
+
+        return key
+    }
 
     readonly property int outerMargin: 12
     readonly property int headerHeight: 44
@@ -62,7 +72,7 @@ Window {
             Layout.preferredHeight: headerHeight
 
             Label {
-                text: "N.E.E.B.L.E.S. Tray"
+                text: root.t("tray.title")
 
                 color: "#d7b8ff"
 
@@ -312,7 +322,7 @@ Window {
                         Layout.fillWidth: true
 
                         Label {
-                            text: "Open"
+                            text: root.t("common.open")
 
                             color: "#e1d7e9"
 
@@ -393,7 +403,7 @@ Window {
                     }
 
                     Button {
-                        text: "Activate"
+                        text: root.t("tray.activate")
 
                         Layout.fillWidth: true
 

@@ -142,8 +142,33 @@ fn dispatch_notification(request: ExecutionRequest) -> ExecutionResponse {
         .unwrap_or_else(|| "N.E.E.B.L.E.S.".to_string());
     let message = request.args.get(2).cloned().unwrap_or_default();
 
-    match Severity::parse(&severity).and_then(|value| notifications::emit(value, &title, &message))
-    {
+    let severity = match Severity::parse(&severity) {
+        Ok(severity) => severity,
+
+        Err(error) => {
+            return ExecutionResponse::fail(1, "notification", error);
+        }
+    };
+
+    /*
+     * Module processes receive NEEBLES_MODULE from Boss.
+     * If that context exists, every notification request
+     * must pass through the module capability contract,
+     * regardless of whether the request target was
+     * "notifications" or "boss.notifications".
+     *
+     * That prevents a module from bypassing governance
+     * simply by selecting the Boss target name.
+     */
+    let result = match std::env::var("NEEBLES_MODULE") {
+        Ok(module) if !module.trim().is_empty() => {
+            notifications::emit_for_module(module.trim(), severity, &title, &message)
+        }
+
+        _ => notifications::emit(severity, &title, &message),
+    };
+
+    match result {
         Ok(()) => ExecutionResponse::ok(None),
         Err(error) => ExecutionResponse::fail(1, "notification", error),
     }

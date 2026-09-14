@@ -2,13 +2,143 @@
 
 #include <LayerShellQt/Window>
 
+#include <QDir>
+#include <QFile>
 #include <QGuiApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocale>
 #include <QMargins>
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QSize>
+#include <QStandardPaths>
 #include <QTimer>
+
+static QString normalizeLocale(QString value)
+{
+    value.replace(QLatin1Char('-'), QLatin1Char('_'));
+
+    const QStringList parts =
+        value.split(
+            QLatin1Char('_'),
+            Qt::SkipEmptyParts
+        );
+
+    if (parts.isEmpty())
+        return QStringLiteral("en_US");
+
+    if (parts.size() == 1)
+        return parts.at(0).toLower();
+
+    return parts.at(0).toLower()
+        + QLatin1Char('_')
+        + parts.at(1).toUpper();
+}
+
+static QString activeBossLanguage()
+{
+    const QString override =
+        qEnvironmentVariable("NEEBLES_LANGUAGE");
+
+    if (!override.trimmed().isEmpty())
+        return normalizeLocale(override);
+
+    const QString configPath =
+        QDir(
+            QStandardPaths::writableLocation(
+                QStandardPaths::ConfigLocation
+            )
+        ).filePath(
+            QStringLiteral("neebles/boss.json")
+        );
+
+    QFile file(configPath);
+
+    if (file.open(QIODevice::ReadOnly)) {
+        const QJsonDocument document =
+            QJsonDocument::fromJson(
+                file.readAll()
+            );
+
+        const QString language =
+            document.object()
+                .value(
+                    QStringLiteral("language")
+                )
+                .toString();
+
+        if (!language.trimmed().isEmpty())
+            return normalizeLocale(language);
+    }
+
+    return normalizeLocale(
+        QLocale::system().name()
+    );
+}
+
+static QVariantMap loadBossStrings()
+{
+    QString language =
+        activeBossLanguage();
+
+    const QString clientRoot =
+        qEnvironmentVariable(
+            "NEEBLES_CLIENT_ROOT"
+        );
+
+    const QStringList roots = {
+        clientRoot,
+        QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath(QStringLiteral("..")),
+        QStringLiteral("/opt/neebles/client")
+    };
+
+    auto load = [&roots](const QString &code)
+        -> QVariantMap
+    {
+        for (const QString &root : roots) {
+            if (root.trimmed().isEmpty())
+                continue;
+
+            const QString path =
+                QDir(root).filePath(
+                    QStringLiteral("languages/")
+                    + code
+                    + QStringLiteral(".json")
+                );
+
+            QFile file(path);
+
+            if (!file.open(QIODevice::ReadOnly))
+                continue;
+
+            const QJsonDocument document =
+                QJsonDocument::fromJson(
+                    file.readAll()
+                );
+
+            if (document.isObject())
+                return document.object().toVariantMap();
+        }
+
+        return {};
+    };
+
+    QVariantMap strings =
+        load(language);
+
+    if (!strings.isEmpty())
+        return strings;
+
+    strings = load(
+        QStringLiteral("en_US")
+    );
+
+    return strings;
+}
 
 int main(
     int argc,
@@ -42,6 +172,14 @@ int main(
                 "trayClient"
             ),
             &trayClient
+        );
+
+    engine.rootContext()
+        ->setContextProperty(
+            QStringLiteral(
+                "bossStrings"
+            ),
+            loadBossStrings()
         );
 
     QObject::connect(

@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QStringList>
+#include <QVariantMap>
 
 class InstallerController final : public QObject
 {
@@ -14,7 +15,11 @@ class InstallerController final : public QObject
     Q_PROPERTY(bool success READ success NOTIFY finishedChanged)
 
 public:
-    explicit InstallerController(const QStringList &arguments, QObject *parent = nullptr);
+    explicit InstallerController(
+        const QStringList &arguments,
+        const QVariantMap &strings,
+        QObject *parent = nullptr
+    );
 
     int progress() const { return m_progress; }
     QString status() const { return m_status; }
@@ -45,6 +50,7 @@ private:
     void installLauncherIntoPanel();
     void consumeLine(const QString &line);
     QString authorizationPath() const;
+    QString text(const QString &key) const;
 
     QString m_installScript;
     QString m_backendBinary;
@@ -53,8 +59,9 @@ private:
     QString m_clientDataArchive;
     QProcess m_process;
     QByteArray m_buffer;
+    QVariantMap m_strings;
     int m_progress = 0;
-    QString m_status = QStringLiteral("Waiting for administrator authorization...");
+    QString m_status;
     bool m_running = false;
     bool m_finished = false;
     bool m_success = false;
