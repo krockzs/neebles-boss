@@ -74,6 +74,73 @@ const MODULE_ICON_EXTENSIONS: &[&str] = &[
     "jpeg",
 ];
 
+
+struct ModuleInstallStaging {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl ModuleInstallStaging {
+    fn prepare(path: PathBuf) -> Result<Self, String> {
+        if path.exists() {
+            fs::remove_dir_all(&path)
+                .map_err(|error| {
+                    format!(
+                        "could not clear module staging directory {}: {error}",
+                        path.display()
+                    )
+                })?;
+        }
+
+        Ok(Self {
+            path,
+            committed: false,
+        })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn commit(
+        mut self,
+        destination: &Path,
+    ) -> Result<(), String> {
+        fs::rename(
+            &self.path,
+            destination,
+        )
+        .map_err(|error| {
+            format!(
+                "could not move module staging directory {} into {}: {error}",
+                self.path.display(),
+                destination.display()
+            )
+        })?;
+
+        self.committed = true;
+
+        Ok(())
+    }
+}
+
+impl Drop for ModuleInstallStaging {
+    fn drop(&mut self) {
+        if self.committed || !self.path.exists() {
+            return;
+        }
+
+        if let Err(error) =
+            fs::remove_dir_all(&self.path)
+        {
+            eprintln!(
+                "N.E.E.B.L.E.S.: could not clean module staging directory {}: {error}",
+                self.path.display()
+            );
+        }
+    }
+}
+
 fn local_module_icon(module_dir: &Path) -> String {
     for extension in MODULE_ICON_EXTENSIONS {
         let candidate = module_dir.join(format!("icon.{extension}"));
@@ -483,11 +550,16 @@ fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<Stri
     let temp_root = neebles_root().join("shared/tmp");
     fs::create_dir_all(&temp_root)
         .map_err(|error| format!("could not create {}: {error}", temp_root.display()))?;
-    let temp = temp_root.join(format!("install-{name}-{}", std::process::id()));
-    if temp.exists() {
-        fs::remove_dir_all(&temp)
-            .map_err(|error| format!("could not clear {}: {error}", temp.display()))?;
-    }
+    let temp =
+        temp_root.join(
+            format!(
+                "install-{name}-{}",
+                std::process::id()
+            )
+        );
+
+    let staging =
+        ModuleInstallStaging::prepare(temp)?;
 
     let mut clone = Command::new("git");
     clone.arg("clone").arg("--depth").arg("1");
@@ -496,14 +568,15 @@ fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<Stri
     }
     let status = clone
         .arg(&entry.repo)
-        .arg(&temp)
+        .arg(staging.path())
         .status()
         .map_err(|error| format!("could not start git clone for '{name}': {error}"))?;
     if !status.success() {
         return Err(format!("git clone failed for module '{name}' with status {status}"));
     }
 
-    let manifest_path = temp.join("manifest.json");
+    let manifest_path =
+        staging.path().join("manifest.json");
     let manifest = read_manifest(&manifest_path)?;
     if manifest.name != name {
         return Err(format!(
@@ -512,7 +585,24 @@ fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<Stri
         ));
     }
 
-    dependencies::resolve_system_dependencies(&manifest.dependencies.system)?;
+    if let Some(expected_version) =
+        entry.version.as_deref()
+    {
+        if !expected_version.is_empty()
+            && manifest.version != expected_version
+        {
+            return Err(format!(
+                "module '{}' manifest version '{}' does not match registry version '{}'",
+                name,
+                manifest.version,
+                expected_version
+            ));
+        }
+    }
+
+    dependencies::resolve_system_dependencies(
+        &manifest.dependencies.system
+    )?;
 
     for dependency in &manifest.dependencies.modules {
         match install_internal(&dependency.name, registry, visiting) {
@@ -535,13 +625,7 @@ fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<Stri
     if destination.exists() {
         return Err(format!("module destination already exists: {}", destination.display()));
     }
-    fs::rename(&temp, &destination).map_err(|error| {
-        format!(
-            "could not move module '{}' into {}: {error}",
-            name,
-            destination.display()
-        )
-    })?;
+    staging.commit(&destination)?;
 
     visiting.remove(name);
     Ok(())
