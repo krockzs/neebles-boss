@@ -116,17 +116,9 @@ jobs:
             scripts/install.sh \
             dist/install.sh
 
-          tar \
-            -C client \
-            -czf dist/client-data.tar.gz \
-            assets \
-            languages \
-            config \
-            launcher \
-            spacer \
-            notifications \
-            systemd \
-            xdg
+          ./scripts/build-client-data.sh \
+            dist/client-data.tar.gz \
+            client
 
           chmod +x \
             dist/neebles-backend \

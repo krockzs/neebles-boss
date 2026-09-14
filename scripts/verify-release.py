@@ -38,6 +38,18 @@ REQUIRED_CLIENT_DATA_ROOTS = {
     "xdg",
 }
 
+REQUIRED_CLIENT_DATA_FILES = {
+    "assets/branding/neebles-boss-launcher-icon.png",
+    "languages/manifest.json",
+    "config/defaults.json",
+    "launcher/metadata.json",
+    "launcher/contents/ui/main.qml",
+    "spacer/metadata.json",
+    "spacer/contents/ui/main.qml",
+    "systemd/neebles-tray-manager.service",
+    "xdg/neebles-tray-host.desktop",
+}
+
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_RE = re.compile(
     r"^(0|[1-9]\d*)\."
@@ -126,6 +138,7 @@ def validate_tar(path: Path) -> None:
         fail(f"client-data archive cannot be opened: {exc}")
 
     roots: set[str] = set()
+    files: set[str] = set()
 
     with archive:
         members = archive.getmembers()
@@ -151,23 +164,59 @@ def validate_tar(path: Path) -> None:
             if not clean_parts:
                 continue
 
+            normalized = "/".join(clean_parts)
             roots.add(clean_parts[0])
 
-            if member.issym() or member.islnk():
-                target = PurePosixPath(member.linkname)
+            if not (member.isdir() or member.isfile()):
+                fail(
+                    "client-data contains unsupported filesystem node: "
+                    f"{member.name!r}"
+                )
 
-                if target.is_absolute() or ".." in target.parts:
+            if member.uid != 0 or member.gid != 0:
+                fail(
+                    "client-data ownership must be root:root for "
+                    f"{member.name!r}; got {member.uid}:{member.gid}"
+                )
+
+            if member.mtime != 0:
+                fail(
+                    "client-data mtime must be exactly 0 for "
+                    f"{member.name!r}; got {member.mtime}"
+                )
+
+            mode = member.mode & 0o777
+
+            if member.isdir():
+                if mode != 0o755:
                     fail(
-                        "client-data contains unsafe link "
-                        f"{member.name!r} -> {member.linkname!r}"
+                        "client-data directory mode must be 0755 for "
+                        f"{member.name!r}; got {mode:04o}"
+                    )
+            else:
+                if mode != 0o644:
+                    fail(
+                        "client-data file mode must be 0644 for "
+                        f"{member.name!r}; got {mode:04o}"
                     )
 
-    missing = REQUIRED_CLIENT_DATA_ROOTS - roots
+                files.add(normalized)
 
-    if missing:
+    if roots != REQUIRED_CLIENT_DATA_ROOTS:
+        missing = REQUIRED_CLIENT_DATA_ROOTS - roots
+        extra = roots - REQUIRED_CLIENT_DATA_ROOTS
+
         fail(
-            "client-data missing required roots: "
-            + ", ".join(sorted(missing))
+            "client-data root contract mismatch; "
+            f"missing={sorted(missing)}, extra={sorted(extra)}"
+        )
+
+    missing_files = REQUIRED_CLIENT_DATA_FILES - files
+
+    if missing_files:
+        fail(
+            "client-data missing required files: "
+            + ", ".join(sorted(missing_files))
         )
 
 
