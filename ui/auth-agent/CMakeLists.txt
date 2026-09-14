@@ -12,7 +12,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(
-    Qt6 REQUIRED
+    Qt6 6.5 REQUIRED
     COMPONENTS
         Core
         Widgets

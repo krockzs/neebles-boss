@@ -4,7 +4,7 @@ project(neebles_installer VERSION 1.0.5 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Quick)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Quick)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
