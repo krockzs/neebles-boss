@@ -8,15 +8,11 @@ pub use dictionary::{DictionaryAudit, ResolvedOperation};
 pub use request::LocalInstallerRequest;
 pub use result::LocalInstallerResult;
 
-pub fn handle(
-    request: LocalInstallerRequest,
-) -> Result<LocalInstallerResult, String> {
+pub fn handle(request: LocalInstallerRequest) -> Result<LocalInstallerResult, String> {
     executor::execute(request)
 }
 
-pub fn resolve_only(
-    request: &LocalInstallerRequest,
-) -> Result<ResolvedOperation, String> {
+pub fn resolve_only(request: &LocalInstallerRequest) -> Result<ResolvedOperation, String> {
     dictionary::resolve(request)
 }
 

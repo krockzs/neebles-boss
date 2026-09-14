@@ -52,5 +52,10 @@
   "auth.generic_message": "N.E.E.B.L.E.S. requiere autorización administrativa para completar esta operación.",
   "auth.failed": "Falló la autorización.",
   "auth.agent_missing": "No se encontró el agente de autorización de N.E.E.B.L.E.S.",
-  "auth.incorrect_password": "Falló la autenticación. Revisa la contraseña e inténtalo nuevamente."
+  "auth.incorrect_password": "Falló la autenticación. Revisa la contraseña e inténtalo nuevamente.",
+  "config.module_visibility": "Visibilidad de módulos",
+  "config.show_in_tray": "Mostrar en la bandeja",
+  "config.show_in_launcher": "Mostrar en acceso rápido",
+  "tray.title": "Tray",
+  "tray.activate": "Activar"
 }

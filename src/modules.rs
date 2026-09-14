@@ -66,14 +66,7 @@ fn default_schema() -> u32 {
     1
 }
 
-const MODULE_ICON_EXTENSIONS: &[&str] = &[
-    "svg",
-    "png",
-    "webp",
-    "jpg",
-    "jpeg",
-];
-
+const MODULE_ICON_EXTENSIONS: &[&str] = &["svg", "png", "webp", "jpg", "jpeg"];
 
 struct ModuleInstallStaging {
     path: PathBuf,
@@ -83,13 +76,12 @@ struct ModuleInstallStaging {
 impl ModuleInstallStaging {
     fn prepare(path: PathBuf) -> Result<Self, String> {
         if path.exists() {
-            fs::remove_dir_all(&path)
-                .map_err(|error| {
-                    format!(
-                        "could not clear module staging directory {}: {error}",
-                        path.display()
-                    )
-                })?;
+            fs::remove_dir_all(&path).map_err(|error| {
+                format!(
+                    "could not clear module staging directory {}: {error}",
+                    path.display()
+                )
+            })?;
         }
 
         Ok(Self {
@@ -102,15 +94,8 @@ impl ModuleInstallStaging {
         &self.path
     }
 
-    fn commit(
-        mut self,
-        destination: &Path,
-    ) -> Result<(), String> {
-        fs::rename(
-            &self.path,
-            destination,
-        )
-        .map_err(|error| {
+    fn commit(mut self, destination: &Path) -> Result<(), String> {
+        fs::rename(&self.path, destination).map_err(|error| {
             format!(
                 "could not move module staging directory {} into {}: {error}",
                 self.path.display(),
@@ -130,9 +115,7 @@ impl Drop for ModuleInstallStaging {
             return;
         }
 
-        if let Err(error) =
-            fs::remove_dir_all(&self.path)
-        {
+        if let Err(error) = fs::remove_dir_all(&self.path) {
             eprintln!(
                 "N.E.E.B.L.E.S.: could not clean module staging directory {}: {error}",
                 self.path.display()
@@ -161,9 +144,7 @@ fn github_raw_base(repo: &str, branch: &str) -> Option<String> {
         .trim_end_matches(".git")
         .trim_end_matches('/');
 
-    Some(format!(
-        "https://raw.githubusercontent.com/{repo}/{branch}"
-    ))
+    Some(format!("https://raw.githubusercontent.com/{repo}/{branch}"))
 }
 
 fn remote_module_icon(repo: &str, branch: Option<&str>) -> String {
@@ -177,12 +158,7 @@ fn remote_module_icon(repo: &str, branch: Option<&str>) -> String {
         let url = format!("{base}/icon.{extension}");
 
         let status = Command::new("curl")
-            .args([
-                "-fsIL",
-                "--max-time",
-                "5",
-                url.as_str(),
-            ])
+            .args(["-fsIL", "--max-time", "5", url.as_str()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -227,9 +203,7 @@ fn runtime_identity() -> String {
         .unwrap_or_else(|_| "default".to_string())
         .chars()
         .map(|character| {
-            if character.is_ascii_alphanumeric()
-                || matches!(character, '-' | '_')
-            {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
                 character
             } else {
                 '_'
@@ -240,45 +214,31 @@ fn runtime_identity() -> String {
 
 fn runtime_modules_root() -> PathBuf {
     env::temp_dir()
-        .join(format!(
-            "neebles-runtime-{}",
-            runtime_identity()
-        ))
+        .join(format!("neebles-runtime-{}", runtime_identity()))
         .join("modules")
 }
 
 fn runtime_marker_path(name: &str) -> PathBuf {
-    runtime_modules_root()
-        .join(format!("{name}.pid"))
+    runtime_modules_root().join(format!("{name}.pid"))
 }
 
 fn clear_runtime_marker(name: &str) {
-    let _ = fs::remove_file(
-        runtime_marker_path(name)
-    );
+    let _ = fs::remove_file(runtime_marker_path(name));
 }
 
-fn write_runtime_marker(
-    name: &str,
-    pid: u32,
-) -> Result<(), String> {
+fn write_runtime_marker(name: &str, pid: u32) -> Result<(), String> {
     let root = runtime_modules_root();
 
-    fs::create_dir_all(&root)
-        .map_err(|error| {
-            format!(
-                "could not create module runtime directory {}: {error}",
-                root.display()
-            )
-        })?;
+    fs::create_dir_all(&root).map_err(|error| {
+        format!(
+            "could not create module runtime directory {}: {error}",
+            root.display()
+        )
+    })?;
 
     let path = runtime_marker_path(name);
 
-    fs::write(
-        &path,
-        format!("{pid}\n"),
-    )
-    .map_err(|error| {
+    fs::write(&path, format!("{pid}\n")).map_err(|error| {
         format!(
             "could not write module runtime marker {}: {error}",
             path.display()
@@ -299,8 +259,7 @@ fn module_pid(name: &str) -> Option<u32> {
         }
     };
 
-    let process_path =
-        PathBuf::from(format!("/proc/{pid}"));
+    let process_path = PathBuf::from(format!("/proc/{pid}"));
 
     if !process_path.exists() {
         clear_runtime_marker(name);
@@ -326,21 +285,12 @@ fn stop_module(name: &str) -> Result<(), String> {
      * to close normally instead of killing it abruptly.
      */
     let status = Command::new("kill")
-        .args([
-            "-TERM",
-            pid.to_string().as_str(),
-        ])
+        .args(["-TERM", pid.to_string().as_str()])
         .status()
-        .map_err(|error| {
-            format!(
-                "could not stop module '{name}' process {pid}: {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not stop module '{name}' process {pid}: {error}"))?;
 
     if !status.success() {
-        return Err(format!(
-            "could not stop module '{name}' process {pid}"
-        ));
+        return Err(format!("could not stop module '{name}' process {pid}"));
     }
 
     Ok(())
@@ -368,8 +318,7 @@ fn registry_url() -> Result<String, String> {
      */
     if !dependencies::command_exists("git") {
         return Err(
-            "git is required by Boss to resolve the current module registry revision"
-                .to_string()
+            "git is required by Boss to resolve the current module registry revision".to_string(),
         );
     }
 
@@ -380,11 +329,7 @@ fn registry_url() -> Result<String, String> {
             "refs/heads/main",
         ])
         .output()
-        .map_err(|error| {
-            format!(
-                "could not resolve N.E.E.B.L.E.S. registry revision: {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not resolve N.E.E.B.L.E.S. registry revision: {error}"))?;
 
     if !output.status.success() {
         return Err(format!(
@@ -393,20 +338,13 @@ fn registry_url() -> Result<String, String> {
         ));
     }
 
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|error| {
-            format!(
-                "invalid git ls-remote output while resolving registry: {error}"
-            )
-        })?;
+    let stdout = String::from_utf8(output.stdout).map_err(|error| {
+        format!("invalid git ls-remote output while resolving registry: {error}")
+    })?;
 
-    let commit = stdout
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| {
-            "git ls-remote returned no revision for N.E.E.B.L.E.S. Boss main"
-                .to_string()
-        })?;
+    let commit = stdout.split_whitespace().next().ok_or_else(|| {
+        "git ls-remote returned no revision for N.E.E.B.L.E.S. Boss main".to_string()
+    })?;
 
     if commit.len() != 40
         || !commit
@@ -435,7 +373,10 @@ pub fn fetch_registry() -> Result<Registry, String> {
         .map_err(|error| format!("could not start curl: {error}"))?;
 
     if !output.status.success() {
-        return Err(format!("could not read N.E.E.B.L.E.S. module registry: {}", output.status));
+        return Err(format!(
+            "could not read N.E.E.B.L.E.S. module registry: {}",
+            output.status
+        ));
     }
 
     serde_json::from_slice(&output.stdout)
@@ -452,7 +393,8 @@ pub fn installed_modules_json() -> Result<Value, String> {
     for entry in fs::read_dir(&root)
         .map_err(|error| format!("could not read {}: {error}", root.display()))?
     {
-        let entry = entry.map_err(|error| format!("could not read module directory entry: {error}"))?;
+        let entry =
+            entry.map_err(|error| format!("could not read module directory entry: {error}"))?;
         if !entry.path().is_dir() {
             continue;
         }
@@ -492,10 +434,7 @@ pub fn available_modules_json() -> Result<Value, String> {
     for (name, module) in registry.modules {
         let is_installed = installed.contains(&name);
 
-        let icon = remote_module_icon(
-            &module.repo,
-            module.branch.as_deref(),
-        );
+        let icon = remote_module_icon(&module.repo, module.branch.as_deref());
 
         result.push(json!({
             "name": name,
@@ -525,13 +464,19 @@ pub fn install(name: &str) -> Result<(), String> {
     install_internal(name, &registry, &mut visiting)
 }
 
-fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<String>) -> Result<(), String> {
+fn install_internal(
+    name: &str,
+    registry: &Registry,
+    visiting: &mut HashSet<String>,
+) -> Result<(), String> {
     if find_module_dir(name).is_ok() {
         return Ok(());
     }
 
     if !visiting.insert(name.to_string()) {
-        return Err(format!("circular N.E.E.B.L.E.S. module dependency detected at '{name}'"));
+        return Err(format!(
+            "circular N.E.E.B.L.E.S. module dependency detected at '{name}'"
+        ));
     }
 
     let entry = registry
@@ -550,16 +495,9 @@ fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<Stri
     let temp_root = neebles_root().join("shared/tmp");
     fs::create_dir_all(&temp_root)
         .map_err(|error| format!("could not create {}: {error}", temp_root.display()))?;
-    let temp =
-        temp_root.join(
-            format!(
-                "install-{name}-{}",
-                std::process::id()
-            )
-        );
+    let temp = temp_root.join(format!("install-{name}-{}", std::process::id()));
 
-    let staging =
-        ModuleInstallStaging::prepare(temp)?;
+    let staging = ModuleInstallStaging::prepare(temp)?;
 
     let mut clone = Command::new("git");
     clone.arg("clone").arg("--depth").arg("1");
@@ -572,11 +510,12 @@ fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<Stri
         .status()
         .map_err(|error| format!("could not start git clone for '{name}': {error}"))?;
     if !status.success() {
-        return Err(format!("git clone failed for module '{name}' with status {status}"));
+        return Err(format!(
+            "git clone failed for module '{name}' with status {status}"
+        ));
     }
 
-    let manifest_path =
-        staging.path().join("manifest.json");
+    let manifest_path = staging.path().join("manifest.json");
     let manifest = read_manifest(&manifest_path)?;
     if manifest.name != name {
         return Err(format!(
@@ -585,24 +524,16 @@ fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<Stri
         ));
     }
 
-    if let Some(expected_version) =
-        entry.version.as_deref()
-    {
-        if !expected_version.is_empty()
-            && manifest.version != expected_version
-        {
+    if let Some(expected_version) = entry.version.as_deref() {
+        if !expected_version.is_empty() && manifest.version != expected_version {
             return Err(format!(
                 "module '{}' manifest version '{}' does not match registry version '{}'",
-                name,
-                manifest.version,
-                expected_version
+                name, manifest.version, expected_version
             ));
         }
     }
 
-    dependencies::resolve_system_dependencies(
-        &manifest.dependencies.system
-    )?;
+    dependencies::resolve_system_dependencies(&manifest.dependencies.system)?;
 
     for dependency in &manifest.dependencies.modules {
         match install_internal(&dependency.name, registry, visiting) {
@@ -623,7 +554,10 @@ fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<Stri
     fs::create_dir_all(modules_root())
         .map_err(|error| format!("could not create {}: {error}", modules_root().display()))?;
     if destination.exists() {
-        return Err(format!("module destination already exists: {}", destination.display()));
+        return Err(format!(
+            "module destination already exists: {}",
+            destination.display()
+        ));
     }
     staging.commit(&destination)?;
 
@@ -633,31 +567,19 @@ fn install_internal(name: &str, registry: &Registry, visiting: &mut HashSet<Stri
 
 pub fn uninstall(name: &str) -> Result<(), String> {
     if module_running(name) {
-        return Err(format!(
-            "module '{name}' is currently running"
-        ));
+        return Err(format!("module '{name}' is currently running"));
     }
 
     let path = find_module_dir(name)?;
 
     fs::remove_dir_all(&path)
-        .map_err(|error| {
-            format!(
-                "could not remove module {}: {error}",
-                path.display()
-            )
-        })
+        .map_err(|error| format!("could not remove module {}: {error}", path.display()))
 }
 
-pub fn update(
-    name: &str,
-    close_running: bool,
-) -> Result<(), String> {
+pub fn update(name: &str, close_running: bool) -> Result<(), String> {
     if module_running(name) {
         if !close_running {
-            return Err(format!(
-                "module '{name}' is currently running"
-            ));
+            return Err(format!("module '{name}' is currently running"));
         }
 
         /*
@@ -668,31 +590,21 @@ pub fn update(
          */
         stop_module(name)?;
 
-        let deadline =
-            std::time::Instant::now()
-            + std::time::Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
 
-        while module_running(name)
-            && std::time::Instant::now() < deadline
-        {
-            std::thread::sleep(
-                std::time::Duration::from_millis(200)
-            );
+        while module_running(name) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(200));
         }
 
         if module_running(name) {
-            return Err(format!(
-                "module '{name}' did not close in time"
-            ));
+            return Err(format!("module '{name}' did not close in time"));
         }
     }
 
     let path = find_module_dir(name)?;
 
     if !path.join(".git").exists() {
-        return Err(format!(
-            "module '{name}' is not backed by a git checkout"
-        ));
+        return Err(format!("module '{name}' is not backed by a git checkout"));
     }
 
     let registry = fetch_registry()?;
@@ -700,31 +612,16 @@ pub fn update(
     let entry = registry
         .modules
         .get(name)
-        .ok_or_else(|| {
-            format!(
-                "module '{name}' does not exist in the N.E.E.B.L.E.S. registry"
-            )
-        })?;
+        .ok_or_else(|| format!("module '{name}' does not exist in the N.E.E.B.L.E.S. registry"))?;
 
-    let branch =
-        entry.branch.as_deref().unwrap_or("main");
+    let branch = entry.branch.as_deref().unwrap_or("main");
 
     let fetch_status = Command::new("git")
         .arg("-C")
         .arg(&path)
-        .args([
-            "fetch",
-            "--depth",
-            "1",
-            "origin",
-            branch,
-        ])
+        .args(["fetch", "--depth", "1", "origin", branch])
         .status()
-        .map_err(|error| {
-            format!(
-                "could not fetch update for '{name}': {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not fetch update for '{name}': {error}"))?;
 
     if !fetch_status.success() {
         return Err(format!(
@@ -735,17 +632,9 @@ pub fn update(
     let reset_status = Command::new("git")
         .arg("-C")
         .arg(&path)
-        .args([
-            "reset",
-            "--hard",
-            "FETCH_HEAD",
-        ])
+        .args(["reset", "--hard", "FETCH_HEAD"])
         .status()
-        .map_err(|error| {
-            format!(
-                "could not apply update for '{name}': {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not apply update for '{name}': {error}"))?;
 
     if !reset_status.success() {
         return Err(format!(
@@ -753,15 +642,10 @@ pub fn update(
         ));
     }
 
-    let manifest =
-        read_manifest(&path.join("manifest.json"))?;
+    let manifest = read_manifest(&path.join("manifest.json"))?;
 
-    if let Some(expected_version) =
-        entry.version.as_deref()
-    {
-        if !expected_version.is_empty()
-            && manifest.version != expected_version
-        {
+    if let Some(expected_version) = entry.version.as_deref() {
+        if !expected_version.is_empty() && manifest.version != expected_version {
             return Err(format!(
                 "module '{name}' updated but manifest version '{}' does not match registry version '{}'",
                 manifest.version,
@@ -770,34 +654,22 @@ pub fn update(
         }
     }
 
-    dependencies::resolve_system_dependencies(
-        &manifest.dependencies.system
-    )
+    dependencies::resolve_system_dependencies(&manifest.dependencies.system)
 }
-pub fn set_enabled(
-    name: &str,
-    enabled: bool,
-) -> Result<(), String> {
+pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
     let _ = find_module_dir(name)?;
 
     if !enabled {
         stop_module(name)?;
     }
 
-    config::set_module_enabled(
-        name,
-        enabled,
-    )?;
+    config::set_module_enabled(name, enabled)?;
 
     Ok(())
 }
 
-fn resolve_module_language(
-    module_dir: &Path,
-    requested: &str,
-) -> Result<String, String> {
-    let manifest_path =
-        module_dir.join("languages").join("manifest.json");
+fn resolve_module_language(module_dir: &Path, requested: &str) -> Result<String, String> {
+    let manifest_path = module_dir.join("languages").join("manifest.json");
 
     /*
      * Legacy modules may not implement the N.E.E.B.L.E.S.
@@ -808,23 +680,19 @@ fn resolve_module_language(
         return Ok(requested.to_string());
     }
 
-    let raw =
-        fs::read_to_string(&manifest_path)
-            .map_err(|error| {
-                format!(
-                    "could not read module language manifest {}: {error}",
-                    manifest_path.display()
-                )
-            })?;
+    let raw = fs::read_to_string(&manifest_path).map_err(|error| {
+        format!(
+            "could not read module language manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
 
-    let manifest: ModuleLanguageManifest =
-        serde_json::from_str(&raw)
-            .map_err(|error| {
-                format!(
-                    "invalid module language manifest {}: {error}",
-                    manifest_path.display()
-                )
-            })?;
+    let manifest: ModuleLanguageManifest = serde_json::from_str(&raw).map_err(|error| {
+        format!(
+            "invalid module language manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
 
     if manifest.languages.is_empty() {
         return Err(format!(
@@ -833,30 +701,25 @@ fn resolve_module_language(
         ));
     }
 
-    let requested =
-        languages::normalize_locale(requested);
+    let requested = languages::normalize_locale(requested);
 
-    if let Some(language) =
-        manifest.languages.iter().find(|language| {
-            languages::normalize_locale(&language.code)
-                == requested
-        })
+    if let Some(language) = manifest
+        .languages
+        .iter()
+        .find(|language| languages::normalize_locale(&language.code) == requested)
     {
         return Ok(language.code.clone());
     }
 
-    let default =
-        manifest.default.trim();
+    let default = manifest.default.trim();
 
     if !default.is_empty() {
-        let normalized_default =
-            languages::normalize_locale(default);
+        let normalized_default = languages::normalize_locale(default);
 
-        if let Some(language) =
-            manifest.languages.iter().find(|language| {
-                languages::normalize_locale(&language.code)
-                    == normalized_default
-            })
+        if let Some(language) = manifest
+            .languages
+            .iter()
+            .find(|language| languages::normalize_locale(&language.code) == normalized_default)
         {
             return Ok(language.code.clone());
         }
@@ -871,33 +734,21 @@ fn resolve_module_language(
     Ok(manifest.languages[0].code.clone())
 }
 
-pub fn execute(
-    name: &str,
-    args: &[String],
-    caller: &str,
-) -> Result<i32, String> {
+pub fn execute(name: &str, args: &[String], caller: &str) -> Result<i32, String> {
     if !config::module_enabled(name)? {
-        return Err(format!(
-            "module '{name}' is disabled"
-        ));
+        return Err(format!("module '{name}' is disabled"));
     }
 
     let module_dir = find_module_dir(name)?;
 
-    let manifest =
-        read_manifest(&module_dir.join("manifest.json"))?;
+    let manifest = read_manifest(&module_dir.join("manifest.json"))?;
 
-    let action =
-        args.first()
-            .map(String::as_str)
-            .unwrap_or("default");
+    let action = args.first().map(String::as_str).unwrap_or("default");
 
     let track_runtime = action == "open";
 
     if track_runtime && module_running(name) {
-        return Err(format!(
-            "module '{name}' is already running"
-        ));
+        return Err(format!("module '{name}' is already running"));
     }
 
     let requires_root = manifest
@@ -908,11 +759,7 @@ pub fn execute(
 
     privileges::ensure_root(requires_root)?;
 
-    let entrypoint =
-        resolve_entrypoint(
-            &module_dir,
-            &manifest.entrypoint,
-        );
+    let entrypoint = resolve_entrypoint(&module_dir, &manifest.entrypoint);
 
     if !entrypoint.exists() {
         return Err(format!(
@@ -921,20 +768,13 @@ pub fn execute(
         ));
     }
 
-    let requested_language =
-        config::load_or_initialize()?.language;
+    let requested_language = config::load_or_initialize()?.language;
 
-    let language =
-        resolve_module_language(
-            &module_dir,
-            &requested_language,
-        )?;
+    let language = resolve_module_language(&module_dir, &requested_language)?;
 
-    let config_path =
-        config::config_path()?;
+    let config_path = config::config_path()?;
 
-    let mut command =
-        Command::new(&entrypoint);
+    let mut command = Command::new(&entrypoint);
 
     command
         .args(args)
@@ -946,34 +786,21 @@ pub fn execute(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    let mut child =
-        command.spawn()
-            .map_err(|error| {
-                format!(
-                    "could not launch module '{name}': {error}"
-                )
-            })?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("could not launch module '{name}': {error}"))?;
 
     if track_runtime {
-        if let Err(error) =
-            write_runtime_marker(
-                name,
-                child.id(),
-            )
-        {
+        if let Err(error) = write_runtime_marker(name, child.id()) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(error);
         }
     }
 
-    let result =
-        child.wait()
-            .map_err(|error| {
-                format!(
-                    "could not wait for module '{name}': {error}"
-                )
-            });
+    let result = child
+        .wait()
+        .map_err(|error| format!("could not wait for module '{name}': {error}"));
 
     if track_runtime {
         clear_runtime_marker(name);
@@ -997,7 +824,8 @@ pub fn find_module_dir(name: &str) -> Result<PathBuf, String> {
         for entry in fs::read_dir(&root)
             .map_err(|error| format!("could not read {}: {error}", root.display()))?
         {
-            let entry = entry.map_err(|error| format!("could not read module directory entry: {error}"))?;
+            let entry =
+                entry.map_err(|error| format!("could not read module directory entry: {error}"))?;
             let manifest_path = entry.path().join("manifest.json");
             if !manifest_path.exists() {
                 continue;
@@ -1030,9 +858,9 @@ fn resolve_entrypoint(module_dir: &Path, entrypoint: &str) -> PathBuf {
 
 fn valid_module_id(value: &str) -> bool {
     !value.is_empty()
-        && value
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
 }
 
 #[allow(dead_code)]

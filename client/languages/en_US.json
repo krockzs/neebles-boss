@@ -52,5 +52,10 @@
   "auth.generic_message": "N.E.E.B.L.E.S. requires administrative authorization to complete this operation.",
   "auth.failed": "Authorization failed.",
   "auth.agent_missing": "N.E.E.B.L.E.S. authorization agent was not found.",
-  "auth.incorrect_password": "Authentication failed. Check the password and try again."
+  "auth.incorrect_password": "Authentication failed. Check the password and try again.",
+  "config.module_visibility": "Module visibility",
+  "config.show_in_tray": "Show in system tray",
+  "config.show_in_launcher": "Show in quick access",
+  "tray.title": "Tray",
+  "tray.activate": "Activate"
 }

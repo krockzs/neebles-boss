@@ -14,9 +14,7 @@ pub fn execute(request: LocalInstallerRequest) -> Result<LocalInstallerResult, S
         other => {
             return Err(format!(
                 "unsupported root_mode '{}' for installer '{}', operation '{}'",
-                other,
-                resolved.installer,
-                resolved.operation
+                other, resolved.installer, resolved.operation
             ));
         }
     }
@@ -24,22 +22,13 @@ pub fn execute(request: LocalInstallerRequest) -> Result<LocalInstallerResult, S
     let output = Command::new(&resolved.command)
         .args(&resolved.args)
         .output()
-        .map_err(|error| {
-            format!(
-                "could not execute '{}': {error}",
-                resolved.command
-            )
-        })?;
+        .map_err(|error| format!("could not execute '{}': {error}", resolved.command))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let exit_code = output.status.code().unwrap_or(1);
 
-    let success = evaluate_success(
-        output.status.success(),
-        &stdout,
-        resolved.expect.as_ref(),
-    )?;
+    let success = evaluate_success(output.status.success(), &stdout, resolved.expect.as_ref())?;
 
     Ok(LocalInstallerResult {
         installer: resolved.installer,
@@ -67,14 +56,14 @@ fn evaluate_success(
         return Ok(true);
     };
 
-    let object = expect.as_object().ok_or_else(|| {
-        "operation expect field must be a JSON object".to_string()
-    })?;
+    let object = expect
+        .as_object()
+        .ok_or_else(|| "operation expect field must be a JSON object".to_string())?;
 
     if let Some(expected) = object.get("stdout_equals") {
-        let expected = expected.as_str().ok_or_else(|| {
-            "expect.stdout_equals must be a string".to_string()
-        })?;
+        let expected = expected
+            .as_str()
+            .ok_or_else(|| "expect.stdout_equals must be a string".to_string())?;
 
         return Ok(stdout.trim() == expected);
     }

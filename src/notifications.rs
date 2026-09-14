@@ -43,11 +43,14 @@ pub fn emit(severity: Severity, title: &str, message: &str) -> Result<(), String
     }
 
     if !dependencies::command_exists("notify-send") {
-        return Err("notify-send is not available; install libnotify-bin for Plasma notifications".to_string());
+        return Err(
+            "notify-send is not available; install libnotify-bin for Plasma notifications"
+                .to_string(),
+        );
     }
 
-    let icon = crate::languages::client_root()
-        .join("assets/branding/neebles-boss-launcher-icon.png");
+    let icon =
+        crate::languages::client_root().join("assets/branding/neebles-boss-launcher-icon.png");
 
     let status = Command::new("notify-send")
         .args(["-a", "N.E.E.B.L.E.S.", "-u", severity.urgency()])

@@ -25,7 +25,11 @@ pub fn dispatch(request: ExecutionRequest) -> ExecutionResponse {
             args.extend(request.args);
             match modules::execute(module, &args, &request.context.caller) {
                 Ok(code) if code == 0 => ExecutionResponse::ok(Some(json!({ "exit_code": code }))),
-                Ok(code) => ExecutionResponse::fail(code, "module_exit", format!("module exited with code {code}")),
+                Ok(code) => ExecutionResponse::fail(
+                    code,
+                    "module_exit",
+                    format!("module exited with code {code}"),
+                ),
                 Err(error) => ExecutionResponse::fail(1, "module_execution", error),
             }
         }
@@ -39,23 +43,17 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
             Ok(()) => ExecutionResponse::ok(None),
             Err(error) => ExecutionResponse::fail(1, "ui_launch", error),
         },
-        Some("local-installer-audit") => {
-            match local_installer::audit_dictionary() {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(value) => ExecutionResponse::ok(Some(value)),
-                    Err(error) => ExecutionResponse::fail(
-                        1,
-                        "local_installer_audit_serialization",
-                        format!("could not serialize local-installer audit: {error}"),
-                    ),
-                },
+        Some("local-installer-audit") => match local_installer::audit_dictionary() {
+            Ok(result) => match serde_json::to_value(result) {
+                Ok(value) => ExecutionResponse::ok(Some(value)),
                 Err(error) => ExecutionResponse::fail(
                     1,
-                    "local_installer_audit",
-                    error,
+                    "local_installer_audit_serialization",
+                    format!("could not serialize local-installer audit: {error}"),
                 ),
-            }
-        }
+            },
+            Err(error) => ExecutionResponse::fail(1, "local_installer_audit", error),
+        },
         Some("local-installer-resolve") => {
             let Some(raw) = request.args.first() else {
                 return ExecutionResponse::fail(
@@ -65,19 +63,16 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
                 );
             };
 
-            let parsed: local_installer::LocalInstallerRequest =
-                match serde_json::from_str(raw) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        return ExecutionResponse::fail(
-                            2,
-                            "invalid_local_installer_request",
-                            format!(
-                                "invalid local-installer-resolve request: {error}"
-                            ),
-                        );
-                    }
-                };
+            let parsed: local_installer::LocalInstallerRequest = match serde_json::from_str(raw) {
+                Ok(value) => value,
+                Err(error) => {
+                    return ExecutionResponse::fail(
+                        2,
+                        "invalid_local_installer_request",
+                        format!("invalid local-installer-resolve request: {error}"),
+                    );
+                }
+            };
 
             match local_installer::resolve_only(&parsed) {
                 Ok(result) => match serde_json::to_value(result) {
@@ -85,16 +80,10 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
                     Err(error) => ExecutionResponse::fail(
                         1,
                         "local_installer_resolution_serialization",
-                        format!(
-                            "could not serialize local-installer resolution: {error}"
-                        ),
+                        format!("could not serialize local-installer resolution: {error}"),
                     ),
                 },
-                Err(error) => ExecutionResponse::fail(
-                    1,
-                    "local_installer_resolution",
-                    error,
-                ),
+                Err(error) => ExecutionResponse::fail(1, "local_installer_resolution", error),
             }
         }
         Some("local-installer") => {
@@ -106,17 +95,16 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
                 );
             };
 
-            let parsed: local_installer::LocalInstallerRequest =
-                match serde_json::from_str(raw) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        return ExecutionResponse::fail(
-                            2,
-                            "invalid_local_installer_request",
-                            format!("invalid local-installer request: {error}"),
-                        );
-                    }
-                };
+            let parsed: local_installer::LocalInstallerRequest = match serde_json::from_str(raw) {
+                Ok(value) => value,
+                Err(error) => {
+                    return ExecutionResponse::fail(
+                        2,
+                        "invalid_local_installer_request",
+                        format!("invalid local-installer request: {error}"),
+                    );
+                }
+            };
 
             match local_installer::handle(parsed) {
                 Ok(result) => match serde_json::to_value(result) {
@@ -127,15 +115,17 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
                         format!("could not serialize local-installer result: {error}"),
                     ),
                 },
-                Err(error) => ExecutionResponse::fail(
-                    1,
-                    "local_installer",
-                    error,
-                ),
+                Err(error) => ExecutionResponse::fail(1, "local_installer", error),
             }
         }
-        Some(other) => ExecutionResponse::fail(2, "unknown_boss_action", format!("unknown Boss action: {other}")),
-        None => ExecutionResponse::fail(2, "missing_boss_action", "Boss request requires an action"),
+        Some(other) => ExecutionResponse::fail(
+            2,
+            "unknown_boss_action",
+            format!("unknown Boss action: {other}"),
+        ),
+        None => {
+            ExecutionResponse::fail(2, "missing_boss_action", "Boss request requires an action")
+        }
     }
 }
 
@@ -152,7 +142,8 @@ fn dispatch_notification(request: ExecutionRequest) -> ExecutionResponse {
         .unwrap_or_else(|| "N.E.E.B.L.E.S.".to_string());
     let message = request.args.get(2).cloned().unwrap_or_default();
 
-    match Severity::parse(&severity).and_then(|value| notifications::emit(value, &title, &message)) {
+    match Severity::parse(&severity).and_then(|value| notifications::emit(value, &title, &message))
+    {
         Ok(()) => ExecutionResponse::ok(None),
         Err(error) => ExecutionResponse::fail(1, "notification", error),
     }

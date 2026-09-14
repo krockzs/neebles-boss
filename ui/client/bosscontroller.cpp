@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 #include <QSet>
 #include <QTimer>
 #include <QVersionNumber>
@@ -526,6 +527,16 @@ void BossController::loadConfig()
             QStringLiteral("normal_notifications"),
             true
         ).toBool();
+
+    m_hiddenTrayModules =
+        map.value(
+            QStringLiteral("hidden_tray_modules")
+        ).toList();
+
+    m_hiddenLauncherModules =
+        map.value(
+            QStringLiteral("hidden_launcher_modules")
+        ).toList();
 
     m_updateNotifications =
         map.value(
@@ -1142,6 +1153,557 @@ void BossController::saveConfig(const QString &language,
     setBusy(false);
 }
 
+
+void BossController::setModuleOperationField(
+    const QString &name,
+    const QString &key,
+    const QVariant &value
+)
+{
+    QVariantMap state =
+        m_moduleOperations
+            .value(name)
+            .toMap();
+
+    state.insert(key, value);
+
+    m_moduleOperations.insert(
+        name,
+        state
+    );
+
+    emit moduleOperationsChanged();
+}
+
+
+void BossController::appendModuleOperationLog(
+    const QString &name,
+    const QString &line
+)
+{
+    if (line.trimmed().isEmpty())
+        return;
+
+    QVariantMap state =
+        m_moduleOperations
+            .value(name)
+            .toMap();
+
+    QString log =
+        state.value(
+            QStringLiteral("log")
+        ).toString();
+
+    if (!log.isEmpty())
+        log.append(QLatin1Char('\n'));
+
+    log.append(line.trimmed());
+
+    state.insert(
+        QStringLiteral("log"),
+        log
+    );
+
+    m_moduleOperations.insert(
+        name,
+        state
+    );
+
+    emit moduleOperationsChanged();
+}
+
+
+void BossController::consumeModuleProcessOutput()
+{
+    if (!m_moduleOperationProcess)
+        return;
+
+    QString chunk =
+        QString::fromUtf8(
+            m_moduleOperationProcess
+                ->readAllStandardOutput()
+        );
+
+    /*
+     * apt, git, curl and similar tools may update
+     * a line using CR instead of LF.
+     */
+    chunk.replace(
+        QLatin1Char('\r'),
+        QLatin1Char('\n')
+    );
+
+    m_moduleOutputPending += chunk;
+
+    const QRegularExpression progressExpression(
+        QStringLiteral(
+            R"((\d{1,3})%)"
+        )
+    );
+
+    while (true) {
+        const qsizetype separator =
+            m_moduleOutputPending.indexOf(
+                QLatin1Char('\n')
+            );
+
+        if (separator < 0)
+            break;
+
+        const QString line =
+            m_moduleOutputPending
+                .left(separator)
+                .trimmed();
+
+        m_moduleOutputPending.remove(
+            0,
+            separator + 1
+        );
+
+        if (line.isEmpty())
+            continue;
+
+        appendModuleOperationLog(
+            m_activeModuleName,
+            line
+        );
+
+        QRegularExpressionMatchIterator matches =
+            progressExpression.globalMatch(line);
+
+        int progress = -1;
+
+        while (matches.hasNext()) {
+            const QRegularExpressionMatch match =
+                matches.next();
+
+            bool ok = false;
+
+            const int value =
+                match.captured(1).toInt(&ok);
+
+            if (
+                ok
+                && value >= 0
+                && value <= 100
+            ) {
+                progress = value;
+            }
+        }
+
+        if (progress >= 0) {
+            setModuleOperationField(
+                m_activeModuleName,
+                QStringLiteral("progress"),
+                progress
+            );
+        }
+    }
+}
+
+
+void BossController::startModuleProcess(
+    const QString &operation,
+    const QString &name,
+    bool privileged,
+    const QStringList &extraArguments
+)
+{
+    if (
+        name.isEmpty()
+        || m_moduleOperationProcess
+    ) {
+        return;
+    }
+
+    setBusy(true);
+
+    m_activeModuleName = name;
+    m_activeModuleOperation = operation;
+    m_moduleOutputPending.clear();
+
+    QVariantMap state;
+
+    state.insert(
+        QStringLiteral("started"),
+        true
+    );
+
+    state.insert(
+        QStringLiteral("running"),
+        true
+    );
+
+    state.insert(
+        QStringLiteral("operation"),
+        operation
+    );
+
+    /*
+     * -1 means that the underlying command has not
+     * supplied a real percentage yet.
+     */
+    state.insert(
+        QStringLiteral("progress"),
+        -1
+    );
+
+    state.insert(
+        QStringLiteral("log"),
+        QString()
+    );
+
+    state.insert(
+        QStringLiteral("success"),
+        false
+    );
+
+    m_moduleOperations.insert(
+        name,
+        state
+    );
+
+    emit moduleOperationsChanged();
+
+    appendModuleOperationLog(
+        name,
+        QStringLiteral(
+            "N.E.E.B.L.E.S. %1: %2"
+        ).arg(
+            operation,
+            name
+        )
+    );
+
+    QStringList commandArguments = {
+        QStringLiteral("modules"),
+        operation,
+        name
+    };
+
+    commandArguments.append(
+        extraArguments
+    );
+
+    QString program;
+    QStringList arguments;
+
+    if (privileged) {
+        const QString authAgent =
+            authorizationPath();
+
+        if (authAgent.isEmpty()) {
+            appendModuleOperationLog(
+                name,
+                text(
+                    QStringLiteral(
+                        "auth.agent_missing"
+                    )
+                )
+            );
+
+            setModuleOperationField(
+                name,
+                QStringLiteral("running"),
+                false
+            );
+
+            setBusy(false);
+            return;
+        }
+
+        program = authAgent;
+
+        QString fromVersion;
+        QString toVersion;
+        bool running = false;
+
+        for (
+            const QVariant &item :
+            m_modules
+        ) {
+            const QVariantMap module =
+                item.toMap();
+
+            if (
+                module.value(
+                    QStringLiteral("name")
+                ).toString()
+                != name
+            ) {
+                continue;
+            }
+
+            fromVersion =
+                module.value(
+                    QStringLiteral(
+                        "installed_version"
+                    ),
+                    module.value(
+                        QStringLiteral("version")
+                    )
+                ).toString();
+
+            toVersion =
+                module.value(
+                    QStringLiteral(
+                        "remote_version"
+                    )
+                ).toString();
+
+            if (toVersion.isEmpty()) {
+                toVersion =
+                    module.value(
+                        QStringLiteral("version")
+                    ).toString();
+            }
+
+            running =
+                module.value(
+                    QStringLiteral("running"),
+                    false
+                ).toBool();
+
+            break;
+        }
+
+        QString authOperation =
+            QStringLiteral("generic");
+
+        if (operation == QStringLiteral("install"))
+            authOperation =
+                QStringLiteral("install-module");
+        else if (
+            operation
+            == QStringLiteral("update")
+        )
+            authOperation =
+                QStringLiteral("update-module");
+        else if (
+            operation
+            == QStringLiteral("uninstall")
+        )
+            authOperation =
+                QStringLiteral("uninstall-module");
+
+        arguments
+            << QStringLiteral("--locale")
+            << m_language
+            << QStringLiteral("--operation")
+            << authOperation
+            << QStringLiteral("--name")
+            << name;
+
+        if (!fromVersion.isEmpty()) {
+            arguments
+                << QStringLiteral("--from")
+                << fromVersion;
+        }
+
+        if (!toVersion.isEmpty()) {
+            arguments
+                << QStringLiteral("--to")
+                << toVersion;
+        }
+
+        arguments
+            << QStringLiteral("--running")
+            << (
+                running
+                ? QStringLiteral("true")
+                : QStringLiteral("false")
+            )
+            << QStringLiteral("--")
+            << commandPath();
+
+        arguments.append(
+            commandArguments
+        );
+    } else {
+        program =
+            commandPath();
+
+        arguments =
+            commandArguments;
+    }
+
+    QProcess *process =
+        new QProcess(this);
+
+    m_moduleOperationProcess =
+        process;
+
+    /*
+     * Merge stderr/stdout because install tools
+     * commonly print useful progress to stderr.
+     */
+    process->setProcessChannelMode(
+        QProcess::MergedChannels
+    );
+
+    connect(
+        process,
+        &QProcess::readyReadStandardOutput,
+        this,
+        &BossController::consumeModuleProcessOutput
+    );
+
+    connect(
+        process,
+        &QProcess::errorOccurred,
+        this,
+        [this, name](
+            QProcess::ProcessError error
+        ) {
+            appendModuleOperationLog(
+                name,
+                QStringLiteral(
+                    "QProcess error: %1"
+                ).arg(
+                    static_cast<int>(error)
+                )
+            );
+        }
+    );
+
+    connect(
+        process,
+        qOverload<
+            int,
+            QProcess::ExitStatus
+        >(&QProcess::finished),
+        this,
+        [this, process, name, operation](
+            int exitCode,
+            QProcess::ExitStatus exitStatus
+        ) {
+            consumeModuleProcessOutput();
+
+            if (
+                !m_moduleOutputPending
+                    .trimmed()
+                    .isEmpty()
+            ) {
+                appendModuleOperationLog(
+                    name,
+                    m_moduleOutputPending
+                );
+
+                m_moduleOutputPending.clear();
+            }
+
+            bool success =
+                exitStatus
+                    == QProcess::NormalExit
+                && exitCode == 0;
+
+            /*
+             * Existing install contract:
+             * successful install is enabled automatically.
+             */
+            if (
+                success
+                && operation
+                    == QStringLiteral(
+                        "install"
+                    )
+            ) {
+                appendModuleOperationLog(
+                    name,
+                    QStringLiteral(
+                        "Enabling module..."
+                    )
+                );
+
+                bool enabled = false;
+
+                run(
+                    {
+                        QStringLiteral("modules"),
+                        QStringLiteral("enable"),
+                        name
+                    },
+                    false,
+                    5000,
+                    &enabled
+                );
+
+                success =
+                    success && enabled;
+
+                appendModuleOperationLog(
+                    name,
+                    enabled
+                    ? QStringLiteral(
+                        "Module enabled."
+                    )
+                    : QStringLiteral(
+                        "Could not enable module."
+                    )
+                );
+            }
+
+            setModuleOperationField(
+                name,
+                QStringLiteral("running"),
+                false
+            );
+
+            setModuleOperationField(
+                name,
+                QStringLiteral("success"),
+                success
+            );
+
+            if (success) {
+                setModuleOperationField(
+                    name,
+                    QStringLiteral("progress"),
+                    100
+                );
+
+                appendModuleOperationLog(
+                    name,
+                    QStringLiteral(
+                        "Completed successfully."
+                    )
+                );
+            } else {
+                appendModuleOperationLog(
+                    name,
+                    QStringLiteral(
+                        "Operation failed."
+                    )
+                );
+            }
+
+            setStatusText(
+                success
+                ? QStringLiteral("OK")
+                : QStringLiteral("ERROR")
+            );
+
+            m_moduleOperationProcess =
+                nullptr;
+
+            m_activeModuleName.clear();
+            m_activeModuleOperation.clear();
+
+            process->deleteLater();
+
+            loadModules();
+
+            setBusy(false);
+        }
+    );
+
+    process->start(
+        program,
+        arguments
+    );
+}
+
+
 void BossController::runModuleOperation(
     const QString &operation,
     const QString &name,
@@ -1180,95 +1742,42 @@ void BossController::installModule(
     const QString &name
 )
 {
-    if (name.isEmpty())
-        return;
-
-    setBusy(true);
-
-    bool installed = false;
-
-    run(
-        {
-            QStringLiteral("modules"),
-            QStringLiteral("install"),
-            name
-        },
-        true,
-        600000,
-        &installed
+    startModuleProcess(
+        QStringLiteral("install"),
+        name,
+        true
     );
-
-    bool enabled = false;
-
-    if (installed) {
-        run(
-            {
-                QStringLiteral("modules"),
-                QStringLiteral("enable"),
-                name
-            },
-            false,
-            5000,
-            &enabled
-        );
-    }
-
-    const bool ok =
-        installed && enabled;
-
-    setStatusText(
-        ok
-        ? QStringLiteral("OK")
-        : QStringLiteral("ERROR")
-    );
-
-    loadModules();
-    setBusy(false);
 }
+
 
 void BossController::updateModule(
     const QString &name
 )
 {
-    if (name.isEmpty())
-        return;
-
-    setBusy(true);
-
-    bool ok = false;
-
-    run(
+    startModuleProcess(
+        QStringLiteral("update"),
+        name,
+        true,
         {
-            QStringLiteral("modules"),
-            QStringLiteral("update"),
-            name,
             QStringLiteral(
                 "--close-running"
             )
-        },
-        true,
-        600000,
-        &ok
+        }
     );
-
-    setStatusText(
-        ok
-        ? QStringLiteral("OK")
-        : text(
-            QStringLiteral(
-                "modules.update_failed"
-            )
-        ).arg(name)
-    );
-
-    loadModules();
-
-    setBusy(false);
 }
-void BossController::uninstallModule(const QString &name)
+
+
+void BossController::uninstallModule(
+    const QString &name
+)
 {
-    runModuleOperation(QStringLiteral("uninstall"), name, true);
+    startModuleProcess(
+        QStringLiteral("uninstall"),
+        name,
+        true
+    );
 }
+
 
 void BossController::openModule(
     const QString &name
@@ -1356,7 +1865,42 @@ void BossController::openModule(
 
 void BossController::setModuleEnabled(const QString &name, bool enabled)
 {
-    runModuleOperation(enabled ? QStringLiteral("enable") : QStringLiteral("disable"), name, false);
+    runModuleOperation(
+        enabled
+            ? QStringLiteral("enable")
+            : QStringLiteral("disable"),
+        name,
+        false
+    );
+}
+
+void BossController::setModuleVisibility(
+    const QString &surface,
+    const QString &name,
+    bool visible
+)
+{
+    bool ok = false;
+
+    run(
+        {
+            QStringLiteral("config"),
+            QStringLiteral("module-visibility"),
+            surface,
+            name,
+            visible
+                ? QStringLiteral("true")
+                : QStringLiteral("false")
+        },
+        false,
+        5000,
+        &ok
+    );
+
+    if (!ok)
+        return;
+
+    loadConfig();
 }
 
 void BossController::setBusy(bool value)

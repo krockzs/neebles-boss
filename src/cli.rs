@@ -85,6 +85,42 @@ fn config_command(args: &[String]) -> i32 {
                 Err(error) => fail(error),
             }
         }
+        Some("module-visibility") => {
+            let Some(surface) = args.get(1) else {
+                return fail(
+                    "config module-visibility requires tray or launcher"
+                        .to_string()
+                );
+            };
+
+            let Some(name) = args.get(2) else {
+                return fail(
+                    "config module-visibility requires a module name"
+                        .to_string()
+                );
+            };
+
+            let Some(value) = args.get(3) else {
+                return fail(
+                    "config module-visibility requires true or false"
+                        .to_string()
+                );
+            };
+
+            let visible = match parse_bool(value) {
+                Ok(value) => value,
+                Err(error) => return fail(error),
+            };
+
+            match config::set_module_visibility(
+                surface,
+                name,
+                visible,
+            ) {
+                Ok(config) => print_json(&config),
+                Err(error) => fail(error),
+            }
+        }
         Some("module-update-notified") => {
             let Some(name) = args.get(1) else {
                 return fail(
@@ -109,7 +145,7 @@ fn config_command(args: &[String]) -> i32 {
             }
         }
         _ => fail(
-            "usage: neebles config show | neebles config set <key> <value> | neebles config module-update-notified <module> <version>"
+            "usage: neebles config show | neebles config set <key> <value> | neebles config module-visibility <tray|launcher> <module> <true|false> | neebles config module-update-notified <module> <version>"
                 .to_string()
         ),
     }
@@ -141,7 +177,10 @@ fn i18n_command(args: &[String]) -> i32 {
             };
             match languages::load_strings(&language) {
                 Ok(strings) => {
-                    println!("{}", strings.get(key).cloned().unwrap_or_else(|| key.to_string()));
+                    println!(
+                        "{}",
+                        strings.get(key).cloned().unwrap_or_else(|| key.to_string())
+                    );
                     0
                 }
                 Err(error) => fail(error),
@@ -172,31 +211,18 @@ fn modules_command(args: &[String]) -> i32 {
         }
         Some("update") => {
             let Some(name) = args.get(1) else {
-                return fail(
-                    "modules update requires a module name"
-                        .to_string()
-                );
+                return fail("modules update requires a module name".to_string());
             };
 
-            if let Err(error) =
-                privileges::ensure_root(true)
-            {
+            if let Err(error) = privileges::ensure_root(true) {
                 return fail(error);
             }
 
-            const CLOSE_FLAG: &str =
-                "--close-running";
+            const CLOSE_FLAG: &str = "--close-running";
 
-            let close_running =
-                args.iter()
-                    .any(|value| value == CLOSE_FLAG);
+            let close_running = args.iter().any(|value| value == CLOSE_FLAG);
 
-            result(
-                modules::update(
-                    name,
-                    close_running
-                )
-            )
+            result(modules::update(name, close_running))
         }
         Some("uninstall") => {
             let Some(name) = args.get(1) else {
@@ -220,7 +246,8 @@ fn modules_command(args: &[String]) -> i32 {
             result(modules::set_enabled(name, false))
         }
         _ => fail(
-            "usage: neebles modules available|installed|install|update|uninstall|enable|disable".to_string(),
+            "usage: neebles modules available|installed|install|update|uninstall|enable|disable"
+                .to_string(),
         ),
     }
 }
@@ -236,13 +263,18 @@ fn notify_command(args: &[String]) -> i32 {
     let Some(severity) = args.first() else {
         return fail("notify requires a severity".to_string());
     };
-    let title = args.get(1).cloned().unwrap_or_else(|| "N.E.E.B.L.E.S.".to_string());
+    let title = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| "N.E.E.B.L.E.S.".to_string());
     let message = if args.len() > 2 {
         args[2..].join(" ")
     } else {
         String::new()
     };
-    match Severity::parse(severity).and_then(|severity| notifications::emit(severity, &title, &message)) {
+    match Severity::parse(severity)
+        .and_then(|severity| notifications::emit(severity, &title, &message))
+    {
         Ok(()) => 0,
         Err(error) => fail(error),
     }
@@ -250,7 +282,11 @@ fn notify_command(args: &[String]) -> i32 {
 
 fn module_command(target: &str, args: &[String]) -> i32 {
     let action = args.first().cloned();
-    let rest = if args.is_empty() { Vec::new() } else { args[1..].to_vec() };
+    let rest = if args.is_empty() {
+        Vec::new()
+    } else {
+        args[1..].to_vec()
+    };
     let request = ExecutionRequest {
         target: target.to_string(),
         action,
@@ -316,6 +352,7 @@ fn print_help() {
     println!("Boss administration:");
     println!("  neebles config show");
     println!("  neebles config set <key> <value>");
+    println!("  neebles config module-visibility <tray|launcher> <module> <true|false>");
     println!("  neebles config module-update-notified <module> <version>");
     println!("  neebles modules available|installed");
     println!("  neebles modules install|update|uninstall <module>");

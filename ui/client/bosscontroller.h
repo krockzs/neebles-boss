@@ -7,6 +7,7 @@
 #include <QUrl>
 
 class QTimer;
+class QProcess;
 
 class BossController final : public QObject
 {
@@ -15,10 +16,13 @@ class BossController final : public QObject
     Q_PROPERTY(bool trayEnabled READ trayEnabled NOTIFY configChanged)
     Q_PROPERTY(bool launcherEnabled READ launcherEnabled NOTIFY configChanged)
     Q_PROPERTY(bool normalNotifications READ normalNotifications NOTIFY configChanged)
+    Q_PROPERTY(QVariantList hiddenTrayModules READ hiddenTrayModules NOTIFY configChanged)
+    Q_PROPERTY(QVariantList hiddenLauncherModules READ hiddenLauncherModules NOTIFY configChanged)
     Q_PROPERTY(QVariantList languages READ languages NOTIFY languagesChanged)
     Q_PROPERTY(QVariantList modules READ modules NOTIFY modulesChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
+    Q_PROPERTY(QVariantMap moduleOperations READ moduleOperations NOTIFY moduleOperationsChanged)
     Q_PROPERTY(int translationsRevision READ translationsRevision NOTIFY translationsChanged)
 
 public:
@@ -28,10 +32,13 @@ public:
     bool trayEnabled() const { return m_trayEnabled; }
     bool launcherEnabled() const { return m_launcherEnabled; }
     bool normalNotifications() const { return m_normalNotifications; }
+    QVariantList hiddenTrayModules() const { return m_hiddenTrayModules; }
+    QVariantList hiddenLauncherModules() const { return m_hiddenLauncherModules; }
     QVariantList languages() const { return m_languages; }
     QVariantList modules() const { return m_modules; }
     bool busy() const { return m_busy; }
     QString statusText() const { return m_statusText; }
+    QVariantMap moduleOperations() const { return m_moduleOperations; }
     int translationsRevision() const { return m_translationsRevision; }
 
     Q_INVOKABLE QString text(const QString &key) const;
@@ -47,6 +54,9 @@ public:
     Q_INVOKABLE void uninstallModule(const QString &name);
     Q_INVOKABLE void openModule(const QString &name);
     Q_INVOKABLE void setModuleEnabled(const QString &name, bool enabled);
+    Q_INVOKABLE void setModuleVisibility(const QString &surface,
+                                         const QString &name,
+                                         bool visible);
 
 signals:
     void configChanged();
@@ -54,6 +64,7 @@ signals:
     void modulesChanged();
     void busyChanged();
     void statusTextChanged();
+    void moduleOperationsChanged();
     void translationsChanged();
 
 private:
@@ -69,6 +80,20 @@ private:
     void pollModuleUpdates();
     void applyModuleLifecycle();
     void runModuleOperation(const QString &operation, const QString &name, bool privileged);
+
+    void startModuleProcess(const QString &operation,
+                            const QString &name,
+                            bool privileged,
+                            const QStringList &extraArguments = {});
+
+    void appendModuleOperationLog(const QString &name,
+                                  const QString &line);
+
+    void setModuleOperationField(const QString &name,
+                                 const QString &key,
+                                 const QVariant &value);
+
+    void consumeModuleProcessOutput();
     void setBusy(bool value);
     void setStatusText(const QString &value);
 
@@ -76,6 +101,8 @@ private:
     bool m_trayEnabled = true;
     bool m_launcherEnabled = true;
     bool m_normalNotifications = true;
+    QVariantList m_hiddenTrayModules;
+    QVariantList m_hiddenLauncherModules;
     QVariantList m_languages;
     QVariantList m_modules;
     QVariantMap m_strings;
@@ -85,4 +112,12 @@ private:
     int m_translationsRevision = 0;
     bool m_busy = false;
     QString m_statusText;
+
+    QVariantMap m_moduleOperations;
+
+    QProcess *m_moduleOperationProcess = nullptr;
+
+    QString m_activeModuleName;
+    QString m_activeModuleOperation;
+    QString m_moduleOutputPending;
 };

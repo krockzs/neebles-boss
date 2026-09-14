@@ -5,13 +5,73 @@ import QtQuick.Layouts
 ApplicationWindow {
     id: root
 
+    component NeeblesSwitch: Switch {
+        id: control
+
+        implicitWidth: 42
+        implicitHeight: 24
+
+        indicator: Rectangle {
+            implicitWidth: 36
+            implicitHeight: 18
+            radius: 9
+
+            color:
+                control.checked
+                ? "#5B21B6"
+                : "#27272A"
+
+            border.width: 1
+            border.color:
+                control.checked
+                ? "#A855F7"
+                : "#3F3F46"
+
+            Rectangle {
+                width: 14
+                height: 14
+                radius: 7
+
+                anchors.verticalCenter: parent.verticalCenter
+
+                x:
+                    control.checked
+                    ? parent.width - width - 2
+                    : 2
+
+                color:
+                    control.checked
+                    ? "#E9D5FF"
+                    : "#71717A"
+
+                Behavior on x {
+                    NumberAnimation {
+                        duration: 120
+                    }
+                }
+            }
+        }
+
+        contentItem: Text {
+            text: control.text
+            color: "#F5F5F5"
+            font.pixelSize: 13
+
+            leftPadding:
+                control.indicator.width + 8
+
+            verticalAlignment:
+                Text.AlignVCenter
+        }
+    }
+
     width: 980
     height: 640
     minimumWidth: 820
     minimumHeight: 520
     visible: true
 
-    title: "N.E.E.B.L.E.S. Boss 1.0.4"
+    title: "N.E.E.B.L.E.S. Boss 1.0.5"
     color: "#09090B"
 
     property int page: 0
@@ -524,69 +584,261 @@ ApplicationWindow {
                  * CONFIG
                  */
                 Item {
-                    ColumnLayout {
+                    Flickable {
                         anchors.fill: parent
-                        spacing: 14
 
-                        Switch {
-                            id: traySwitch
+                        contentWidth: width
+                        contentHeight: configColumn.implicitHeight
+                        clip: true
 
-                            text:
-                                typeof boss !== "undefined"
-                                ? root.t(
-                                    "config.tray"
-                                )
-                                : "Tray"
+                        ColumnLayout {
+                            id: configColumn
 
-                            checked:
-                                typeof boss !== "undefined"
-                                ? boss.trayEnabled
-                                : true
+                            width: parent.width
+                            spacing: 14
 
-                            onToggled:
-                                root.saveNow()
-                        }
+                            NeeblesSwitch {
+                                id: traySwitch
 
-                        Switch {
-                            id: launcherSwitch
+                                text:
+                                    typeof boss !== "undefined"
+                                    ? root.t("config.tray")
+                                    : "Tray"
 
-                            text:
-                                typeof boss !== "undefined"
-                                ? root.t(
-                                    "config.launcher"
-                                )
-                                : "Launcher"
+                                checked:
+                                    typeof boss !== "undefined"
+                                    ? boss.trayEnabled
+                                    : true
 
-                            checked:
-                                typeof boss !== "undefined"
-                                ? boss.launcherEnabled
-                                : true
+                                onToggled:
+                                    root.saveNow()
+                            }
 
-                            onToggled:
-                                root.saveNow()
-                        }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 28
+                                Layout.rightMargin: 0
 
-                        Switch {
-                            id: notificationSwitch
+                                visible: traySwitch.checked
+                                spacing: 6
 
-                            text:
-                                typeof boss !== "undefined"
-                                ? root.t(
-                                    "config.normal_notifications"
-                                )
-                                : "Notifications"
+                                Repeater {
+                                    model:
+                                        typeof boss !== "undefined"
+                                        ? boss.modules.filter(
+                                            function(module) {
+                                                return !!module.installed
+                                            }
+                                        )
+                                        : []
 
-                            checked:
-                                typeof boss !== "undefined"
-                                ? boss.normalNotifications
-                                : true
+                                    delegate: RowLayout {
+                                        required property var modelData
 
-                            onToggled:
-                                root.saveNow()
-                        }
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: 8
+                                        spacing: 10
 
-                        Item {
-                            Layout.fillHeight: true
+                                        Image {
+                                            Layout.preferredWidth: 24
+                                            Layout.preferredHeight: 24
+
+                                            source:
+                                                modelData.icon
+                                                && modelData.icon.length > 0
+                                                ? modelData.icon
+                                                : root.asset(
+                                                    "modules_icon.png"
+                                                )
+
+                                            fillMode:
+                                                Image.PreserveAspectFit
+
+                                            smooth: true
+                                            mipmap: true
+                                        }
+
+                                        Label {
+                                            Layout.preferredWidth: 160
+
+                                            text: modelData.name
+
+                                            color: "#67E8F9"
+                                            font.pixelSize: 13
+                                        }
+
+                                        NeeblesSwitch {
+                                            checked:
+                                                typeof boss === "undefined"
+                                                || boss.modules.length === 0
+                                                || boss.hiddenTrayModules
+                                                    .indexOf(
+                                                        modelData.name
+                                                    ) === -1
+
+                                            checkable: false
+
+                                            enabled:
+                                                typeof boss === "undefined"
+                                                || !boss.busy
+
+                                            onClicked: {
+                                                if (
+                                                    typeof boss
+                                                    === "undefined"
+                                                    || boss.modules.length === 0
+                                                )
+                                                    return
+
+                                                boss.setModuleVisibility(
+                                                    "tray",
+                                                    modelData.name,
+                                                    !checked
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: "#18181B"
+                            }
+
+                            NeeblesSwitch {
+                                id: launcherSwitch
+
+                                text:
+                                    typeof boss !== "undefined"
+                                    ? root.t("config.launcher")
+                                    : "Launcher"
+
+                                checked:
+                                    typeof boss !== "undefined"
+                                    ? boss.launcherEnabled
+                                    : true
+
+                                onToggled:
+                                    root.saveNow()
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 28
+                                Layout.rightMargin: 0
+
+                                visible: launcherSwitch.checked
+                                spacing: 6
+
+                                Repeater {
+                                    model:
+                                        typeof boss !== "undefined"
+                                        ? boss.modules.filter(
+                                            function(module) {
+                                                return !!module.installed
+                                            }
+                                        )
+                                        : []
+
+                                    delegate: RowLayout {
+                                        required property var modelData
+
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: 8
+                                        spacing: 10
+
+                                        Image {
+                                            Layout.preferredWidth: 24
+                                            Layout.preferredHeight: 24
+
+                                            source:
+                                                modelData.icon
+                                                && modelData.icon.length > 0
+                                                ? modelData.icon
+                                                : root.asset(
+                                                    "modules_icon.png"
+                                                )
+
+                                            fillMode:
+                                                Image.PreserveAspectFit
+
+                                            smooth: true
+                                            mipmap: true
+                                        }
+
+                                        Label {
+                                            Layout.preferredWidth: 160
+
+                                            text: modelData.name
+
+                                            color: "#67E8F9"
+                                            font.pixelSize: 13
+                                        }
+
+                                        NeeblesSwitch {
+                                            checked:
+                                                typeof boss === "undefined"
+                                                || boss.modules.length === 0
+                                                || boss.hiddenLauncherModules
+                                                    .indexOf(
+                                                        modelData.name
+                                                    ) === -1
+
+                                            checkable: false
+
+                                            enabled:
+                                                typeof boss === "undefined"
+                                                || !boss.busy
+
+                                            onClicked: {
+                                                if (
+                                                    typeof boss
+                                                    === "undefined"
+                                                    || boss.modules.length === 0
+                                                )
+                                                    return
+
+                                                boss.setModuleVisibility(
+                                                    "launcher",
+                                                    modelData.name,
+                                                    !checked
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: "#18181B"
+                            }
+
+                            NeeblesSwitch {
+                                id: notificationSwitch
+
+                                text:
+                                    typeof boss !== "undefined"
+                                    ? root.t(
+                                        "config.normal_notifications"
+                                    )
+                                    : "Notifications"
+
+                                checked:
+                                    typeof boss !== "undefined"
+                                    ? boss.normalNotifications
+                                    : true
+
+                                onToggled:
+                                    root.saveNow()
+                            }
+
+                            Item {
+                                Layout.fillHeight: true
+                            }
                         }
                     }
                 }
@@ -698,386 +950,603 @@ ApplicationWindow {
                                 : []
 
                             delegate: Rectangle {
+                                id: moduleCard
+
                                 required property var modelData
+
+                                readonly property var operationState:
+                                    typeof boss !== "undefined"
+                                    && boss.moduleOperations[
+                                        modelData.name
+                                    ]
+                                    ? boss.moduleOperations[
+                                        modelData.name
+                                    ]
+                                    : ({})
+
+                                readonly property bool realOperationVisible:
+                                    operationState.started === true
+
+                                readonly property int realProgress:
+                                    operationState.progress !== undefined
+                                    ? operationState.progress
+                                    : -1
+
+                                readonly property bool effectiveInstalled:
+                                    !!modelData.installed
+
+                                readonly property bool effectiveEnabled:
+                                    !!modelData.enabled
+
+                                property bool detailsVisible: false
+
+                                readonly property color moduleStateColor:
+                                    !effectiveInstalled
+                                    ? "#22D3EE"
+                                    : effectiveEnabled
+                                      ? "#A855F7"
+                                      : "#52525B"
 
                                 width:
                                     ListView.view.width
 
-                                height: 104
-                                radius: 10
+                                height:
+                                    !realOperationVisible
+                                    ? 116
+                                    : detailsVisible
+                                      ? 340
+                                      : 205
 
-                                color: "#111116"
-                                border.color: "#27272A"
+                                radius: 12
+                                color: "#0C0C10"
 
-                                RowLayout {
+                                border.width: 2
+                                border.color: "#22D3EE"
+
+                                Behavior on height {
+                                    NumberAnimation {
+                                        duration: 150
+                                    }
+                                }
+
+                                /*
+                                 * Glow cian exterior de la tarjeta.
+                                 */
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: -2
+
+                                    z: -1
+
+                                    radius: 14
+                                    color: "transparent"
+
+                                    border.width: 3
+                                    border.color: "#164E63"
+
+                                    opacity: 0.65
+                                }
+
+
+
+                                ColumnLayout {
                                     anchors.fill: parent
                                     anchors.margins: 14
-                                    spacing: 14
 
-                                    Item {
-                                        Layout.minimumWidth: 58
-                                        Layout.preferredWidth: 58
-                                        Layout.maximumWidth: 58
+                                    spacing: 10
 
-                                        Layout.minimumHeight: 58
-                                        Layout.preferredHeight: 58
-                                        Layout.maximumHeight: 58
-
-                                        Image {
-                                            anchors.fill: parent
-
-                                            source:
-                                                modelData.icon
-                                                && modelData.icon.length > 0
-                                                ? modelData.icon
-                                                : root.asset(
-                                                    "modules_icon.png"
-                                                )
-
-                                            fillMode:
-                                                Image.PreserveAspectFit
-
-                                            smooth: true
-                                            mipmap: true
-                                        }
-                                    }
-
-                                    ColumnLayout {
+                                    /*
+                                     * CABECERA DEL MÓDULO
+                                     */
+                                    RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 3
+                                        Layout.preferredHeight: 82
 
-                                        Label {
-                                            text:
-                                                modelData.name
-                                                || ""
+                                        spacing: 14
 
-                                            color: "#F5F5F5"
-                                            font.pixelSize: 18
-                                            font.bold: true
-                                        }
+                                        /*
+                                         * ICONO CON ESTADO
+                                         */
+                                        Item {
+                                            Layout.minimumWidth: 72
+                                            Layout.preferredWidth: 72
+                                            Layout.maximumWidth: 72
 
-                                        Label {
-                                            text:
-                                                modelData.version
-                                                || ""
+                                            Layout.minimumHeight: 72
+                                            Layout.preferredHeight: 72
+                                            Layout.maximumHeight: 72
 
-                                            color: "#A78BFA"
-                                            font.pixelSize: 13
-                                        }
+                                            Rectangle {
+                                                anchors.fill: parent
 
-                                        Label {
-                                            visible:
-                                                !!modelData.description
+                                                radius: 14
+                                                color: "transparent"
 
-                                            text:
-                                                modelData.description
-                                                || ""
-
-                                            color: "#A1A1AA"
-
-                                            elide:
-                                                Text.ElideRight
-
-                                            Layout.fillWidth: true
-                                        }
-                                    }
-
-                                    ColumnLayout {
-                                        spacing: 2
-
-                                        Label {
-                                            text:
-                                                modelData.installed
-                                                ? root.t(
-                                                    "modules.installed"
-                                                )
-                                                : root.t(
-                                                    "common.install"
-                                                )
-
-                                            color:
-                                                modelData.installed
-                                                ? "#22D3EE"
-                                                : "#A1A1AA"
-
-                                            font.pixelSize: 12
-                                        }
-
-                                        Switch {
-                                            checked:
-                                                !!modelData.installed
-
-                                            /*
-                                             * Boss owns the state.
-                                             *
-                                             * Clicking the control requests
-                                             * a change, but the Switch itself
-                                             * never mutates checked optimistically.
-                                             *
-                                             * checked changes only after Boss
-                                             * reloads the real backend state.
-                                             */
-                                            checkable: false
-
-                                            enabled:
-                                                (
-                                                    typeof boss
-                                                    === "undefined"
-                                                    || !boss.busy
-                                                )
-                                                && !modelData.running
-
-                                            onClicked: {
-                                                if (
-                                                    typeof boss
-                                                    === "undefined"
-                                                )
-                                                    return
-
-                                                if (
-                                                    modelData.installed
-                                                ) {
-                                                    boss.uninstallModule(
-                                                        modelData.name
-                                                    )
-                                                } else {
-                                                    boss.installModule(
-                                                        modelData.name
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    ColumnLayout {
-                                        visible:
-                                            !!modelData.installed
-
-                                        spacing: 2
-
-                                        Label {
-                                            text:
-                                                modelData.enabled
-                                                ? root.t(
-                                                    "modules.active"
-                                                )
-                                                : root.t(
-                                                    "modules.inactive"
-                                                )
-
-                                            color:
-                                                modelData.enabled
-                                                ? "#A78BFA"
-                                                : "#71717A"
-
-                                            font.pixelSize: 12
-                                        }
-
-                                        Switch {
-                                            checked:
-                                                !!modelData.enabled
-
-                                            /*
-                                             * Do not break the checked binding.
-                                             * Active changes only after Boss
-                                             * confirms the backend state.
-                                             */
-                                            checkable: false
-
-                                            enabled:
-                                                typeof boss
-                                                === "undefined"
-                                                || !boss.busy
-
-                                            onClicked: {
-                                                if (
-                                                    typeof boss
-                                                    === "undefined"
-                                                )
-                                                    return
-
-                                                boss.setModuleEnabled(
-                                                    modelData.name,
-                                                    !modelData.enabled
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    ColumnLayout {
-                                        spacing: 6
-
-                                        Button {
-                                            id: openButton
-
-                                            visible:
-                                                !!modelData.installed
-                                                && !!modelData.enabled
-                                                && !modelData.running
-                                                && !modelData.update_available
-
-                                            hoverEnabled: true
-
-                                            scale:
-                                                down
-                                                ? 0.96
-                                                : hovered
-                                                  ? 1.03
-                                                  : 1.0
-
-                                            Behavior on scale {
-                                                NumberAnimation {
-                                                    duration: 80
-                                                }
-                                            }
-
-                                            text:
-                                                typeof boss !== "undefined"
-                                                ? root.t(
-                                                    "common.open"
-                                                )
-                                                : "Open"
-
-                                            enabled:
-                                                typeof boss
-                                                === "undefined"
-                                                || !boss.busy
-
-                                            background: Rectangle {
-                                                radius: 7
-
-                                                color:
-                                                    openButton.down
-                                                    ? "#32155A"
-                                                    : openButton.hovered
-                                                      ? "#251044"
-                                                      : "#1B1027"
-
-                                                border.width:
-                                                    openButton.hovered
-                                                    || openButton.down
-                                                    ? 3
-                                                    : 2
+                                                border.width: 5
 
                                                 border.color:
-                                                    openButton.down
-                                                    ? "#22D3EE"
-                                                    : openButton.hovered
-                                                      ? "#D8B4FE"
-                                                      : "#C084FC"
+                                                    moduleCard.moduleStateColor
+
+                                                opacity:
+                                                    moduleCard.effectiveInstalled
+                                                    && !moduleCard.effectiveEnabled
+                                                    ? 0.45
+                                                    : 0.28
                                             }
 
-                                            contentItem: Text {
-                                                text: openButton.text
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                anchors.margins: 4
+
+                                                radius: 11
+                                                color: "#09090D"
+
+                                                border.width: 2
+
+                                                border.color:
+                                                    moduleCard.moduleStateColor
+                                            }
+
+                                            Image {
+                                                anchors.fill: parent
+                                                anchors.margins: 10
+
+                                                source:
+                                                    modelData.icon
+                                                    && modelData.icon.length > 0
+                                                    ? modelData.icon
+                                                    : root.asset(
+                                                        "modules_icon.png"
+                                                    )
+
+                                                fillMode:
+                                                    Image.PreserveAspectFit
+
+                                                smooth: true
+                                                mipmap: true
+                                            }
+                                        }
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 3
+
+                                            Label {
+                                                text:
+                                                    modelData.name || ""
+
+                                                color: "#67E8F9"
+
+                                                font.pixelSize: 18
+                                                font.bold: true
+                                            }
+
+                                            Label {
+                                                text:
+                                                    modelData.version || ""
+
+                                                color: "#A78BFA"
+                                                font.pixelSize: 13
+                                            }
+
+                                            Label {
+                                                visible:
+                                                    !!modelData.description
+
+                                                text:
+                                                    modelData.description
+                                                    || ""
+
+                                                color: "#A1A1AA"
+
+                                                elide:
+                                                    Text.ElideRight
+
+                                                Layout.fillWidth: true
+                                            }
+                                        }
+
+                                        /*
+                                         * INSTALAR / DESINSTALAR
+                                         */
+                                        ColumnLayout {
+                                            spacing: 2
+
+                                            Label {
+                                                text:
+                                                    moduleCard.effectiveInstalled
+                                                    ? root.t(
+                                                        "modules.installed"
+                                                    )
+                                                    : root.t(
+                                                        "common.install"
+                                                    )
+
+                                                color: "#67E8F9"
+                                                font.pixelSize: 12
+                                            }
+
+                                            NeeblesSwitch {
+                                                checked:
+                                                    moduleCard.effectiveInstalled
+
+                                                checkable: false
+
+                                                enabled:
+                                                    typeof boss !== "undefined"
+                                                    && !boss.busy
+                                                    && !modelData.running
+
+                                                onClicked: {
+                                                    moduleCard.detailsVisible =
+                                                        false
+
+                                                    if (
+                                                        moduleCard.effectiveInstalled
+                                                    ) {
+                                                        boss.uninstallModule(
+                                                            modelData.name
+                                                        )
+                                                    } else {
+                                                        boss.installModule(
+                                                            modelData.name
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        /*
+                                         * ENABLE / DISABLE
+                                         */
+                                        ColumnLayout {
+                                            visible:
+                                                moduleCard.effectiveInstalled
+
+                                            spacing: 2
+
+                                            Label {
+                                                text:
+                                                    moduleCard.effectiveEnabled
+                                                    ? root.t(
+                                                        "modules.active"
+                                                    )
+                                                    : root.t(
+                                                        "modules.inactive"
+                                                    )
 
                                                 color:
-                                                    openButton.down
-                                                    ? "#FFFFFF"
-                                                    : openButton.hovered
-                                                      ? "#CFFAFE"
-                                                      : "#E9D5FF"
+                                                    moduleCard.effectiveEnabled
+                                                    ? "#A78BFA"
+                                                    : "#71717A"
 
-                                                horizontalAlignment:
-                                                    Text.AlignHCenter
-
-                                                verticalAlignment:
-                                                    Text.AlignVCenter
+                                                font.pixelSize: 12
                                             }
 
-                                            onClicked: {
-                                                if (
-                                                    typeof boss
-                                                    !== "undefined"
-                                                )
+                                            NeeblesSwitch {
+                                                checked:
+                                                    moduleCard.effectiveEnabled
+
+                                                checkable: false
+
+                                                enabled:
+                                                    typeof boss !== "undefined"
+                                                    && !boss.busy
+
+                                                onClicked: {
+                                                    boss.setModuleEnabled(
+                                                        modelData.name,
+                                                        !modelData.enabled
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        ColumnLayout {
+                                            spacing: 6
+
+                                            Button {
+                                                id: moduleOpenButton
+
+                                                visible:
+                                                    moduleCard.effectiveInstalled
+                                                    && moduleCard.effectiveEnabled
+                                                    && !modelData.running
+                                                    && !modelData.update_available
+
+                                                text:
+                                                    typeof boss !== "undefined"
+                                                    ? root.t(
+                                                        "common.open"
+                                                    )
+                                                    : "Open"
+
+                                                enabled:
+                                                    typeof boss !== "undefined"
+                                                    && !boss.busy
+
+                                                background: Rectangle {
+                                                    radius: 7
+                                                    color: "#10131A"
+
+                                                    border.width: 2
+                                                    border.color: "#22D3EE"
+                                                }
+
+                                                contentItem: Text {
+                                                    text:
+                                                        moduleOpenButton.text
+
+                                                    color: "#67E8F9"
+
+                                                    horizontalAlignment:
+                                                        Text.AlignHCenter
+
+                                                    verticalAlignment:
+                                                        Text.AlignVCenter
+                                                }
+
+                                                onClicked: {
                                                     boss.openModule(
                                                         modelData.name
                                                     )
-                                            }
-                                        }
-
-                                        Button {
-                                            id: updateButton
-
-                                            visible:
-                                                !!modelData.installed
-                                                && !!modelData.update_available
-
-                                            hoverEnabled: true
-
-                                            scale:
-                                                down
-                                                ? 0.96
-                                                : hovered
-                                                  ? 1.03
-                                                  : 1.0
-
-                                            Behavior on scale {
-                                                NumberAnimation {
-                                                    duration: 80
                                                 }
                                             }
 
-                                            text:
-                                                typeof boss !== "undefined"
-                                                ? root.t(
-                                                    "common.update"
-                                                )
-                                                : "Update"
+                                            Button {
+                                                id: moduleUpdateButton
 
-                                            enabled:
-                                                typeof boss
-                                                === "undefined"
-                                                || !boss.busy
+                                                visible:
+                                                    moduleCard.effectiveInstalled
+                                                    && !!modelData.update_available
 
-                                            background: Rectangle {
-                                                radius: 7
+                                                text:
+                                                    typeof boss !== "undefined"
+                                                    ? root.t(
+                                                        "common.update"
+                                                    )
+                                                    : "Update"
 
-                                                color:
-                                                    updateButton.down
-                                                    ? "#5A101A"
-                                                    : updateButton.hovered
-                                                      ? "#3A1018"
-                                                      : "#2A0E12"
+                                                enabled:
+                                                    typeof boss !== "undefined"
+                                                    && !boss.busy
 
-                                                border.width:
-                                                    updateButton.hovered
-                                                    || updateButton.down
-                                                    ? 3
-                                                    : 2
+                                                background: Rectangle {
+                                                    radius: 7
+                                                    color: "#1B1027"
 
-                                                border.color:
-                                                    updateButton.down
-                                                    ? "#67E8F9"
-                                                    : updateButton.hovered
-                                                      ? "#FF5C6A"
-                                                      : "#FF3344"
-                                            }
+                                                    border.width: 2
+                                                    border.color: "#A855F7"
+                                                }
 
-                                            contentItem: Text {
-                                                text: updateButton.text
+                                                contentItem: Text {
+                                                    text:
+                                                        moduleUpdateButton.text
 
-                                                color:
-                                                    updateButton.down
-                                                    ? "#FFFFFF"
-                                                    : updateButton.hovered
-                                                      ? "#FFE4E6"
-                                                      : "#FFB4BC"
+                                                    color: "#E9D5FF"
 
-                                                horizontalAlignment:
-                                                    Text.AlignHCenter
+                                                    horizontalAlignment:
+                                                        Text.AlignHCenter
 
-                                                verticalAlignment:
-                                                    Text.AlignVCenter
-                                            }
+                                                    verticalAlignment:
+                                                        Text.AlignVCenter
+                                                }
 
-                                            onClicked: {
-                                                if (
-                                                    typeof boss
-                                                    !== "undefined"
-                                                )
+                                                onClicked: {
+                                                    moduleCard.detailsVisible =
+                                                        false
+
                                                     boss.updateModule(
                                                         modelData.name
                                                     )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    /*
+                                     * PROCESO INDEPENDIENTE DEL MÓDULO.
+                                     * Aparece sólo después de una operación.
+                                     */
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+
+                                        visible:
+                                            moduleCard.realOperationVisible
+
+                                        spacing: 5
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+
+                                            /*
+                                             * Barra morada.
+                                             */
+                                            ProgressBar {
+                                                id: moduleProgress
+
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 20
+
+                                                from: 0
+                                                to: 1
+
+                                                value:
+                                                    moduleCard.realProgress >= 0
+                                                    ? moduleCard.realProgress
+                                                      / 100.0
+                                                    : 0
+
+                                                background: Rectangle {
+                                                    implicitHeight: 10
+                                                    radius: 5
+
+                                                    color: "#18111F"
+
+                                                    border.width: 1
+                                                    border.color: "#6D28D9"
+                                                }
+
+                                                contentItem: Item {
+                                                    implicitHeight: 10
+
+                                                    Rectangle {
+                                                        width:
+                                                            parent.width
+                                                            * moduleProgress
+                                                                .position
+
+                                                        height:
+                                                            parent.height
+
+                                                        radius: 5
+
+                                                        color: "#A855F7"
+
+                                                        border.width: 1
+                                                        border.color: "#D8B4FE"
+                                                    }
+                                                }
+                                            }
+
+                                            Label {
+                                                Layout.preferredWidth: 42
+
+                                                text:
+                                                    moduleCard.realProgress >= 0
+                                                    ? moduleCard.realProgress
+                                                      + "%"
+                                                    : "..."
+
+                                                color: "#D8B4FE"
+
+                                                horizontalAlignment:
+                                                    Text.AlignRight
+                                            }
+
+                                            /*
+                                             * Misma flecha que el installer.
+                                             */
+                                            Button {
+                                                id: moduleDetailsButton
+
+                                                Layout.preferredWidth: 42
+                                                Layout.preferredHeight: 42
+
+                                                padding: 0
+                                                hoverEnabled: true
+
+                                                background: Item {
+                                                }
+
+                                                contentItem: Image {
+                                                    anchors.fill: parent
+
+                                                    source:
+                                                        !moduleDetailsButton.enabled
+                                                        ? root.asset(
+                                                            "show_details_disabled.png"
+                                                        )
+                                                        : moduleDetailsButton.down
+                                                          ? root.asset(
+                                                              "show_details_pressed.png"
+                                                          )
+                                                          : moduleDetailsButton.hovered
+                                                            ? root.asset(
+                                                                "show_details_hover.png"
+                                                            )
+                                                            : root.asset(
+                                                                "show_details_normal.png"
+                                                            )
+
+                                                    fillMode:
+                                                        Image.PreserveAspectFit
+
+                                                    smooth: true
+                                                    mipmap: true
+
+                                                    rotation:
+                                                        moduleCard.detailsVisible
+                                                        ? 180
+                                                        : 0
+
+                                                    Behavior on rotation {
+                                                        NumberAnimation {
+                                                            duration: 120
+                                                        }
+                                                    }
+                                                }
+
+                                                onClicked:
+                                                    moduleCard.detailsVisible =
+                                                        !moduleCard
+                                                            .detailsVisible
+                                            }
+                                        }
+
+                                        /*
+                                         * Log de ESTE módulo.
+                                         */
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: 125
+
+                                            visible:
+                                                moduleCard.detailsVisible
+
+                                            radius: 8
+                                            color: "#050507"
+
+                                            border.width: 2
+                                            border.color: "#A855F7"
+
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                anchors.margins: -3
+
+                                                z: -1
+
+                                                radius: 10
+                                                color: "transparent"
+
+                                                border.width: 4
+                                                border.color: "#4C1D95"
+
+                                                opacity: 0.45
+                                            }
+
+                                            ScrollView {
+                                                anchors.fill: parent
+                                                anchors.margins: 8
+
+                                                TextArea {
+                                                    readOnly: true
+                                                    selectByMouse: true
+
+                                                    wrapMode:
+                                                        TextEdit.WrapAnywhere
+
+                                                    color: "#D4D4D8"
+
+                                                    selectionColor:
+                                                        "#7C3AED"
+
+                                                    selectedTextColor:
+                                                        "#FFFFFF"
+
+                                                    font.family:
+                                                        "monospace"
+
+                                                    font.pixelSize: 12
+
+                                                    background: null
+
+                                                    text:
+                                                        moduleCard.operationState.log
+                                                        !== undefined
+                                                        ? moduleCard.operationState.log
+                                                        : ""
+                                                }
                                             }
                                         }
                                     }

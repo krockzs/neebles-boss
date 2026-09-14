@@ -42,26 +42,19 @@ pub fn serve() -> Result<(), String> {
         )
     })?;
 
-    println!(
-        "N.E.E.B.L.E.S. Boss listening on {}",
-        path.display()
-    );
+    println!("N.E.E.B.L.E.S. Boss listening on {}", path.display());
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 std::thread::spawn(move || {
                     if let Err(error) = handle_client(stream) {
-                        eprintln!(
-                            "N.E.E.B.L.E.S.: socket client error: {error}"
-                        );
+                        eprintln!("N.E.E.B.L.E.S.: socket client error: {error}");
                     }
                 });
             }
             Err(error) => {
-                eprintln!(
-                    "N.E.E.B.L.E.S.: Unix socket accept error: {error}"
-                );
+                eprintln!("N.E.E.B.L.E.S.: Unix socket accept error: {error}");
             }
         }
     }
@@ -74,35 +67,21 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
 
     stream
         .read_to_string(&mut raw)
-        .map_err(|error| {
-            format!(
-                "could not read ExecutionRequest from Unix socket: {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not read ExecutionRequest from Unix socket: {error}"))?;
 
-    let request: ExecutionRequest =
-        serde_json::from_str(raw.trim()).map_err(|error| {
-            format!(
-                "invalid ExecutionRequest received through Unix socket: {error}"
-            )
-        })?;
+    let request: ExecutionRequest = serde_json::from_str(raw.trim()).map_err(|error| {
+        format!("invalid ExecutionRequest received through Unix socket: {error}")
+    })?;
 
     let response = dispatcher::dispatch(request);
 
-    let payload =
-        serde_json::to_vec(&response).map_err(|error| {
-            format!(
-                "could not serialize ExecutionResponse for Unix socket: {error}"
-            )
-        })?;
+    let payload = serde_json::to_vec(&response).map_err(|error| {
+        format!("could not serialize ExecutionResponse for Unix socket: {error}")
+    })?;
 
     stream
         .write_all(&payload)
-        .map_err(|error| {
-            format!(
-                "could not write ExecutionResponse to Unix socket: {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not write ExecutionResponse to Unix socket: {error}"))?;
 
     Ok(())
 }

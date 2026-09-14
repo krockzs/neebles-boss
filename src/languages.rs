@@ -33,28 +33,46 @@ pub fn client_root() -> PathBuf {
 
 pub fn load_manifest() -> Result<LanguageManifest, String> {
     let path = client_root().join("languages/manifest.json");
-    let raw = fs::read_to_string(&path)
-        .map_err(|error| format!("could not read language manifest {}: {error}", path.display()))?;
+    let raw = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "could not read language manifest {}: {error}",
+            path.display()
+        )
+    })?;
     serde_json::from_str(&raw)
         .map_err(|error| format!("invalid language manifest {}: {error}", path.display()))
 }
 
 pub fn is_supported(code: &str) -> bool {
     load_manifest()
-        .map(|manifest| manifest.languages.iter().any(|language| language.code == code))
+        .map(|manifest| {
+            manifest
+                .languages
+                .iter()
+                .any(|language| language.code == code)
+        })
         .unwrap_or(false)
 }
 
 pub fn normalize_locale(value: &str) -> String {
     let trimmed = value.trim();
     let without_encoding = trimmed.split('.').next().unwrap_or(trimmed);
-    let without_modifier = without_encoding.split('@').next().unwrap_or(without_encoding);
+    let without_modifier = without_encoding
+        .split('@')
+        .next()
+        .unwrap_or(without_encoding);
     without_modifier.replace('-', "_")
 }
 
 pub fn detect_initial_language() -> String {
     let supported = load_manifest()
-        .map(|manifest| manifest.languages.into_iter().map(|item| item.code).collect::<Vec<_>>())
+        .map(|manifest| {
+            manifest
+                .languages
+                .into_iter()
+                .map(|item| item.code)
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_else(|_| vec!["es_CL".to_string(), "en_US".to_string()]);
 
     for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {

@@ -39,5 +39,7 @@ pub fn reexec_current_with_sudo() -> Result<(), String> {
     }
 
     let error = command.arg(executable).args(args).exec();
-    Err(format!("could not re-execute N.E.E.B.L.E.S. through sudo: {error}"))
+    Err(format!(
+        "could not re-execute N.E.E.B.L.E.S. through sudo: {error}"
+    ))
 }

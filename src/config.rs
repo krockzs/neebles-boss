@@ -14,6 +14,10 @@ pub struct BossConfig {
     #[serde(default)]
     pub disabled_modules: Vec<String>,
     #[serde(default)]
+    pub hidden_tray_modules: Vec<String>,
+    #[serde(default)]
+    pub hidden_launcher_modules: Vec<String>,
+    #[serde(default)]
     pub module_update_notifications: BTreeMap<String, String>,
 }
 
@@ -25,6 +29,8 @@ impl BossConfig {
             launcher_enabled: true,
             normal_notifications: true,
             disabled_modules: Vec::new(),
+            hidden_tray_modules: Vec::new(),
+            hidden_launcher_modules: Vec::new(),
             module_update_notifications: BTreeMap::new(),
         }
     }
@@ -112,11 +118,44 @@ pub fn module_enabled(name: &str) -> Result<bool, String> {
     Ok(!config.disabled_modules.iter().any(|item| item == name))
 }
 
-
-pub fn mark_module_update_notified(
+pub fn set_module_visibility(
+    surface: &str,
     name: &str,
-    version: &str,
+    visible: bool,
 ) -> Result<BossConfig, String> {
+    let mut config = load_or_initialize()?;
+
+    let hidden = match surface {
+        "tray" => &mut config.hidden_tray_modules,
+        "launcher" => &mut config.hidden_launcher_modules,
+        _ => return Err(format!("unknown module visibility surface: {surface}")),
+    };
+
+    hidden.retain(|item| item != name);
+
+    if !visible {
+        hidden.push(name.to_string());
+        hidden.sort();
+        hidden.dedup();
+    }
+
+    save(&config)?;
+    Ok(config)
+}
+
+pub fn module_visible(surface: &str, name: &str) -> Result<bool, String> {
+    let config = load_or_initialize()?;
+
+    let hidden = match surface {
+        "tray" => &config.hidden_tray_modules,
+        "launcher" => &config.hidden_launcher_modules,
+        _ => return Err(format!("unknown module visibility surface: {surface}")),
+    };
+
+    Ok(!hidden.iter().any(|item| item == name))
+}
+
+pub fn mark_module_update_notified(name: &str, version: &str) -> Result<BossConfig, String> {
     let mut config = load_or_initialize()?;
 
     config

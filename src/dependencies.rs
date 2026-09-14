@@ -33,9 +33,7 @@ fn default_required() -> bool {
     true
 }
 
-pub fn resolve_system_dependencies(
-    dependencies: &[SystemDependency],
-) -> Result<(), String> {
+pub fn resolve_system_dependencies(dependencies: &[SystemDependency]) -> Result<(), String> {
     for dependency in dependencies {
         match resolve_one(dependency) {
             Ok(()) => {}
@@ -54,23 +52,17 @@ pub fn resolve_system_dependencies(
     Ok(())
 }
 
-fn resolve_one(
-    dependency: &SystemDependency,
-) -> Result<(), String> {
+fn resolve_one(dependency: &SystemDependency) -> Result<(), String> {
     if request_succeeds(&dependency.verify)? {
         return Ok(());
     }
 
-    let install_result =
-        local_installer::handle(
-            dependency.install.clone(),
+    let install_result = local_installer::handle(dependency.install.clone()).map_err(|error| {
+        format!(
+            "could not install dependency '{}': {error}",
+            dependency.name
         )
-        .map_err(|error| {
-            format!(
-                "could not install dependency '{}': {error}",
-                dependency.name
-            )
-        })?;
+    })?;
 
     if !install_result.success {
         return Err(format!(
@@ -93,13 +85,8 @@ fn resolve_one(
     ))
 }
 
-fn request_succeeds(
-    request: &LocalInstallerRequest,
-) -> Result<bool, String> {
-    let result =
-        local_installer::handle(
-            request.clone(),
-        )?;
+fn request_succeeds(request: &LocalInstallerRequest) -> Result<bool, String> {
+    let result = local_installer::handle(request.clone())?;
 
     Ok(result.success)
 }
@@ -110,9 +97,6 @@ pub fn command_exists(command: &str) -> bool {
     }
 
     env::var_os("PATH")
-        .map(|paths| {
-            env::split_paths(&paths)
-                .any(|path| path.join(command).exists())
-        })
+        .map(|paths| env::split_paths(&paths).any(|path| path.join(command).exists()))
         .unwrap_or(false)
 }
