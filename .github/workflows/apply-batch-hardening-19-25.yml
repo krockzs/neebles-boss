@@ -1,0 +1,34 @@
+name: Apply Boss hardening batch 19-25
+
+on:
+  push:
+    branches: [batch-hardening-19-25]
+    paths:
+      - "scripts/apply-batch-hardening-19-25.py"
+      - ".github/workflows/apply-batch-hardening-19-25.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: batch-hardening-19-25
+      - name: Apply patch
+        run: python3 scripts/apply-batch-hardening-19-25.py
+      - name: Format and verify Rust
+        run: |
+          cargo fmt --all
+          cargo check --locked
+          cargo test --locked
+      - name: Commit patched source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/modules.rs
+          git diff --cached --quiet && exit 0
+          git commit -m "Harden registry and transactional update contracts"
+          git push origin HEAD:batch-hardening-19-25
