@@ -39,7 +39,7 @@ jobs:
 
       - name: Build Rust backend
         run: |
-          cargo build --release
+          cargo build --release --locked
 
       - name: Build client UI
         run: |
@@ -219,14 +219,21 @@ jobs:
             dist/client-data.tar.gz \
             dist/install.sh \
             dist/bootstrap.json \
+            | sed 's#  dist/#  #' \
             | tee dist/SHA256SUMS
+
+      - name: Verify release payload
+        run: |
+          ./scripts/verify-release.py \
+            --dist dist \
+            --cargo-toml Cargo.toml
 
       - name: Publish v1.0.5 release
         uses: softprops/action-gh-release@v2
 
         with:
           tag_name: v1.0.5
-          target_commitish: main
+          target_commitish: ${{ github.sha }}
           name: N.E.E.B.L.E.S. Boss v1.0.5
 
           body: |
