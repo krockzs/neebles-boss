@@ -2,29 +2,42 @@ name: Check NEEBLES Boss
 
 on:
   push:
-    branches: [main]
+    branches: [main, batch-hardening-19-25]
     paths:
       - "src/**"
+      - "client/**"
+      - "ui/**"
+      - "scripts/**"
+      - "registry/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/check.yml"
   pull_request:
     paths:
       - "src/**"
+      - "client/**"
+      - "ui/**"
+      - "scripts/**"
+      - "registry/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - ".github/workflows/check.yml"
 
 permissions:
   contents: read
 
 jobs:
-  cargo-check:
+  rust-contracts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Cargo format
+        run: cargo fmt --all -- --check
       - name: Cargo check
         run: cargo check --locked
+      - name: Cargo tests
+        run: cargo test --locked
       - name: Audit remote AMD64 installer dictionary
         run: |
           cargo run --locked -- --request-json '{
@@ -33,3 +46,63 @@ jobs:
             "args":[],
             "context":{"caller":"ci"}
           }'
+
+  trixie-target-contract:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie-slim
+    steps:
+      - name: Install target build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            ca-certificates \
+            git \
+            curl \
+            python3 \
+            build-essential \
+            cmake \
+            pkg-config \
+            rustc \
+            cargo \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            libgl1-mesa-dev \
+            liblayershellqtinterface-dev \
+            libpolkit-qt6-1-dev
+      - uses: actions/checkout@v4
+      - name: Verify NEEBLES target floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          require_minimum() {
+            local package="$1"
+            local minimum="$2"
+            local installed
+            installed="$(dpkg-query -W -f='${Version}' "$package")"
+            dpkg --compare-versions "$installed" ge "$minimum" || {
+              echo "${package} ${installed} is below target floor ${minimum}" >&2
+              exit 1
+            }
+            echo "OK: ${package} ${installed} >= ${minimum}"
+          }
+          require_minimum qt6-base-dev 6.8.2
+          require_minimum qt6-declarative-dev 6.8.2
+          require_minimum liblayershellqtinterface-dev 6.3.4
+          require_minimum libpolkit-qt6-1-dev 0.200.0
+      - name: Validate Boss languages
+        run: python3 scripts/validate-languages.py
+      - name: Build all Boss components on Debian Trixie
+        run: bash scripts/build-all.sh
+      - name: Validate client payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C client -czf /tmp/client-data.tar.gz \
+            assets \
+            languages \
+            config \
+            launcher \
+            spacer \
+            notifications
+          python3 scripts/validate-client-payload.py /tmp/client-data.tar.gz
