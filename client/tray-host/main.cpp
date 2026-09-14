@@ -774,10 +774,26 @@ int main(
     instanceLock.setStaleLockTime(0);
 
     if (!instanceLock.tryLock()) {
-        qInfo()
-            << "N.E.E.B.L.E.S. Tray Host:"
-            << "another instance is already running";
-        return 0;
+        switch (instanceLock.error()) {
+        case QLockFile::LockFailedError:
+            qInfo()
+                << "N.E.E.B.L.E.S. Tray Host:"
+                << "another instance is already running";
+            return 0;
+
+        case QLockFile::PermissionError:
+            qCritical()
+                << "N.E.E.B.L.E.S. Tray Host:"
+                << "could not acquire instance lock: permission denied";
+            return 1;
+
+        case QLockFile::UnknownError:
+        default:
+            qCritical()
+                << "N.E.E.B.L.E.S. Tray Host:"
+                << "could not acquire instance lock: unknown error";
+            return 1;
+        }
     }
 
     TraySocketClient trayClient;

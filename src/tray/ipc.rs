@@ -4,12 +4,12 @@ use crate::tray::manager;
 use crate::tray::protocol::{TrayEvent, TrayMessage};
 
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 type SharedStream = Arc<Mutex<UnixStream>>;
@@ -94,6 +94,145 @@ pub fn socket_path() -> PathBuf {
     crate::tray::protocol::socket_path()
 }
 
+fn manager_lock_path(socket_path: &Path) -> PathBuf {
+    let mut value = socket_path.as_os_str().to_os_string();
+    value.push(".lock");
+    PathBuf::from(value)
+}
+
+fn acquire_manager_lock(socket_path: &Path) -> Result<File, String> {
+    let path = manager_lock_path(socket_path);
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&path)
+        .map_err(|error| {
+            format!(
+                "could not open N.E.E.B.L.E.S. Tray Manager lock {}: {error}",
+                path.display()
+            )
+        })?;
+
+    let metadata = file.metadata().map_err(|error| {
+        format!(
+            "could not inspect N.E.E.B.L.E.S. Tray Manager lock {}: {error}",
+            path.display()
+        )
+    })?;
+
+    if !metadata.file_type().is_file() {
+        return Err(format!(
+            "N.E.E.B.L.E.S. Tray Manager lock {} is not a regular file",
+            path.display()
+        ));
+    }
+
+    let manager_uid = unsafe { libc::geteuid() };
+
+    if metadata.uid() != manager_uid {
+        return Err(format!(
+            "N.E.E.B.L.E.S. Tray Manager lock {} belongs to uid {}, expected {}",
+            path.display(),
+            metadata.uid(),
+            manager_uid
+        ));
+    }
+
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|error| {
+            format!(
+                "could not secure N.E.E.B.L.E.S. Tray Manager lock {}: {error}",
+                path.display()
+            )
+        })?;
+
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+
+        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+            return Err(format!(
+                "N.E.E.B.L.E.S. Tray Manager is already running for {}",
+                socket_path.display()
+            ));
+        }
+
+        return Err(format!(
+            "could not lock N.E.E.B.L.E.S. Tray Manager lock {}: {error}",
+            path.display()
+        ));
+    }
+
+    Ok(file)
+}
+
+fn prepare_socket_path(path: &Path) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(());
+        }
+
+        Err(error) => {
+            return Err(format!(
+                "could not inspect N.E.E.B.L.E.S. tray socket {}: {error}",
+                path.display()
+            ));
+        }
+    };
+
+    if !metadata.file_type().is_socket() {
+        return Err(format!(
+            "N.E.E.B.L.E.S. tray socket path {} exists but is not a Unix socket",
+            path.display()
+        ));
+    }
+
+    let manager_uid = unsafe { libc::geteuid() };
+
+    if metadata.uid() != manager_uid {
+        return Err(format!(
+            "N.E.E.B.L.E.S. tray socket {} belongs to uid {}, expected {}",
+            path.display(),
+            metadata.uid(),
+            manager_uid
+        ));
+    }
+
+    match UnixStream::connect(path) {
+        Ok(stream) => {
+            drop(stream);
+
+            Err(format!(
+                "N.E.E.B.L.E.S. Tray Manager is already running on {}",
+                path.display()
+            ))
+        }
+
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+            fs::remove_file(path).map_err(|remove_error| {
+                format!(
+                    "could not remove stale N.E.E.B.L.E.S. tray socket {}: {remove_error}",
+                    path.display()
+                )
+            })
+        }
+
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+
+        Err(error) => Err(format!(
+            "could not determine whether N.E.E.B.L.E.S. tray socket {} is stale: {error}",
+            path.display()
+        )),
+    }
+}
+
 pub fn serve() -> Result<(), String> {
     let path = socket_path();
 
@@ -106,14 +245,16 @@ pub fn serve() -> Result<(), String> {
         })?;
     }
 
-    if path.exists() {
-        fs::remove_file(&path).map_err(|error| {
-            format!(
-                "could not remove stale N.E.E.B.L.E.S. tray socket {}: {error}",
-                path.display()
-            )
-        })?;
-    }
+    /*
+     * Hold this lock for the entire Manager lifetime.
+     *
+     * Socket liveness probing alone is insufficient when two
+     * Managers race against the same stale socket: both could
+     * otherwise classify it as stale before either binds.
+     */
+    let _manager_lock = acquire_manager_lock(&path)?;
+
+    prepare_socket_path(&path)?;
 
     let listener = UnixListener::bind(&path).map_err(|error| {
         format!(

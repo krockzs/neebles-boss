@@ -671,6 +671,83 @@ fn write_runtime_marker(name: &str, pid: u32) -> Result<(), String> {
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProcessIdentity {
+    pid: u32,
+    start_time_ticks: u64,
+}
+
+fn process_start_time_ticks(pid: u32) -> Result<Option<u64>, String> {
+    let path = PathBuf::from(format!("/proc/{pid}/stat"));
+
+    let raw = match fs::read_to_string(&path) {
+        Ok(value) => value,
+
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+
+        Err(error) => {
+            return Err(format!(
+                "could not inspect process identity for pid {} at {}: {error}",
+                pid,
+                path.display()
+            ));
+        }
+    };
+
+    let end_comm = raw.rfind(')').ok_or_else(|| {
+        format!(
+            "could not parse process identity for pid {}: malformed /proc stat",
+            pid
+        )
+    })?;
+
+    let tail = raw
+        .get(end_comm + 1..)
+        .ok_or_else(|| {
+            format!(
+                "could not parse process identity for pid {}: malformed /proc stat",
+                pid
+            )
+        })?
+        .trim();
+
+    let fields: Vec<&str> = tail.split_whitespace().collect();
+
+    let start_time = fields.get(19).ok_or_else(|| {
+        format!(
+            "could not parse process identity for pid {}: missing starttime",
+            pid
+        )
+    })?;
+
+    let start_time_ticks = start_time.parse::<u64>().map_err(|error| {
+        format!(
+            "could not parse process identity for pid {} starttime '{}': {error}",
+            pid, start_time
+        )
+    })?;
+
+    Ok(Some(start_time_ticks))
+}
+
+fn capture_process_identity(pid: u32) -> Result<Option<ProcessIdentity>, String> {
+    Ok(
+        process_start_time_ticks(pid)?.map(|start_time_ticks| ProcessIdentity {
+            pid,
+            start_time_ticks,
+        }),
+    )
+}
+
+fn process_identity_is_alive(identity: ProcessIdentity) -> Result<bool, String> {
+    Ok(matches!(
+        process_start_time_ticks(identity.pid)?,
+        Some(start_time_ticks) if start_time_ticks == identity.start_time_ticks
+    ))
+}
+
 fn probe_module_pid(name: &str) -> Result<Option<u32>, String> {
     let path = runtime_marker_path(name);
 
@@ -805,9 +882,17 @@ fn stop_module(name: &str) -> Result<(), String> {
         return Ok(());
     };
 
-    /*
-     * Graceful shutdown first.
-     */
+    let Some(identity) = capture_process_identity(pid)? else {
+        clear_runtime_marker_if_pid(name, pid);
+        return Ok(());
+    };
+
+    if probe_module_pid(name)? != Some(pid) || !process_identity_is_alive(identity)? {
+        return Err(format!(
+            "module '{name}' process {pid} changed identity while lifecycle ownership was being verified"
+        ));
+    }
+
     let status = Command::new("kill")
         .args(["-TERM", pid.to_string().as_str()])
         .status()
@@ -821,19 +906,15 @@ fn stop_module(name: &str) -> Result<(), String> {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
 
-    while probe_module_pid(name)? == Some(pid) && std::time::Instant::now() < deadline {
+    while process_identity_is_alive(identity)? && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if probe_module_pid(name)? != Some(pid) {
+    if !process_identity_is_alive(identity)? {
         clear_runtime_marker_if_pid(name, pid);
         return Ok(());
     }
 
-    /*
-     * A tracked process that ignores SIGTERM must not
-     * block Boss lifecycle forever.
-     */
     let status = Command::new("kill")
         .args(["-KILL", pid.to_string().as_str()])
         .status()
@@ -847,11 +928,11 @@ fn stop_module(name: &str) -> Result<(), String> {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 
-    while probe_module_pid(name)? == Some(pid) && std::time::Instant::now() < deadline {
+    while process_identity_is_alive(identity)? && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if probe_module_pid(name)? == Some(pid) {
+    if process_identity_is_alive(identity)? {
         return Err(format!(
             "module '{name}' process {pid} did not terminate after SIGKILL"
         ));
@@ -1198,6 +1279,18 @@ pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
         return Ok(false);
     };
 
+    let Some(identity) = capture_process_identity(pid)? else {
+        clear_tray_runtime_marker_if_pid(name, pid);
+        return Ok(false);
+    };
+
+    if probe_tray_provider_pid(name)? != Some(pid) || !process_identity_is_alive(identity)? {
+        return Err(format!(
+            "module '{}' tray provider process {} changed identity while lifecycle ownership was being verified",
+            name, pid
+        ));
+    }
+
     let status = Command::new("kill")
         .args(["-TERM", pid.to_string().as_str()])
         .status()
@@ -1217,19 +1310,15 @@ pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
 
-    while probe_tray_provider_pid(name)? == Some(pid) && std::time::Instant::now() < deadline {
+    while process_identity_is_alive(identity)? && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if probe_tray_provider_pid(name)? != Some(pid) {
+    if !process_identity_is_alive(identity)? {
         clear_tray_runtime_marker_if_pid(name, pid);
         return Ok(true);
     }
 
-    /*
-     * A stale or broken provider must not permanently
-     * block reconciliation.
-     */
     let status = Command::new("kill")
         .args(["-KILL", pid.to_string().as_str()])
         .status()
@@ -1249,11 +1338,11 @@ pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 
-    while probe_tray_provider_pid(name)? == Some(pid) && std::time::Instant::now() < deadline {
+    while process_identity_is_alive(identity)? && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if probe_tray_provider_pid(name)? == Some(pid) {
+    if process_identity_is_alive(identity)? {
         return Err(format!(
             "tray provider for module '{}' process {} did not terminate after SIGKILL",
             name, pid

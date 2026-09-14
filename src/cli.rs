@@ -470,6 +470,8 @@ fn tray_command(args: &[String]) -> i32 {
     };
 
     match tray::client::request(&request) {
+        Ok(tray::protocol::TrayMessage::Error { message }) => fail(message),
+
         Ok(response) => match serde_json::to_string_pretty(&response) {
             Ok(json) => {
                 println!("{json}");
