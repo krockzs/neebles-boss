@@ -5,26 +5,73 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "client/**"
+      - "ui/**"
+      - "scripts/**"
+      - "registry/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/check.yml"
+
   pull_request:
     paths:
       - "src/**"
+      - "client/**"
+      - "ui/**"
+      - "scripts/**"
+      - "registry/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - ".github/workflows/check.yml"
 
 permissions:
   contents: read
 
 jobs:
-  cargo-check:
+  contracts:
     runs-on: ubuntu-latest
+
+    container:
+      image: debian:trixie-slim
+
     steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            ca-certificates \
+            git \
+            curl \
+            build-essential \
+            cmake \
+            pkg-config \
+            rustc \
+            cargo \
+            rustfmt \
+            python3 \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            libgl1-mesa-dev \
+            liblayershellqtinterface-dev \
+            libpolkit-qt6-1-dev
+
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Cargo check
+
+      - name: Rust format
+        run: cargo fmt --all -- --check
+
+      - name: Rust tests
+        run: cargo test --locked
+
+      - name: Rust check
         run: cargo check --locked
+
+      - name: Validate Boss language contract
+        run: ./scripts/validate-languages.py
+
+      - name: Build all Boss components
+        run: ./scripts/build-all.sh
+
       - name: Audit remote AMD64 installer dictionary
         run: |
           cargo run --locked -- --request-json '{
