@@ -12,10 +12,13 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MODULE_SCHEMA_VERSION: u32 = 3;
 pub const MODULE_LANGUAGE_SCHEMA_VERSION: u32 = 1;
 pub const MODULE_NOTIFICATIONS_PROTOCOL_VERSION: u32 = 1;
+pub const REGISTRY_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -98,10 +101,15 @@ struct ModuleLanguageManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryModule {
     pub repo: String,
+
+    pub commit: String,
+
     #[serde(default)]
     pub version: Option<String>,
+
     #[serde(default)]
     pub branch: Option<String>,
+
     #[serde(default)]
     pub folder: Option<String>,
 }
@@ -116,6 +124,65 @@ pub struct Registry {
 
 fn default_schema() -> u32 {
     1
+}
+
+fn valid_git_commit(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
+}
+
+fn validate_registry(registry: &Registry) -> Result<(), String> {
+    if registry.schema != REGISTRY_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported N.E.E.B.L.E.S. registry schema {}; expected {}",
+            registry.schema, REGISTRY_SCHEMA_VERSION
+        ));
+    }
+
+    for (name, module) in &registry.modules {
+        if !valid_module_id(name) {
+            return Err(format!("invalid module id in registry: {name}"));
+        }
+
+        if module.repo.trim().is_empty() {
+            return Err(format!("module '{}' registry repo cannot be empty", name));
+        }
+
+        if !valid_git_commit(module.commit.trim()) {
+            return Err(format!(
+                "module '{}' registry commit '{}' is not a full 40-character Git commit SHA",
+                name, module.commit
+            ));
+        }
+
+        if let Some(version) = module.version.as_deref() {
+            let version = version.trim();
+
+            if version.is_empty() {
+                return Err(format!(
+                    "module '{}' registry version cannot be empty",
+                    name
+                ));
+            }
+
+            Version::parse(version).map_err(|error| {
+                format!(
+                    "module '{}' registry version '{}' is not valid SemVer: {error}",
+                    name, version
+                )
+            })?;
+        }
+
+        if let Some(folder) = module.folder.as_deref() {
+            if !valid_module_id(folder) {
+                return Err(format!(
+                    "invalid module folder '{}' in registry for '{}'",
+                    folder, name
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +324,19 @@ pub fn resolved_tray_contract(name: &str) -> Result<ResolvedTrayContract, String
 
 const MODULE_ICON_EXTENSIONS: &[&str] = &["svg", "png", "webp", "jpg", "jpeg"];
 
+static TRANSACTION_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn transaction_id() -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+
+    let counter = TRANSACTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    format!("{}-{}-{}", std::process::id(), timestamp, counter)
+}
+
 struct ModuleInstallStaging {
     path: PathBuf,
     committed: bool,
@@ -265,12 +345,10 @@ struct ModuleInstallStaging {
 impl ModuleInstallStaging {
     fn prepare(path: PathBuf) -> Result<Self, String> {
         if path.exists() {
-            fs::remove_dir_all(&path).map_err(|error| {
-                format!(
-                    "could not clear module staging directory {}: {error}",
-                    path.display()
-                )
-            })?;
+            return Err(format!(
+                "module staging path already exists and will not be removed automatically: {}",
+                path.display()
+            ));
         }
 
         Ok(Self {
@@ -313,6 +391,141 @@ impl Drop for ModuleInstallStaging {
     }
 }
 
+fn checkout_registry_commit(
+    name: &str,
+    entry: &RegistryModule,
+    destination: &Path,
+) -> Result<(), String> {
+    if !dependencies::command_exists("git") {
+        return Err("git is required by Boss to retrieve modules".to_string());
+    }
+
+    let expected = entry.commit.trim().to_ascii_lowercase();
+
+    if !valid_git_commit(&expected) {
+        return Err(format!(
+            "module '{}' has invalid registry commit '{}'",
+            name, entry.commit
+        ));
+    }
+
+    let status = Command::new("git")
+        .arg("init")
+        .arg(destination)
+        .status()
+        .map_err(|error| {
+            format!(
+                "could not initialize staged repository for module '{}': {error}",
+                name
+            )
+        })?;
+
+    if !status.success() {
+        return Err(format!(
+            "git init failed while staging module '{}' with status {}",
+            name, status
+        ));
+    }
+
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(destination)
+        .args(["remote", "add", "origin"])
+        .arg(&entry.repo)
+        .status()
+        .map_err(|error| format!("could not configure module '{}' repository: {error}", name))?;
+
+    if !status.success() {
+        return Err(format!(
+            "git remote add failed while staging module '{}' with status {}",
+            name, status
+        ));
+    }
+
+    /*
+     * Fetch the immutable object named by the registry.
+     * We intentionally do not resolve or trust branch tip.
+     */
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(destination)
+        .args(["fetch", "--depth", "1", "origin"])
+        .arg(&expected)
+        .status()
+        .map_err(|error| {
+            format!(
+                "could not fetch pinned commit for module '{}': {error}",
+                name
+            )
+        })?;
+
+    if !status.success() {
+        return Err(format!(
+            "git fetch failed for pinned module '{}' commit {} with status {}",
+            name, expected, status
+        ));
+    }
+
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(destination)
+        .args(["checkout", "--detach", "FETCH_HEAD"])
+        .status()
+        .map_err(|error| {
+            format!(
+                "could not checkout pinned module '{}' commit: {error}",
+                name
+            )
+        })?;
+
+    if !status.success() {
+        return Err(format!(
+            "git checkout failed for pinned module '{}' commit {} with status {}",
+            name, expected, status
+        ));
+    }
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(destination)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|error| {
+            format!(
+                "could not verify checked out commit for module '{}': {error}",
+                name
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "git rev-parse failed while verifying module '{}'",
+            name
+        ));
+    }
+
+    let actual = String::from_utf8(output.stdout)
+        .map_err(|error| {
+            format!(
+                "invalid git rev-parse output for module '{}': {error}",
+                name
+            )
+        })?
+        .trim()
+        .to_ascii_lowercase();
+
+    if actual != expected {
+        return Err(format!(
+            "module '{}' integrity failure: registry requires commit {}, but staged repository is {}",
+            name,
+            expected,
+            actual
+        ));
+    }
+
+    Ok(())
+}
+
 fn local_module_icon(module_dir: &Path) -> String {
     for extension in MODULE_ICON_EXTENSIONS {
         let candidate = module_dir.join(format!("icon.{extension}"));
@@ -336,10 +549,8 @@ fn github_raw_base(repo: &str, branch: &str) -> Option<String> {
     Some(format!("https://raw.githubusercontent.com/{repo}/{branch}"))
 }
 
-fn remote_module_icon(repo: &str, branch: Option<&str>) -> String {
-    let branch = branch.unwrap_or("main");
-
-    let Some(base) = github_raw_base(repo, branch) else {
+fn remote_module_icon(repo: &str, commit: &str) -> String {
+    let Some(base) = github_raw_base(repo, commit) else {
         return String::new();
     };
 
@@ -371,34 +582,39 @@ pub fn modules_root() -> PathBuf {
 }
 
 fn runtime_identity() -> String {
-    if let Ok(value) = env::var("PKEXEC_UID") {
-        if !value.trim().is_empty() {
-            return value;
+    /*
+     * Privileged re-execution must keep operating on the
+     * runtime state of the original desktop user.
+     */
+    if let Ok(value) = env::var("NEEBLES_RUNTIME_IDENTITY") {
+        let value = value.trim();
+
+        if !value.is_empty() && value.chars().all(|character| character.is_ascii_digit()) {
+            return value.to_string();
         }
     }
 
+    /*
+     * Normal desktop session:
+     * XDG_RUNTIME_DIR is normally /run/user/<uid>.
+     */
     if let Ok(value) = env::var("XDG_RUNTIME_DIR") {
         if let Some(name) = Path::new(&value)
             .file_name()
             .and_then(|value| value.to_str())
         {
-            if !name.is_empty() {
+            if !name.is_empty() && name.chars().all(|character| character.is_ascii_digit()) {
                 return name.to_string();
             }
         }
     }
 
-    env::var("USER")
-        .unwrap_or_else(|_| "default".to_string())
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    /*
+     * Final deterministic fallback.
+     * Never use USER: sudo changes USER to root while the
+     * runtime ownership we care about is UID-based.
+     */
+    unsafe { libc::geteuid() }.to_string()
 }
 
 fn runtime_modules_root() -> PathBuf {
@@ -1107,8 +1323,12 @@ pub fn fetch_registry() -> Result<Registry, String> {
         ));
     }
 
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("invalid N.E.E.B.L.E.S. module registry: {error}"))
+    let registry: Registry = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("invalid N.E.E.B.L.E.S. module registry: {error}"))?;
+
+    validate_registry(&registry)?;
+
+    Ok(registry)
 }
 
 pub fn installed_modules_json() -> Result<Value, String> {
@@ -1185,7 +1405,7 @@ pub fn available_modules_json() -> Result<Value, String> {
     for (name, module) in registry.modules {
         let is_installed = installed.contains(&name);
 
-        let icon = remote_module_icon(&module.repo, module.branch.as_deref());
+        let icon = remote_module_icon(&module.repo, &module.commit);
 
         result.push(json!({
             "name": name,
@@ -1256,7 +1476,18 @@ fn resolve_module_dependency(
      * their declared version must still satisfy the contract.
      */
     if find_module_dir(&dependency.name).is_err() {
-        install_internal(&dependency.name, registry, visiting)?;
+        if let Err(error) = install_internal(&dependency.name, registry, visiting) {
+            /*
+             * install_internal removes itself on success.
+             * On failure the caller must release the
+             * traversal marker as well, especially for an
+             * optional dependency whose failure does not
+             * abort the whole parent installation.
+             */
+            visiting.remove(&dependency.name);
+
+            return Err(error);
+        }
     }
 
     ensure_minimum_module_version(&dependency.name, dependency.minimum_version.as_deref())
@@ -1293,25 +1524,11 @@ fn install_internal(
     let temp_root = neebles_root().join("shared/tmp");
     fs::create_dir_all(&temp_root)
         .map_err(|error| format!("could not create {}: {error}", temp_root.display()))?;
-    let temp = temp_root.join(format!("install-{name}-{}", std::process::id()));
+    let temp = temp_root.join(format!("install-{name}-{}", transaction_id()));
 
     let staging = ModuleInstallStaging::prepare(temp)?;
 
-    let mut clone = Command::new("git");
-    clone.arg("clone").arg("--depth").arg("1");
-    if let Some(branch) = &entry.branch {
-        clone.arg("--branch").arg(branch);
-    }
-    let status = clone
-        .arg(&entry.repo)
-        .arg(staging.path())
-        .status()
-        .map_err(|error| format!("could not start git clone for '{name}': {error}"))?;
-    if !status.success() {
-        return Err(format!(
-            "git clone failed for module '{name}' with status {status}"
-        ));
-    }
+    checkout_registry_commit(name, entry, staging.path())?;
 
     let manifest_path = staging.path().join("manifest.json");
     let manifest = read_manifest(&manifest_path)?;
@@ -1424,8 +1641,6 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
         return Err("git is required by Boss to update modules from repositories".to_string());
     }
 
-    let branch = entry.branch.as_deref().unwrap_or("main");
-
     /*
      * Stage the candidate INSIDE modules_root().
      *
@@ -1438,60 +1653,34 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
     fs::create_dir_all(&root)
         .map_err(|error| format!("could not create module root {}: {error}", root.display()))?;
 
-    let staging_path = root.join(format!(".neebles-update-{}-{}", name, std::process::id()));
+    let transaction = transaction_id();
 
-    let backup_path = root.join(format!(".neebles-backup-{}-{}", name, std::process::id()));
+    let staging_path = root.join(format!(".neebles-update-{name}-{transaction}"));
+
+    let backup_path = root.join(format!(".neebles-backup-{name}-{transaction}"));
 
     /*
-     * A previous interrupted development run may have
-     * left a staging directory using this PID-shaped name.
+     * Transaction paths are unique.
      *
-     * The live module path is NEVER removed here.
+     * Boss must never destroy a pre-existing staging or
+     * backup directory merely because its name resembles
+     * an old transaction. Such a directory may contain
+     * recovery data from a previous failure.
      */
-    if staging_path.exists() {
-        fs::remove_dir_all(&staging_path).map_err(|error| {
-            format!(
-                "could not clear stale update staging directory {}: {error}",
-                staging_path.display()
-            )
-        })?;
-    }
-
-    /*
-     * If the real module exists, an old backup with this
-     * exact transient name cannot be the active copy.
-     */
-    if backup_path.exists() {
-        fs::remove_dir_all(&backup_path).map_err(|error| {
-            format!(
-                "could not clear stale module backup {}: {error}",
-                backup_path.display()
-            )
-        })?;
-    }
-
     let staging = ModuleInstallStaging::prepare(staging_path.clone())?;
+
+    if backup_path.exists() {
+        return Err(format!(
+            "transactional backup path already exists and will not be removed automatically: {}",
+            backup_path.display()
+        ));
+    }
 
     /*
      * Clone the candidate instead of mutating the current
      * checkout with git reset.
      */
-    let status = Command::new("git")
-        .arg("clone")
-        .arg("--depth")
-        .arg("1")
-        .arg("--branch")
-        .arg(branch)
-        .arg(&entry.repo)
-        .arg(staging.path())
-        .status()
-        .map_err(|error| format!("could not start staged update clone for '{name}': {error}"))?;
-
-    if !status.success() {
-        return Err(format!(
-            "git clone failed while staging update for module '{name}' with status {status}"
-        ));
-    }
+    checkout_registry_commit(name, entry, staging.path())?;
 
     /*
      * read_manifest() is now the schema-3 gate.

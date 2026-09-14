@@ -3,7 +3,6 @@ mod config;
 mod dependencies;
 mod dispatcher;
 mod ipc;
-mod ipc_client;
 mod languages;
 mod local_installer;
 mod modules;

@@ -31,6 +31,18 @@ pub fn reexec_current_with_sudo() -> Result<(), String> {
 
     command.arg(format!("NEEBLES_TRAY_SOCKET={}", tray_socket.display()));
 
+    /*
+     * Runtime PID markers belong to the original desktop
+     * user, not to root.
+     *
+     * Preserve that identity explicitly across sudo so
+     * update/uninstall/close-running inspect the same
+     * runtime namespace that created the markers.
+     */
+    let runtime_identity = unsafe { libc::geteuid() }.to_string();
+
+    command.arg(format!("NEEBLES_RUNTIME_IDENTITY={}", runtime_identity));
+
     for key in [
         "NEEBLES_ROOT",
         "NEEBLES_CLIENT_ROOT",

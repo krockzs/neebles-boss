@@ -38,10 +38,6 @@ impl TrayHostModel {
     pub fn visible_trays(&self) -> Vec<&TrayRecord> {
         self.trays.values().filter(|tray| tray.visible).collect()
     }
-
-    pub fn get(&self, tray_id: &str) -> Option<&TrayRecord> {
-        self.trays.get(tray_id)
-    }
 }
 
 fn send_subscribe(stream: &mut UnixStream) -> Result<(), String> {
