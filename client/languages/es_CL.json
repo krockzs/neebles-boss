@@ -94,5 +94,21 @@
   "installer.log.launcher_missing": "ADVERTENCIA: no se encontró el paquete Launcher de Plasma.",
   "installer.log.qdbus_missing": "ADVERTENCIA: no se encontró qdbus; el Launcher fue instalado, pero no se pudo agregar al panel.",
   "installer.log.launcher_integration_failed": "ADVERTENCIA: el paquete Launcher fue instalado, pero falló su integración con el panel de Plasma.",
-  "installer.log.launcher_added": "Launcher de N.E.E.B.L.E.S. agregado a Plasma."
+  "installer.log.launcher_added": "Launcher de N.E.E.B.L.E.S. agregado a Plasma.",
+  "installer.progress.authorization_accepted": "Autorización administrativa aceptada.",
+  "installer.progress.validating_payload": "Validando contenido de N.E.E.B.L.E.S...",
+  "installer.progress.checking_dependencies": "Comprobando dependencias de ejecución de Boss...",
+  "installer.progress.creating_structure": "Creando estructura de directorios de N.E.E.B.L.E.S...",
+  "installer.progress.installing_backend": "Instalando backend de N.E.E.B.L.E.S...",
+  "installer.progress.installing_ui": "Instalando interfaz de N.E.E.B.L.E.S...",
+  "installer.progress.installing_auth_agent": "Instalando agente de autorización de N.E.E.B.L.E.S...",
+  "installer.progress.installing_tray_host": "Instalando Tray Host de N.E.E.B.L.E.S...",
+  "installer.progress.installing_client_data": "Instalando datos de cliente de N.E.E.B.L.E.S...",
+  "installer.progress.creating_entrypoint": "Creando punto de entrada de N.E.E.B.L.E.S...",
+  "installer.progress.installing_tray_manager": "Instalando servicio de usuario Tray Manager de N.E.E.B.L.E.S...",
+  "installer.progress.registering_tray_autostart": "Registrando inicio automático del Tray Host de N.E.E.B.L.E.S...",
+  "installer.progress.installing_launcher": "Instalando paquete Launcher de Plasma para N.E.E.B.L.E.S...",
+  "installer.progress.installing_spacer": "Instalando paquete Spacer de Plasma para N.E.E.B.L.E.S...",
+  "installer.progress.verifying_backend": "Verificando backend instalado...",
+  "installer.progress.completed": "N.E.E.B.L.E.S. Boss instalado correctamente."
 }

@@ -18,7 +18,7 @@ MODULES_DIR="$NEEBLES_ROOT/modules"
 SHARED_DIR="$NEEBLES_ROOT/shared"
 
 progress() { echo "NEEBLES_PROGRESS=$1"; }
-status() { echo "NEEBLES_STATUS=$1"; }
+status_key() { echo "NEEBLES_STATUS_KEY=$1"; }
 
 if [[ ${EUID} -ne 0 ]]; then
     echo "This installer must run as root." >&2
@@ -60,10 +60,10 @@ else
 fi
 
 progress 5
-status "Administrator authorization accepted."
+status_key "installer.progress.authorization_accepted"
 
 progress 10
-status "Validating N.E.E.B.L.E.S. payload..."
+status_key "installer.progress.validating_payload"
 [[ -f "$BACKEND_SOURCE" ]] || { echo "Backend binary not found: $BACKEND_SOURCE" >&2; exit 1; }
 [[ -f "$UI_SOURCE" ]] || { echo "UI binary not found: $UI_SOURCE" >&2; exit 1; }
 [[ -f "$TRAY_SOURCE" ]] || { echo "Tray binary not found: $TRAY_SOURCE" >&2; exit 1; }
@@ -73,7 +73,7 @@ status "Validating N.E.E.B.L.E.S. payload..."
 }
 
 progress 16
-status "Checking Boss runtime dependencies..."
+status_key "installer.progress.checking_dependencies"
 if command -v apt >/dev/null 2>&1; then
     MISSING=()
     command -v git >/dev/null 2>&1 || MISSING+=(git)
@@ -89,20 +89,20 @@ if command -v apt >/dev/null 2>&1; then
 fi
 
 progress 25
-status "Creating N.E.E.B.L.E.S. directory structure..."
+status_key "installer.progress.creating_structure"
 install -d "$BIN_DIR" "$BACKEND_DIR" "$UI_DIR" "$TRAY_DIR" "$LAUNCHER_DIR" "$SPACER_DIR" \
     "$NOTIFICATIONS_DIR" "$ASSETS_DIR" "$LANGUAGES_DIR" "$CONFIG_DIR" \
     "$AUTH_DIR" "$MODULES_DIR" "$SHARED_DIR"
 
 progress 38
-status "Installing N.E.E.B.L.E.S. backend..."
+status_key "installer.progress.installing_backend"
 install -m 0755 "$BACKEND_SOURCE" "$BACKEND_DIR/neebles-backend"
 
 progress 50
-status "Installing N.E.E.B.L.E.S. UI..."
+status_key "installer.progress.installing_ui"
 install -m 0755 "$UI_SOURCE" "$UI_DIR/neebles-ui"
 
-status "Installing N.E.E.B.L.E.S. authorization agent..."
+status_key "installer.progress.installing_auth_agent"
 
 [[ -x "$AUTH_AGENT_SOURCE" ]] || {
     echo "Authorization agent not found or not executable: $AUTH_AGENT_SOURCE" >&2
@@ -115,13 +115,13 @@ install -m 0755 \
 
 if [[ -n "$TRAY_SOURCE" ]]; then
     progress 58
-    status "Installing N.E.E.B.L.E.S. Tray Host..."
+    status_key "installer.progress.installing_tray_host"
     install -m 0755 "$TRAY_SOURCE" "$TRAY_DIR/neebles-tray-host"
 fi
 
 if [[ -n "$CLIENT_DATA_SOURCE" && -d "$CLIENT_DATA_SOURCE" ]]; then
     progress 66
-    status "Installing N.E.E.B.L.E.S. client data..."
+    status_key "installer.progress.installing_client_data"
     [[ -d "$CLIENT_DATA_SOURCE/assets" ]] && cp -a "$CLIENT_DATA_SOURCE/assets/." "$ASSETS_DIR/"
     [[ -d "$CLIENT_DATA_SOURCE/languages" ]] && cp -a "$CLIENT_DATA_SOURCE/languages/." "$LANGUAGES_DIR/"
     [[ -d "$CLIENT_DATA_SOURCE/config" ]] && cp -a "$CLIENT_DATA_SOURCE/config/." "$CONFIG_DIR/"
@@ -137,7 +137,7 @@ if [[ -n "$CLIENT_DATA_SOURCE" && -d "$CLIENT_DATA_SOURCE" ]]; then
 fi
 
 progress 75
-status "Creating N.E.E.B.L.E.S. client entrypoint..."
+status_key "installer.progress.creating_entrypoint"
 ln -sfn "$BACKEND_DIR/neebles-backend" "$BIN_DIR/neebles"
 ln -sfn "$BIN_DIR/neebles" /usr/local/bin/neebles
 
@@ -148,7 +148,7 @@ if [[ -f "$ASSETS_DIR/branding/neebles-boss-launcher-icon.png" ]]; then
 fi
 
 progress 80
-status "Installing N.E.E.B.L.E.S. Tray Manager user service..."
+status_key "installer.progress.installing_tray_manager"
 install -d /usr/lib/systemd/user
 
 cat > /usr/lib/systemd/user/neebles-tray-manager.service <<SERVICE
@@ -172,7 +172,7 @@ ln -sfn     /usr/lib/systemd/user/neebles-tray-manager.service     /etc/systemd/
 
 if [[ -x "$TRAY_DIR/neebles-tray-host" ]]; then
     progress 82
-    status "Registering N.E.E.B.L.E.S. Tray Host autostart..."
+    status_key "installer.progress.registering_tray_autostart"
     install -d /etc/xdg/autostart
     cat > /etc/xdg/autostart/neebles-tray-host.desktop <<DESKTOP
 [Desktop Entry]
@@ -188,24 +188,24 @@ fi
 
 if [[ -f "$LAUNCHER_DIR/metadata.json" && -d "$LAUNCHER_DIR/contents" ]]; then
     progress 88
-    status "Installing N.E.E.B.L.E.S. Plasma launcher package..."
+    status_key "installer.progress.installing_launcher"
     install -d /usr/share/plasma/plasmoids/org.neebles.launcher
     cp -a "$LAUNCHER_DIR/." /usr/share/plasma/plasmoids/org.neebles.launcher/
 fi
 
 if [[ -f "$SPACER_DIR/metadata.json" && -d "$SPACER_DIR/contents" ]]; then
-    status "Installing N.E.E.B.L.E.S. Plasma spacer package..."
+    status_key "installer.progress.installing_spacer"
     rm -rf /usr/share/plasma/plasmoids/org.neebles.spacer
     install -d /usr/share/plasma/plasmoids/org.neebles.spacer
     cp -a "$SPACER_DIR/." /usr/share/plasma/plasmoids/org.neebles.spacer/
 fi
 
 progress 94
-status "Verifying installed backend..."
+status_key "installer.progress.verifying_backend"
 "$BIN_DIR/neebles" --version
 
 progress 100
-status "N.E.E.B.L.E.S. Boss installed successfully."
+status_key "installer.progress.completed"
 echo "Installed backend: $BACKEND_DIR/neebles-backend"
 echo "Installed UI: $UI_DIR/neebles-ui"
 [[ -x "$TRAY_DIR/neebles-tray-host" ]] && echo "Installed tray host: $TRAY_DIR/neebles-tray-host"

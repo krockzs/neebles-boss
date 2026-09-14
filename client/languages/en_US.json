@@ -94,5 +94,21 @@
   "installer.log.launcher_missing": "WARNING: Plasma launcher package not found.",
   "installer.log.qdbus_missing": "WARNING: qdbus was not found; launcher was installed but could not be added to the panel.",
   "installer.log.launcher_integration_failed": "WARNING: launcher package installed, but Plasma panel integration failed.",
-  "installer.log.launcher_added": "N.E.E.B.L.E.S. launcher added to Plasma."
+  "installer.log.launcher_added": "N.E.E.B.L.E.S. launcher added to Plasma.",
+  "installer.progress.authorization_accepted": "Administrator authorization accepted.",
+  "installer.progress.validating_payload": "Validating N.E.E.B.L.E.S. payload...",
+  "installer.progress.checking_dependencies": "Checking Boss runtime dependencies...",
+  "installer.progress.creating_structure": "Creating N.E.E.B.L.E.S. directory structure...",
+  "installer.progress.installing_backend": "Installing N.E.E.B.L.E.S. backend...",
+  "installer.progress.installing_ui": "Installing N.E.E.B.L.E.S. UI...",
+  "installer.progress.installing_auth_agent": "Installing N.E.E.B.L.E.S. authorization agent...",
+  "installer.progress.installing_tray_host": "Installing N.E.E.B.L.E.S. Tray Host...",
+  "installer.progress.installing_client_data": "Installing N.E.E.B.L.E.S. client data...",
+  "installer.progress.creating_entrypoint": "Creating N.E.E.B.L.E.S. client entrypoint...",
+  "installer.progress.installing_tray_manager": "Installing N.E.E.B.L.E.S. Tray Manager user service...",
+  "installer.progress.registering_tray_autostart": "Registering N.E.E.B.L.E.S. Tray Host autostart...",
+  "installer.progress.installing_launcher": "Installing N.E.E.B.L.E.S. Plasma launcher package...",
+  "installer.progress.installing_spacer": "Installing N.E.E.B.L.E.S. Plasma spacer package...",
+  "installer.progress.verifying_backend": "Verifying installed backend...",
+  "installer.progress.completed": "N.E.E.B.L.E.S. Boss installed successfully."
 }

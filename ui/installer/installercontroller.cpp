@@ -9,10 +9,12 @@
 InstallerController::InstallerController(
     const QStringList &arguments,
     const QVariantMap &strings,
+    const QString &language,
     QObject *parent
 )
     : QObject(parent),
-      m_strings(strings)
+      m_strings(strings),
+      m_language(language)
 {
     m_status = text(
         QStringLiteral(
@@ -205,7 +207,7 @@ void InstallerController::startInstallation()
 
     QStringList args {
         QStringLiteral("--locale"),
-        QLocale::system().name(),
+        m_language,
 
         QStringLiteral("--operation"),
         QStringLiteral("install-boss"),
@@ -255,8 +257,13 @@ void InstallerController::consumeLine(const QString &line)
     if (line.isEmpty())
         return;
 
-    static const QRegularExpression progressRx(QStringLiteral("^NEEBLES_PROGRESS=(\\d{1,3})$"));
-    static const QRegularExpression statusRx(QStringLiteral("^NEEBLES_STATUS=(.+)$"));
+    static const QRegularExpression progressRx(
+        QStringLiteral("^NEEBLES_PROGRESS=(\\d{1,3})$")
+    );
+
+    static const QRegularExpression statusKeyRx(
+        QStringLiteral("^NEEBLES_STATUS_KEY=([A-Za-z0-9_.-]+)$")
+    );
 
     const auto progressMatch = progressRx.match(line);
     if (progressMatch.hasMatch()) {
@@ -264,10 +271,19 @@ void InstallerController::consumeLine(const QString &line)
         return;
     }
 
-    const auto statusMatch = statusRx.match(line);
-    if (statusMatch.hasMatch()) {
-        setStatus(statusMatch.captured(1));
-        appendLog(statusMatch.captured(1));
+    const auto statusKeyMatch =
+        statusKeyRx.match(line);
+
+    if (statusKeyMatch.hasMatch()) {
+        const QString key =
+            statusKeyMatch.captured(1);
+
+        const QString value =
+            text(key);
+
+        setStatus(value);
+        appendLog(value);
+
         return;
     }
 

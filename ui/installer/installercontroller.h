@@ -18,6 +18,7 @@ public:
     explicit InstallerController(
         const QStringList &arguments,
         const QVariantMap &strings,
+        const QString &language,
         QObject *parent = nullptr
     );
 
@@ -60,6 +61,7 @@ private:
     QProcess m_process;
     QByteArray m_buffer;
     QVariantMap m_strings;
+    QString m_language;
     int m_progress = 0;
     QString m_status;
     bool m_running = false;

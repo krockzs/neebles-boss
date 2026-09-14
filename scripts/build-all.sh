@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 cd "$ROOT"
+
+echo "Validating Boss language contract..."
+"$ROOT/scripts/validate-languages.py"
+
+echo
 cargo build
 
 cmake -S ui/client -B ui/client/build -DCMAKE_BUILD_TYPE=Debug

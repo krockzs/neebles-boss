@@ -126,7 +126,8 @@ static QString normalizeLocale(QString value)
 }
 
 static QVariantMap loadInstallerStrings(
-    const QString &payloadRoot
+    const QString &payloadRoot,
+    QString *resolvedLanguage
 )
 {
     QString language =
@@ -193,12 +194,26 @@ static QVariantMap loadInstallerStrings(
     QVariantMap strings =
         load(language);
 
-    if (!strings.isEmpty())
-        return strings;
+    if (!strings.isEmpty()) {
+        if (resolvedLanguage)
+            *resolvedLanguage = language;
 
-    return load(
-        QStringLiteral("en_US")
-    );
+        return strings;
+    }
+
+    const QString fallbackLanguage =
+        QStringLiteral("en_US");
+
+    strings =
+        load(fallbackLanguage);
+
+    if (!strings.isEmpty()) {
+        if (resolvedLanguage)
+            *resolvedLanguage =
+                fallbackLanguage;
+    }
+
+    return strings;
 }
 
 int main(int argc, char *argv[])
@@ -236,14 +251,23 @@ int main(int argc, char *argv[])
     if (!iconPath.isEmpty())
         app.setWindowIcon(QIcon(iconPath));
 
+    QString installerLanguage;
+
     const QVariantMap bossStrings =
         loadInstallerStrings(
-            payloadRoot
+            payloadRoot,
+            &installerLanguage
         );
+
+    if (installerLanguage.isEmpty()) {
+        installerLanguage =
+            QStringLiteral("en_US");
+    }
 
     InstallerController installer(
         app.arguments(),
-        bossStrings
+        bossStrings,
+        installerLanguage
     );
 
     QQmlApplicationEngine engine;
