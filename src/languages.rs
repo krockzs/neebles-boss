@@ -21,7 +21,9 @@ pub struct LanguageManifest {
 
 pub fn client_root() -> PathBuf {
     if let Ok(value) = env::var("NEEBLES_CLIENT_ROOT") {
-        return PathBuf::from(value);
+        if !value.trim().is_empty() {
+            return PathBuf::from(value);
+        }
     }
 
     if Path::new("client/languages/manifest.json").exists() {
@@ -43,59 +45,59 @@ pub fn load_manifest() -> Result<LanguageManifest, String> {
         .map_err(|error| format!("invalid language manifest {}: {error}", path.display()))
 }
 
-pub fn is_supported(code: &str) -> bool {
-    load_manifest()
-        .map(|manifest| {
-            manifest
-                .languages
-                .iter()
-                .any(|language| language.code == code)
-        })
-        .unwrap_or(false)
-}
-
 pub fn normalize_locale(value: &str) -> String {
     let trimmed = value.trim();
     let without_encoding = trimmed.split('.').next().unwrap_or(trimmed);
-    let without_modifier = without_encoding
-        .split('@')
-        .next()
-        .unwrap_or(without_encoding);
+    let without_modifier = without_encoding.split('@').next().unwrap_or(without_encoding);
     without_modifier.replace('-', "_")
 }
 
+fn find_supported<'a>(manifest: &'a LanguageManifest, code: &str) -> Option<&'a LanguageEntry> {
+    let requested = normalize_locale(code);
+    manifest
+        .languages
+        .iter()
+        .find(|language| normalize_locale(&language.code) == requested)
+}
+
+pub fn canonical_supported_code(code: &str) -> Result<String, String> {
+    let manifest = load_manifest()?;
+    find_supported(&manifest, code)
+        .map(|language| language.code.clone())
+        .ok_or_else(|| format!("unsupported N.E.E.B.L.E.S. language: {code}"))
+}
+
+pub fn is_supported(code: &str) -> bool {
+    load_manifest()
+        .map(|manifest| find_supported(&manifest, code).is_some())
+        .unwrap_or(false)
+}
+
 pub fn detect_initial_language() -> String {
-    let supported = load_manifest()
-        .map(|manifest| {
-            manifest
-                .languages
-                .into_iter()
-                .map(|item| item.code)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|_| vec!["es_CL".to_string(), "en_US".to_string()]);
+    let manifest = match load_manifest() {
+        Ok(manifest) => manifest,
+        Err(_) => return "en_US".to_string(),
+    };
 
     for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
         if let Ok(value) = env::var(key) {
             if value.trim().is_empty() {
                 continue;
             }
-            let normalized = normalize_locale(&value);
-            if supported.iter().any(|code| code == &normalized) {
-                return normalized;
+            if let Some(language) = find_supported(&manifest, &value) {
+                return language.code.clone();
             }
         }
     }
 
-    "en_US".to_string()
+    find_supported(&manifest, &manifest.default)
+        .map(|language| language.code.clone())
+        .unwrap_or_else(|| manifest.default.clone())
 }
 
 pub fn load_strings(code: &str) -> Result<BTreeMap<String, String>, String> {
     let manifest = load_manifest()?;
-    let language = manifest
-        .languages
-        .iter()
-        .find(|language| language.code == code)
+    let language = find_supported(&manifest, code)
         .ok_or_else(|| format!("unsupported N.E.E.B.L.E.S. language: {code}"))?;
 
     let path = client_root().join("languages").join(&language.file);
