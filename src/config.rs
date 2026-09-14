@@ -36,17 +36,24 @@ impl BossConfig {
     }
 }
 
+fn nonempty_env_path(key: &str) -> Option<PathBuf> {
+    env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+}
+
 pub fn config_path() -> Result<PathBuf, String> {
-    if let Ok(value) = env::var("NEEBLES_CONFIG") {
-        return Ok(PathBuf::from(value));
+    if let Some(path) = nonempty_env_path("NEEBLES_CONFIG") {
+        return Ok(path);
     }
 
-    if let Ok(value) = env::var("XDG_CONFIG_HOME") {
-        return Ok(PathBuf::from(value).join("neebles/boss.json"));
+    if let Some(path) = nonempty_env_path("XDG_CONFIG_HOME") {
+        return Ok(path.join("neebles/boss.json"));
     }
 
-    if let Ok(value) = env::var("HOME") {
-        return Ok(PathBuf::from(value).join(".config/neebles/boss.json"));
+    if let Some(path) = nonempty_env_path("HOME") {
+        return Ok(path.join(".config/neebles/boss.json"));
     }
 
     Err("could not determine user configuration directory".to_string())
@@ -72,7 +79,6 @@ pub fn save(config: &BossConfig) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
     }
-
     let data = serde_json::to_string_pretty(config)
         .map_err(|error| format!("could not serialize Boss config: {error}"))?;
     fs::write(&path, format!("{data}\n"))
@@ -84,7 +90,7 @@ pub fn set_language(code: &str) -> Result<BossConfig, String> {
         return Err(format!("unsupported N.E.E.B.L.E.S. language: {code}"));
     }
     let mut config = load_or_initialize()?;
-    config.language = code.to_string();
+    config.language = languages::canonical_supported_code(code)?;
     save(&config)?;
     Ok(config)
 }
