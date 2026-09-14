@@ -72,6 +72,16 @@ status_key "installer.progress.validating_payload"
     exit 1
 }
 
+[[ -f "$CLIENT_DATA_SOURCE/systemd/neebles-tray-manager.service" ]] || {
+    echo "Client data is missing systemd/neebles-tray-manager.service" >&2
+    exit 1
+}
+
+[[ -f "$CLIENT_DATA_SOURCE/xdg/neebles-tray-host.desktop" ]] || {
+    echo "Client data is missing xdg/neebles-tray-host.desktop" >&2
+    exit 1
+}
+
 progress 16
 status_key "installer.progress.checking_dependencies"
 if command -v apt >/dev/null 2>&1; then
@@ -150,22 +160,9 @@ fi
 progress 80
 status_key "installer.progress.installing_tray_manager"
 install -d /usr/lib/systemd/user
-
-cat > /usr/lib/systemd/user/neebles-tray-manager.service <<SERVICE
-[Unit]
-Description=N.E.E.B.L.E.S. Tray Manager
-After=graphical-session-pre.target
-PartOf=graphical-session.target
-
-[Service]
-Type=simple
-ExecStart=$BACKEND_DIR/neebles-backend tray serve
-Restart=on-failure
-RestartSec=1
-
-[Install]
-WantedBy=default.target
-SERVICE
+install -m 0644 \
+    "$CLIENT_DATA_SOURCE/systemd/neebles-tray-manager.service" \
+    /usr/lib/systemd/user/neebles-tray-manager.service
 
 install -d /etc/systemd/user/default.target.wants
 ln -sfn     /usr/lib/systemd/user/neebles-tray-manager.service     /etc/systemd/user/default.target.wants/neebles-tray-manager.service
@@ -174,16 +171,9 @@ if [[ -x "$TRAY_DIR/neebles-tray-host" ]]; then
     progress 82
     status_key "installer.progress.registering_tray_autostart"
     install -d /etc/xdg/autostart
-    cat > /etc/xdg/autostart/neebles-tray-host.desktop <<DESKTOP
-[Desktop Entry]
-Type=Application
-Name=N.E.E.B.L.E.S. Tray Host
-Exec=$TRAY_DIR/neebles-tray-host
-Icon=neebles-boss-launcher-icon
-Terminal=false
-X-KDE-autostart-after=panel
-X-KDE-StartupNotify=false
-DESKTOP
+    install -m 0644 \
+        "$CLIENT_DATA_SOURCE/xdg/neebles-tray-host.desktop" \
+        /etc/xdg/autostart/neebles-tray-host.desktop
 fi
 
 if [[ -f "$LAUNCHER_DIR/metadata.json" && -d "$LAUNCHER_DIR/contents" ]]; then

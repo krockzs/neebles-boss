@@ -124,7 +124,9 @@ jobs:
             config \
             launcher \
             spacer \
-            notifications
+            notifications \
+            systemd \
+            xdg
 
           chmod +x \
             dist/neebles-backend \

@@ -13,6 +13,8 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QLocale>
+#include <QLockFile>
+#include <QStandardPaths>
 #include <QMargins>
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
@@ -748,6 +750,35 @@ int main(
             "N.E.E.B.L.E.S."
         )
     );
+
+    const QString runtimeDir =
+        QStandardPaths::writableLocation(
+            QStandardPaths::RuntimeLocation
+        );
+
+    if (runtimeDir.isEmpty()) {
+        qCritical()
+            << "N.E.E.B.L.E.S. Tray Host:"
+            << "runtime directory is unavailable";
+        return 1;
+    }
+
+    QLockFile instanceLock(
+        QDir(runtimeDir).filePath(
+            QStringLiteral(
+                "neebles-tray-host.lock"
+            )
+        )
+    );
+
+    instanceLock.setStaleLockTime(0);
+
+    if (!instanceLock.tryLock()) {
+        qInfo()
+            << "N.E.E.B.L.E.S. Tray Host:"
+            << "another instance is already running";
+        return 0;
+    }
 
     TraySocketClient trayClient;
 

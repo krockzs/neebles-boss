@@ -34,6 +34,8 @@ REQUIRED_CLIENT_DATA_ROOTS = {
     "launcher",
     "spacer",
     "notifications",
+    "systemd",
+    "xdg",
 }
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
