@@ -97,7 +97,7 @@ private:
     void setBusy(bool value);
     void setStatusText(const QString &value);
 
-    QString m_language = QStringLiteral("en_US");
+    QString m_language;
     bool m_trayEnabled = true;
     bool m_launcherEnabled = true;
     bool m_normalNotifications = true;

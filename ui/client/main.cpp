@@ -14,21 +14,46 @@ static constexpr auto BOSS_DBUS_SERVICE = "org.neebles.Boss";
 
 static QString findBrandingAsset(const QString &name)
 {
-    const QString clientRoot = qEnvironmentVariable("NEEBLES_CLIENT_ROOT");
+    if (
+        qEnvironmentVariableIsSet(
+            "NEEBLES_CLIENT_ROOT"
+        )
+    ) {
+        const QString clientRoot =
+            qEnvironmentVariable(
+                "NEEBLES_CLIENT_ROOT"
+            ).trimmed();
+
+        if (clientRoot.isEmpty())
+            return {};
+
+        const QString path =
+            QDir(clientRoot).filePath(
+                QStringLiteral(
+                    "assets/branding/"
+                ) + name
+            );
+
+        if (QFileInfo::exists(path))
+            return QFileInfo(path)
+                .absoluteFilePath();
+
+        return {};
+    }
 
     const QStringList candidates = {
-        clientRoot.isEmpty()
-            ? QString()
-            : QDir(clientRoot).filePath(
-                  QStringLiteral("assets/branding/") + name
-              ),
-
-        QDir(QCoreApplication::applicationDirPath()).filePath(
-            QStringLiteral("../assets/branding/") + name
+        QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath(
+            QStringLiteral(
+                "../assets/branding/"
+            ) + name
         ),
 
         QDir::current().filePath(
-            QStringLiteral("client/assets/branding/") + name
+            QStringLiteral(
+                "client/assets/branding/"
+            ) + name
         ),
 
         QStringLiteral(
@@ -37,8 +62,9 @@ static QString findBrandingAsset(const QString &name)
     };
 
     for (const QString &path : candidates) {
-        if (!path.isEmpty() && QFileInfo::exists(path))
-            return QFileInfo(path).absoluteFilePath();
+        if (QFileInfo::exists(path))
+            return QFileInfo(path)
+                .absoluteFilePath();
     }
 
     return {};

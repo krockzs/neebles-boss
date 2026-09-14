@@ -61,7 +61,7 @@ fn emit_transport(
     }
 
     let icon =
-        crate::languages::client_root().join("assets/branding/neebles-boss-launcher-icon.png");
+        crate::languages::client_root()?.join("assets/branding/neebles-boss-launcher-icon.png");
 
     let status = Command::new("notify-send")
         .args(["-a", application, "-u", severity.urgency()])

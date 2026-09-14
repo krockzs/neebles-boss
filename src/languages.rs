@@ -19,20 +19,26 @@ pub struct LanguageManifest {
     pub languages: Vec<LanguageEntry>,
 }
 
-pub fn client_root() -> PathBuf {
+pub fn client_root() -> Result<PathBuf, String> {
     if let Ok(value) = env::var("NEEBLES_CLIENT_ROOT") {
-        return PathBuf::from(value);
+        let value = value.trim();
+
+        if value.is_empty() {
+            return Err("NEEBLES_CLIENT_ROOT is explicitly set but empty".to_string());
+        }
+
+        return Ok(PathBuf::from(value));
     }
 
     if Path::new("client/languages/manifest.json").exists() {
-        return PathBuf::from("client");
+        return Ok(PathBuf::from("client"));
     }
 
-    PathBuf::from("/opt/neebles/client")
+    Ok(PathBuf::from("/opt/neebles/client"))
 }
 
 pub fn load_manifest() -> Result<LanguageManifest, String> {
-    let path = client_root().join("languages/manifest.json");
+    let path = client_root()?.join("languages/manifest.json");
     let raw = fs::read_to_string(&path).map_err(|error| {
         format!(
             "could not read language manifest {}: {error}",
@@ -97,10 +103,9 @@ pub fn default_language(manifest: &LanguageManifest) -> Result<String, String> {
     })
 }
 
-pub fn is_supported(code: &str) -> bool {
-    load_manifest()
-        .map(|manifest| canonical_language(&manifest, code).is_some())
-        .unwrap_or(false)
+pub fn resolve_language(code: &str) -> Result<Option<String>, String> {
+    let manifest = load_manifest()?;
+    Ok(canonical_language(&manifest, code))
 }
 
 pub fn detect_initial_language() -> Result<String, String> {
@@ -133,7 +138,7 @@ pub fn load_strings(code: &str) -> Result<BTreeMap<String, String>, String> {
         .find(|language| language.code == resolved)
         .ok_or_else(|| format!("unsupported N.E.E.B.L.E.S. language: {resolved}"))?;
 
-    let path = client_root().join("languages").join(&language.file);
+    let path = client_root()?.join("languages").join(&language.file);
     let raw = fs::read_to_string(&path)
         .map_err(|error| format!("could not read language file {}: {error}", path.display()))?;
 

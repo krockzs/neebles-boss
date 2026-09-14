@@ -161,11 +161,27 @@ if (enabled) {
 
 QString BossController::commandPath() const
 {
-    const QString override = qEnvironmentVariable("NEEBLES_COMMAND");
-    if (!override.isEmpty())
-        return override;
+    if (
+        qEnvironmentVariableIsSet(
+            "NEEBLES_COMMAND"
+        )
+    ) {
+        const QString override =
+            qEnvironmentVariable(
+                "NEEBLES_COMMAND"
+            ).trimmed();
 
-    const QString installed = QStringLiteral("/usr/local/bin/neebles");
+        if (override.isEmpty())
+            return {};
+
+        return override;
+    }
+
+    const QString installed =
+        QStringLiteral(
+            "/usr/local/bin/neebles"
+        );
+
     if (QFileInfo::exists(installed))
         return installed;
 
@@ -174,14 +190,29 @@ QString BossController::commandPath() const
 
 QString BossController::authorizationPath() const
 {
-    const QString override =
-        qEnvironmentVariable(
+    if (
+        qEnvironmentVariableIsSet(
             "NEEBLES_AUTH_AGENT"
-        );
+        )
+    ) {
+        const QString override =
+            qEnvironmentVariable(
+                "NEEBLES_AUTH_AGENT"
+            ).trimmed();
+
+        if (
+            override.isEmpty()
+            || !QFileInfo(override).isExecutable()
+        ) {
+            return {};
+        }
+
+        return QFileInfo(
+            override
+        ).absoluteFilePath();
+    }
 
     const QStringList candidates = {
-        override,
-
         QStringLiteral(
             "/opt/neebles/client/auth/neebles-auth-agent"
         ),
@@ -203,8 +234,7 @@ QString BossController::authorizationPath() const
 
     for (const QString &candidate : candidates) {
         if (
-            !candidate.isEmpty()
-            && QFileInfo(candidate).isExecutable()
+            QFileInfo(candidate).isExecutable()
         ) {
             return QFileInfo(
                 candidate
@@ -228,6 +258,22 @@ QByteArray BossController::run(
     process.setProcessChannelMode(
         QProcess::SeparateChannels
     );
+
+    const QString bossCommand =
+        commandPath();
+
+    if (bossCommand.isEmpty()) {
+        if (ok)
+            *ok = false;
+
+        setStatusText(
+            QStringLiteral(
+                "NEEBLES_COMMAND is explicitly set but empty"
+            )
+        );
+
+        return {};
+    }
 
     if (privileged) {
         const QString authAgent =
@@ -386,7 +432,7 @@ QByteArray BossController::run(
 
         elevated
             << QStringLiteral("--")
-            << commandPath();
+            << bossCommand;
 
         elevated << arguments;
 
@@ -396,7 +442,7 @@ QByteArray BossController::run(
         );
     } else {
         process.start(
-            commandPath(),
+            bossCommand,
             arguments
         );
     }
@@ -448,41 +494,113 @@ QString BossController::text(const QString &key) const
 
 QUrl BossController::assetUrl(const QString &name) const
 {
-    const QString clientRoot = qEnvironmentVariable("NEEBLES_CLIENT_ROOT");
+    if (
+        qEnvironmentVariableIsSet(
+            "NEEBLES_CLIENT_ROOT"
+        )
+    ) {
+        const QString clientRoot =
+            qEnvironmentVariable(
+                "NEEBLES_CLIENT_ROOT"
+            ).trimmed();
+
+        if (clientRoot.isEmpty())
+            return {};
+
+        const QString path =
+            QDir(clientRoot).filePath(
+                QStringLiteral(
+                    "assets/branding/"
+                ) + name
+            );
+
+        if (QFileInfo::exists(path)) {
+            return QUrl::fromLocalFile(
+                QFileInfo(path)
+                    .absoluteFilePath()
+            );
+        }
+
+        return {};
+    }
+
     const QStringList candidates = {
-        clientRoot.isEmpty() ? QString() : QDir(clientRoot).filePath(QStringLiteral("assets/branding/") + name),
-        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("../assets/branding/") + name),
-        QDir::current().filePath(QStringLiteral("client/assets/branding/") + name),
-        QStringLiteral("/opt/neebles/client/assets/branding/") + name
+        QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath(
+            QStringLiteral(
+                "../assets/branding/"
+            ) + name
+        ),
+
+        QDir::current().filePath(
+            QStringLiteral(
+                "client/assets/branding/"
+            ) + name
+        ),
+
+        QStringLiteral(
+            "/opt/neebles/client/assets/branding/"
+        ) + name
     };
 
     for (const QString &path : candidates) {
-        if (!path.isEmpty() && QFileInfo::exists(path))
-            return QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath());
+        if (QFileInfo::exists(path)) {
+            return QUrl::fromLocalFile(
+                QFileInfo(path)
+                    .absoluteFilePath()
+            );
+        }
     }
+
     return {};
 }
 
 QUrl BossController::flagUrl(const QString &name) const
 {
-    const QString clientRoot =
-        qEnvironmentVariable("NEEBLES_CLIENT_ROOT");
+    if (
+        qEnvironmentVariableIsSet(
+            "NEEBLES_CLIENT_ROOT"
+        )
+    ) {
+        const QString clientRoot =
+            qEnvironmentVariable(
+                "NEEBLES_CLIENT_ROOT"
+            ).trimmed();
+
+        if (clientRoot.isEmpty())
+            return {};
+
+        const QString path =
+            QDir(clientRoot).filePath(
+                QStringLiteral(
+                    "assets/flags/4x3/"
+                ) + name
+            );
+
+        if (QFileInfo::exists(path)) {
+            return QUrl::fromLocalFile(
+                QFileInfo(path)
+                    .absoluteFilePath()
+            );
+        }
+
+        return {};
+    }
 
     const QStringList candidates = {
-        clientRoot.isEmpty()
-            ? QString()
-            : QDir(clientRoot).filePath(
-                  QStringLiteral("assets/flags/4x3/") + name
-              ),
-
         QDir(
             QCoreApplication::applicationDirPath()
         ).filePath(
-            QStringLiteral("../assets/flags/4x3/") + name
+            QStringLiteral(
+                "../assets/flags/4x3/"
+            ) + name
         ),
 
         QDir::current().filePath(
-            QStringLiteral("client/assets/flags/4x3/") + name
+            QStringLiteral(
+                "client/assets/flags/4x3/"
+            ) + name
         ),
 
         QStringLiteral(
@@ -491,13 +609,12 @@ QUrl BossController::flagUrl(const QString &name) const
     };
 
     for (const QString &path : candidates) {
-        if (
-            !path.isEmpty()
-            && QFileInfo::exists(path)
-        )
+        if (QFileInfo::exists(path)) {
             return QUrl::fromLocalFile(
-                QFileInfo(path).absoluteFilePath()
+                QFileInfo(path)
+                    .absoluteFilePath()
             );
+        }
     }
 
     return {};
@@ -518,14 +635,58 @@ void BossController::loadConfig()
     if (!ok || !value.canConvert<QVariantMap>())
         return;
 
-    const QVariantMap map = value.toMap();
-    m_language = map.value(QStringLiteral("language"), QStringLiteral("en_US")).toString();
-    m_trayEnabled = map.value(QStringLiteral("tray_enabled"), true).toBool();
-    m_launcherEnabled = map.value(QStringLiteral("launcher_enabled"), true).toBool();
+    const QVariantMap map =
+        value.toMap();
+
+    const QStringList requiredKeys = {
+        QStringLiteral("language"),
+        QStringLiteral("tray_enabled"),
+        QStringLiteral("launcher_enabled"),
+        QStringLiteral("normal_notifications")
+    };
+
+    for (const QString &key : requiredKeys) {
+        if (!map.contains(key)) {
+            setStatusText(
+                QStringLiteral(
+                    "Boss config is missing required key: "
+                ) + key
+            );
+
+            return;
+        }
+    }
+
+    const QString language =
+        map.value(
+            QStringLiteral("language")
+        ).toString().trimmed();
+
+    if (language.isEmpty()) {
+        setStatusText(
+            QStringLiteral(
+                "Boss config declares an empty language"
+            )
+        );
+
+        return;
+    }
+
+    m_language = language;
+
+    m_trayEnabled =
+        map.value(
+            QStringLiteral("tray_enabled")
+        ).toBool();
+
+    m_launcherEnabled =
+        map.value(
+            QStringLiteral("launcher_enabled")
+        ).toBool();
+
     m_normalNotifications =
         map.value(
-            QStringLiteral("normal_notifications"),
-            true
+            QStringLiteral("normal_notifications")
         ).toBool();
 
     m_hiddenTrayModules =

@@ -51,14 +51,29 @@ QString InstallerController::text(
 
 QString InstallerController::authorizationPath() const
 {
-    const QString override =
-        qEnvironmentVariable(
+    if (
+        qEnvironmentVariableIsSet(
             "NEEBLES_AUTH_AGENT"
-        );
+        )
+    ) {
+        const QString override =
+            qEnvironmentVariable(
+                "NEEBLES_AUTH_AGENT"
+            ).trimmed();
+
+        if (
+            override.isEmpty()
+            || !QFileInfo(override).isExecutable()
+        ) {
+            return {};
+        }
+
+        return QFileInfo(
+            override
+        ).absoluteFilePath();
+    }
 
     const QStringList candidates = {
-        override,
-
         QStringLiteral(
             "/opt/neebles/client/auth/neebles-auth-agent"
         ),
@@ -87,10 +102,7 @@ QString InstallerController::authorizationPath() const
     };
 
     for (const QString &candidate : candidates) {
-        if (
-            !candidate.isEmpty()
-            && QFileInfo(candidate).isExecutable()
-        ) {
+        if (QFileInfo(candidate).isExecutable()) {
             return QFileInfo(
                 candidate
             ).absoluteFilePath();

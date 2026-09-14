@@ -3,8 +3,10 @@
 #include <LayerShellQt/Window>
 
 #include <QCoreApplication>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -49,67 +51,266 @@ static QString normalizeLocale(QString value)
         + parts.at(1).toUpper();
 }
 
-static QString bossConfigPath()
+static QString bossConfigPath(
+    QString *error
+)
 {
-    const QString override =
-        qEnvironmentVariable("NEEBLES_CONFIG").trimmed();
+    if (
+        qEnvironmentVariableIsSet(
+            "NEEBLES_CONFIG"
+        )
+    ) {
+        const QString value =
+            qEnvironmentVariable(
+                "NEEBLES_CONFIG"
+            ).trimmed();
 
-    if (!override.isEmpty())
-        return override;
+        if (value.isEmpty()) {
+            if (error) {
+                *error =
+                    QStringLiteral(
+                        "NEEBLES_CONFIG is explicitly set but empty"
+                    );
+            }
 
-    const QString xdgConfigHome =
-        qEnvironmentVariable("XDG_CONFIG_HOME").trimmed();
+            return {};
+        }
 
-    if (!xdgConfigHome.isEmpty())
-        return QDir(xdgConfigHome).filePath(
-            QStringLiteral("neebles/boss.json")
-        );
+        return value;
+    }
 
-    const QString home =
-        qEnvironmentVariable("HOME").trimmed();
+    if (
+        qEnvironmentVariableIsSet(
+            "XDG_CONFIG_HOME"
+        )
+    ) {
+        const QString value =
+            qEnvironmentVariable(
+                "XDG_CONFIG_HOME"
+            ).trimmed();
 
-    if (!home.isEmpty())
-        return QDir(home).filePath(
-            QStringLiteral(".config/neebles/boss.json")
-        );
+        if (value.isEmpty()) {
+            if (error) {
+                *error =
+                    QStringLiteral(
+                        "XDG_CONFIG_HOME is explicitly set but empty"
+                    );
+            }
 
-    return QString();
-}
+            return {};
+        }
 
-static QStringList clientRoots()
-{
-    return {
-        qEnvironmentVariable("NEEBLES_CLIENT_ROOT"),
-        QDir(
-            QCoreApplication::applicationDirPath()
-        ).filePath(QStringLiteral("..")),
-        QStringLiteral("/opt/neebles/client")
-    };
-}
-
-static QJsonObject loadLanguageManifest()
-{
-    for (const QString &root : clientRoots()) {
-        if (root.trimmed().isEmpty())
-            continue;
-
-        QFile file(
-            QDir(root).filePath(
-                QStringLiteral("languages/manifest.json")
+        return QDir(value).filePath(
+            QStringLiteral(
+                "neebles/boss.json"
             )
         );
+    }
 
-        if (!file.open(QIODevice::ReadOnly))
-            continue;
+    if (
+        qEnvironmentVariableIsSet(
+            "HOME"
+        )
+    ) {
+        const QString value =
+            qEnvironmentVariable(
+                "HOME"
+            ).trimmed();
 
-        const QJsonDocument document =
-            QJsonDocument::fromJson(file.readAll());
+        if (value.isEmpty()) {
+            if (error) {
+                *error =
+                    QStringLiteral(
+                        "HOME is explicitly set but empty"
+                    );
+            }
 
-        if (document.isObject())
-            return document.object();
+            return {};
+        }
+
+        return QDir(value).filePath(
+            QStringLiteral(
+                ".config/neebles/boss.json"
+            )
+        );
+    }
+
+    if (error) {
+        *error =
+            QStringLiteral(
+                "could not determine Boss configuration path"
+            );
     }
 
     return {};
+}
+
+static QString resolveClientRoot(
+    QString *error
+)
+{
+    if (
+        qEnvironmentVariableIsSet(
+            "NEEBLES_CLIENT_ROOT"
+        )
+    ) {
+        const QString root =
+            qEnvironmentVariable(
+                "NEEBLES_CLIENT_ROOT"
+            ).trimmed();
+
+        if (root.isEmpty()) {
+            if (error) {
+                *error =
+                    QStringLiteral(
+                        "NEEBLES_CLIENT_ROOT is explicitly set but empty"
+                    );
+            }
+
+            return {};
+        }
+
+        const QString manifest =
+            QDir(root).filePath(
+                QStringLiteral(
+                    "languages/manifest.json"
+                )
+            );
+
+        if (!QFileInfo::exists(manifest)) {
+            if (error) {
+                *error =
+                    QStringLiteral(
+                        "NEEBLES_CLIENT_ROOT does not contain languages/manifest.json: "
+                    ) + root;
+            }
+
+            return {};
+        }
+
+        return root;
+    }
+
+    const QStringList candidates = {
+        QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath(
+            QStringLiteral("..")
+        ),
+
+        QStringLiteral(
+            "/opt/neebles/client"
+        )
+    };
+
+    for (const QString &root : candidates) {
+        const QString manifest =
+            QDir(root).filePath(
+                QStringLiteral(
+                    "languages/manifest.json"
+                )
+            );
+
+        if (QFileInfo::exists(manifest))
+            return root;
+    }
+
+    if (error) {
+        *error =
+            QStringLiteral(
+                "could not locate N.E.E.B.L.E.S. client language manifest"
+            );
+    }
+
+    return {};
+}
+
+static QJsonObject loadLanguageManifest(
+    const QString &root,
+    QString *error
+)
+{
+    const QString path =
+        QDir(root).filePath(
+            QStringLiteral(
+                "languages/manifest.json"
+            )
+        );
+
+    QFile file(path);
+
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "could not read language manifest: "
+                ) + path;
+        }
+
+        return {};
+    }
+
+    QJsonParseError parseError;
+
+    const QJsonDocument document =
+        QJsonDocument::fromJson(
+            file.readAll(),
+            &parseError
+        );
+
+    if (
+        parseError.error
+            != QJsonParseError::NoError
+        || !document.isObject()
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "invalid language manifest: "
+                ) + path;
+        }
+
+        return {};
+    }
+
+    const QJsonObject manifest =
+        document.object();
+
+    if (
+        manifest.value(
+            QStringLiteral("schema")
+        ).toInt(-1) != 1
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "unsupported language manifest schema: "
+                ) + path;
+        }
+
+        return {};
+    }
+
+    const QJsonValue languagesValue =
+        manifest.value(
+            QStringLiteral("languages")
+        );
+
+    if (
+        !languagesValue.isArray()
+        || languagesValue.toArray().isEmpty()
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "language manifest must contain a non-empty languages array: "
+                ) + path;
+        }
+
+        return {};
+    }
+
+    return manifest;
 }
 
 static QString canonicalLanguage(
@@ -117,96 +318,305 @@ static QString canonicalLanguage(
     const QString &requested
 )
 {
-    const QString normalized = normalizeLocale(requested);
+    const QString normalized =
+        normalizeLocale(requested);
 
     if (normalized.isEmpty())
-        return QString();
+        return {};
 
     const QJsonArray languages =
-        manifest.value(QStringLiteral("languages")).toArray();
+        manifest.value(
+            QStringLiteral("languages")
+        ).toArray();
 
     for (const QJsonValue &value : languages) {
         const QString code =
             value.toObject()
-                .value(QStringLiteral("code"))
+                .value(
+                    QStringLiteral("code")
+                )
                 .toString();
 
-        if (normalizeLocale(code) == normalized)
+        if (
+            normalizeLocale(code)
+                == normalized
+        ) {
             return code;
-    }
-
-    return QString();
-}
-
-static QString manifestDefaultLanguage(
-    const QJsonObject &manifest
-)
-{
-    const QString fallback =
-        manifest.value(QStringLiteral("default")).toString();
-
-    return canonicalLanguage(manifest, fallback);
-}
-
-static QString activeBossLanguage(
-    const QJsonObject &manifest
-)
-{
-    const QString override =
-        qEnvironmentVariable("NEEBLES_LANGUAGE");
-
-    if (!override.trimmed().isEmpty()) {
-        const QString code =
-            canonicalLanguage(manifest, override);
-
-        if (!code.isEmpty())
-            return code;
-    }
-
-    const QString configPath = bossConfigPath();
-
-    if (!configPath.isEmpty()) {
-        QFile file(configPath);
-
-        if (file.open(QIODevice::ReadOnly)) {
-            const QJsonDocument document =
-                QJsonDocument::fromJson(file.readAll());
-
-            const QString language =
-                document.object()
-                    .value(QStringLiteral("language"))
-                    .toString();
-
-            const QString code =
-                canonicalLanguage(manifest, language);
-
-            if (!code.isEmpty())
-                return code;
         }
     }
 
-    const QString system =
+    return {};
+}
+
+static QString manifestDefaultLanguage(
+    const QJsonObject &manifest,
+    QString *error
+)
+{
+    const QString declared =
+        manifest.value(
+            QStringLiteral("default")
+        ).toString().trimmed();
+
+    if (declared.isEmpty()) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "language manifest does not declare a default language"
+                );
+        }
+
+        return {};
+    }
+
+    const QString canonical =
+        canonicalLanguage(
+            manifest,
+            declared
+        );
+
+    if (canonical.isEmpty()) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "language manifest default is not declared in languages: "
+                ) + declared;
+        }
+
+        return {};
+    }
+
+    return canonical;
+}
+
+static QString languageFromConfig(
+    const QJsonObject &manifest,
+    QString *error,
+    bool *found
+)
+{
+    if (found)
+        *found = false;
+
+    QString pathError;
+
+    const QString path =
+        bossConfigPath(
+            &pathError
+        );
+
+    if (path.isEmpty()) {
+        if (error)
+            *error = pathError;
+
+        return {};
+    }
+
+    const bool explicitConfig =
+        qEnvironmentVariableIsSet(
+            "NEEBLES_CONFIG"
+        );
+
+    QFile file(path);
+
+    if (!file.exists()) {
+        if (explicitConfig) {
+            if (error) {
+                *error =
+                    QStringLiteral(
+                        "explicit Boss config does not exist: "
+                    ) + path;
+            }
+
+            return {};
+        }
+
+        return {};
+    }
+
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "could not read Boss config: "
+                ) + path;
+        }
+
+        return {};
+    }
+
+    QJsonParseError parseError;
+
+    const QJsonDocument document =
+        QJsonDocument::fromJson(
+            file.readAll(),
+            &parseError
+        );
+
+    if (
+        parseError.error
+            != QJsonParseError::NoError
+        || !document.isObject()
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "invalid Boss config: "
+                ) + path;
+        }
+
+        return {};
+    }
+
+    const QJsonObject config =
+        document.object();
+
+    const QString requested =
+        config.value(
+            QStringLiteral("language")
+        ).toString().trimmed();
+
+    if (requested.isEmpty()) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "Boss config does not declare language: "
+                ) + path;
+        }
+
+        return {};
+    }
+
+    const QString canonical =
+        canonicalLanguage(
+            manifest,
+            requested
+        );
+
+    if (canonical.isEmpty()) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "Boss config declares unsupported language: "
+                ) + requested;
+        }
+
+        return {};
+    }
+
+    if (found)
+        *found = true;
+
+    return canonical;
+}
+
+static QString activeBossLanguage(
+    const QJsonObject &manifest,
+    QString *error
+)
+{
+    if (
+        qEnvironmentVariableIsSet(
+            "NEEBLES_LANGUAGE"
+        )
+    ) {
+        const QString requested =
+            qEnvironmentVariable(
+                "NEEBLES_LANGUAGE"
+            ).trimmed();
+
+        if (requested.isEmpty()) {
+            if (error) {
+                *error =
+                    QStringLiteral(
+                        "NEEBLES_LANGUAGE is explicitly set but empty"
+                    );
+            }
+
+            return {};
+        }
+
+        const QString canonical =
+            canonicalLanguage(
+                manifest,
+                requested
+            );
+
+        if (canonical.isEmpty()) {
+            if (error) {
+                *error =
+                    QStringLiteral(
+                        "unsupported explicit N.E.E.B.L.E.S. language: "
+                    ) + requested;
+            }
+
+            return {};
+        }
+
+        return canonical;
+    }
+
+    bool configFound = false;
+    QString configError;
+
+    const QString configLanguage =
+        languageFromConfig(
+            manifest,
+            &configError,
+            &configFound
+        );
+
+    if (!configError.isEmpty()) {
+        if (error)
+            *error = configError;
+
+        return {};
+    }
+
+    if (configFound)
+        return configLanguage;
+
+    const QString systemLanguage =
         canonicalLanguage(
             manifest,
             QLocale::system().name()
         );
 
-    if (!system.isEmpty())
-        return system;
+    if (!systemLanguage.isEmpty())
+        return systemLanguage;
 
-    return manifestDefaultLanguage(manifest);
+    return manifestDefaultLanguage(
+        manifest,
+        error
+    );
 }
 
-static QVariantMap loadBossStrings()
+static QVariantMap loadBossStrings(
+    QString *error
+)
 {
+    const QString root =
+        resolveClientRoot(
+            error
+        );
+
+    if (root.isEmpty())
+        return {};
+
     const QJsonObject manifest =
-        loadLanguageManifest();
+        loadLanguageManifest(
+            root,
+            error
+        );
 
     if (manifest.isEmpty())
         return {};
 
     const QString language =
-        activeBossLanguage(manifest);
+        activeBossLanguage(
+            manifest,
+            error
+        );
 
     if (language.isEmpty())
         return {};
@@ -214,42 +624,107 @@ static QVariantMap loadBossStrings()
     QString fileName;
 
     const QJsonArray languages =
-        manifest.value(QStringLiteral("languages")).toArray();
+        manifest.value(
+            QStringLiteral("languages")
+        ).toArray();
 
     for (const QJsonValue &value : languages) {
-        const QJsonObject entry = value.toObject();
+        const QJsonObject entry =
+            value.toObject();
 
-        if (entry.value(QStringLiteral("code")).toString() == language) {
+        if (
+            entry.value(
+                QStringLiteral("code")
+            ).toString()
+            == language
+        ) {
             fileName =
-                entry.value(QStringLiteral("file")).toString();
+                entry.value(
+                    QStringLiteral("file")
+                ).toString().trimmed();
+
             break;
         }
     }
 
-    if (fileName.trimmed().isEmpty())
+    if (fileName.isEmpty()) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "language entry does not declare a file: "
+                ) + language;
+        }
+
         return {};
-
-    for (const QString &root : clientRoots()) {
-        if (root.trimmed().isEmpty())
-            continue;
-
-        QFile file(
-            QDir(root).filePath(
-                QStringLiteral("languages/") + fileName
-            )
-        );
-
-        if (!file.open(QIODevice::ReadOnly))
-            continue;
-
-        const QJsonDocument document =
-            QJsonDocument::fromJson(file.readAll());
-
-        if (document.isObject())
-            return document.object().toVariantMap();
     }
 
-    return {};
+    const QFileInfo languageFileInfo(
+        fileName
+    );
+
+    if (
+        languageFileInfo.isAbsolute()
+        || fileName == QStringLiteral("..")
+        || fileName.startsWith(
+            QStringLiteral("../")
+        )
+        || fileName.contains(
+            QStringLiteral("/../")
+        )
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "language entry declares an unsafe file path: "
+                ) + fileName;
+        }
+
+        return {};
+    }
+
+    const QString path =
+        QDir(root).filePath(
+            QStringLiteral("languages/")
+            + fileName
+        );
+
+    QFile file(path);
+
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "could not read language file: "
+                ) + path;
+        }
+
+        return {};
+    }
+
+    QJsonParseError parseError;
+
+    const QJsonDocument document =
+        QJsonDocument::fromJson(
+            file.readAll(),
+            &parseError
+        );
+
+    if (
+        parseError.error
+            != QJsonParseError::NoError
+        || !document.isObject()
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "invalid language file: "
+                ) + path;
+        }
+
+        return {};
+    }
+
+    return document.object().toVariantMap();
 }
 
 int main(
@@ -276,6 +751,30 @@ int main(
 
     TraySocketClient trayClient;
 
+    QString languageError;
+
+    const QVariantMap bossStrings =
+        loadBossStrings(
+            &languageError
+        );
+
+    if (
+        !languageError.isEmpty()
+        || bossStrings.isEmpty()
+    ) {
+        const QString message =
+            languageError.isEmpty()
+            ? QStringLiteral(
+                "N.E.E.B.L.E.S. Tray Host language contract failed"
+            )
+            : languageError;
+
+        qCritical().noquote()
+            << message;
+
+        return 2;
+    }
+
     QQmlApplicationEngine engine;
 
     engine.rootContext()
@@ -291,7 +790,7 @@ int main(
             QStringLiteral(
                 "bossStrings"
             ),
-            loadBossStrings()
+            bossStrings
         );
 
     QObject::connect(

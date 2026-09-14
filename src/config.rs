@@ -38,14 +38,32 @@ impl BossConfig {
 
 pub fn config_path() -> Result<PathBuf, String> {
     if let Ok(value) = env::var("NEEBLES_CONFIG") {
+        let value = value.trim();
+
+        if value.is_empty() {
+            return Err("NEEBLES_CONFIG is explicitly set but empty".to_string());
+        }
+
         return Ok(PathBuf::from(value));
     }
 
     if let Ok(value) = env::var("XDG_CONFIG_HOME") {
+        let value = value.trim();
+
+        if value.is_empty() {
+            return Err("XDG_CONFIG_HOME is explicitly set but empty".to_string());
+        }
+
         return Ok(PathBuf::from(value).join("neebles/boss.json"));
     }
 
     if let Ok(value) = env::var("HOME") {
+        let value = value.trim();
+
+        if value.is_empty() {
+            return Err("HOME is explicitly set but empty".to_string());
+        }
+
         return Ok(PathBuf::from(value).join(".config/neebles/boss.json"));
     }
 
@@ -80,11 +98,11 @@ pub fn save(config: &BossConfig) -> Result<(), String> {
 }
 
 pub fn set_language(code: &str) -> Result<BossConfig, String> {
-    if !languages::is_supported(code) {
-        return Err(format!("unsupported N.E.E.B.L.E.S. language: {code}"));
-    }
+    let canonical = languages::resolve_language(code)?
+        .ok_or_else(|| format!("unsupported N.E.E.B.L.E.S. language: {code}"))?;
+
     let mut config = load_or_initialize()?;
-    config.language = code.to_string();
+    config.language = canonical;
     save(&config)?;
     Ok(config)
 }

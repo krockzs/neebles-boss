@@ -6,7 +6,7 @@ use serde_json::json;
 use std::process::Command;
 
 pub fn launch_ui() -> Result<(), String> {
-    let path = crate::languages::client_root().join("ui/neebles-ui");
+    let path = crate::languages::client_root()?.join("ui/neebles-ui");
     Command::new(&path)
         .spawn()
         .map(|_| ())
