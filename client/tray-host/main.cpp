@@ -2,22 +2,34 @@
 
 #include <LayerShellQt/Window>
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QLocale>
 #include <QMargins>
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QSize>
-#include <QStandardPaths>
 #include <QTimer>
 
 static QString normalizeLocale(QString value)
 {
+    value = value.trimmed();
+
+    const qsizetype dot = value.indexOf(QLatin1Char('.'));
+    if (dot >= 0)
+        value.truncate(dot);
+
+    const qsizetype modifier = value.indexOf(QLatin1Char('@'));
+    if (modifier >= 0)
+        value.truncate(modifier);
+
     value.replace(QLatin1Char('-'), QLatin1Char('_'));
 
     const QStringList parts =
@@ -27,7 +39,7 @@ static QString normalizeLocale(QString value)
         );
 
     if (parts.isEmpty())
-        return QStringLiteral("en_US");
+        return QString();
 
     if (parts.size() == 1)
         return parts.at(0).toLower();
@@ -37,107 +49,207 @@ static QString normalizeLocale(QString value)
         + parts.at(1).toUpper();
 }
 
-static QString activeBossLanguage()
+static QString bossConfigPath()
 {
     const QString override =
-        qEnvironmentVariable("NEEBLES_LANGUAGE");
+        qEnvironmentVariable("NEEBLES_CONFIG").trimmed();
 
-    if (!override.trimmed().isEmpty())
-        return normalizeLocale(override);
+    if (!override.isEmpty())
+        return override;
 
-    const QString configPath =
-        QDir(
-            QStandardPaths::writableLocation(
-                QStandardPaths::ConfigLocation
-            )
-        ).filePath(
+    const QString xdgConfigHome =
+        qEnvironmentVariable("XDG_CONFIG_HOME").trimmed();
+
+    if (!xdgConfigHome.isEmpty())
+        return QDir(xdgConfigHome).filePath(
             QStringLiteral("neebles/boss.json")
         );
 
-    QFile file(configPath);
+    const QString home =
+        qEnvironmentVariable("HOME").trimmed();
 
-    if (file.open(QIODevice::ReadOnly)) {
-        const QJsonDocument document =
-            QJsonDocument::fromJson(
-                file.readAll()
-            );
-
-        const QString language =
-            document.object()
-                .value(
-                    QStringLiteral("language")
-                )
-                .toString();
-
-        if (!language.trimmed().isEmpty())
-            return normalizeLocale(language);
-    }
-
-    return normalizeLocale(
-        QLocale::system().name()
-    );
-}
-
-static QVariantMap loadBossStrings()
-{
-    QString language =
-        activeBossLanguage();
-
-    const QString clientRoot =
-        qEnvironmentVariable(
-            "NEEBLES_CLIENT_ROOT"
+    if (!home.isEmpty())
+        return QDir(home).filePath(
+            QStringLiteral(".config/neebles/boss.json")
         );
 
-    const QStringList roots = {
-        clientRoot,
+    return QString();
+}
+
+static QStringList clientRoots()
+{
+    return {
+        qEnvironmentVariable("NEEBLES_CLIENT_ROOT"),
         QDir(
             QCoreApplication::applicationDirPath()
         ).filePath(QStringLiteral("..")),
         QStringLiteral("/opt/neebles/client")
     };
+}
 
-    auto load = [&roots](const QString &code)
-        -> QVariantMap
-    {
-        for (const QString &root : roots) {
-            if (root.trimmed().isEmpty())
-                continue;
+static QJsonObject loadLanguageManifest()
+{
+    for (const QString &root : clientRoots()) {
+        if (root.trimmed().isEmpty())
+            continue;
 
-            const QString path =
-                QDir(root).filePath(
-                    QStringLiteral("languages/")
-                    + code
-                    + QStringLiteral(".json")
-                );
+        QFile file(
+            QDir(root).filePath(
+                QStringLiteral("languages/manifest.json")
+            )
+        );
 
-            QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
 
-            if (!file.open(QIODevice::ReadOnly))
-                continue;
+        const QJsonDocument document =
+            QJsonDocument::fromJson(file.readAll());
 
+        if (document.isObject())
+            return document.object();
+    }
+
+    return {};
+}
+
+static QString canonicalLanguage(
+    const QJsonObject &manifest,
+    const QString &requested
+)
+{
+    const QString normalized = normalizeLocale(requested);
+
+    if (normalized.isEmpty())
+        return QString();
+
+    const QJsonArray languages =
+        manifest.value(QStringLiteral("languages")).toArray();
+
+    for (const QJsonValue &value : languages) {
+        const QString code =
+            value.toObject()
+                .value(QStringLiteral("code"))
+                .toString();
+
+        if (normalizeLocale(code) == normalized)
+            return code;
+    }
+
+    return QString();
+}
+
+static QString manifestDefaultLanguage(
+    const QJsonObject &manifest
+)
+{
+    const QString fallback =
+        manifest.value(QStringLiteral("default")).toString();
+
+    return canonicalLanguage(manifest, fallback);
+}
+
+static QString activeBossLanguage(
+    const QJsonObject &manifest
+)
+{
+    const QString override =
+        qEnvironmentVariable("NEEBLES_LANGUAGE");
+
+    if (!override.trimmed().isEmpty()) {
+        const QString code =
+            canonicalLanguage(manifest, override);
+
+        if (!code.isEmpty())
+            return code;
+    }
+
+    const QString configPath = bossConfigPath();
+
+    if (!configPath.isEmpty()) {
+        QFile file(configPath);
+
+        if (file.open(QIODevice::ReadOnly)) {
             const QJsonDocument document =
-                QJsonDocument::fromJson(
-                    file.readAll()
-                );
+                QJsonDocument::fromJson(file.readAll());
 
-            if (document.isObject())
-                return document.object().toVariantMap();
+            const QString language =
+                document.object()
+                    .value(QStringLiteral("language"))
+                    .toString();
+
+            const QString code =
+                canonicalLanguage(manifest, language);
+
+            if (!code.isEmpty())
+                return code;
         }
+    }
 
+    const QString system =
+        canonicalLanguage(
+            manifest,
+            QLocale::system().name()
+        );
+
+    if (!system.isEmpty())
+        return system;
+
+    return manifestDefaultLanguage(manifest);
+}
+
+static QVariantMap loadBossStrings()
+{
+    const QJsonObject manifest =
+        loadLanguageManifest();
+
+    if (manifest.isEmpty())
         return {};
-    };
 
-    QVariantMap strings =
-        load(language);
+    const QString language =
+        activeBossLanguage(manifest);
 
-    if (!strings.isEmpty())
-        return strings;
+    if (language.isEmpty())
+        return {};
 
-    strings = load(
-        QStringLiteral("en_US")
-    );
+    QString fileName;
 
-    return strings;
+    const QJsonArray languages =
+        manifest.value(QStringLiteral("languages")).toArray();
+
+    for (const QJsonValue &value : languages) {
+        const QJsonObject entry = value.toObject();
+
+        if (entry.value(QStringLiteral("code")).toString() == language) {
+            fileName =
+                entry.value(QStringLiteral("file")).toString();
+            break;
+        }
+    }
+
+    if (fileName.trimmed().isEmpty())
+        return {};
+
+    for (const QString &root : clientRoots()) {
+        if (root.trimmed().isEmpty())
+            continue;
+
+        QFile file(
+            QDir(root).filePath(
+                QStringLiteral("languages/") + fileName
+            )
+        );
+
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+
+        const QJsonDocument document =
+            QJsonDocument::fromJson(file.readAll());
+
+        if (document.isObject())
+            return document.object().toVariantMap();
+    }
+
+    return {};
 }
 
 int main(

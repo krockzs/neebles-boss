@@ -22,9 +22,9 @@ pub struct BossConfig {
 }
 
 impl BossConfig {
-    pub fn initial() -> Self {
-        Self {
-            language: languages::detect_initial_language(),
+    pub fn initial() -> Result<Self, String> {
+        Ok(Self {
+            language: languages::detect_initial_language()?,
             tray_enabled: true,
             launcher_enabled: true,
             normal_notifications: true,
@@ -32,7 +32,7 @@ impl BossConfig {
             hidden_tray_modules: Vec::new(),
             hidden_launcher_modules: Vec::new(),
             module_update_notifications: BTreeMap::new(),
-        }
+        })
     }
 }
 
@@ -61,7 +61,7 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
             .map_err(|error| format!("invalid Boss config {}: {error}", path.display()));
     }
 
-    let config = BossConfig::initial();
+    let config = BossConfig::initial()?;
     save(&config)?;
     Ok(config)
 }

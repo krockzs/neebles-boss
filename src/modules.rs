@@ -104,8 +104,7 @@ pub struct RegistryModule {
 
     pub commit: String,
 
-    #[serde(default)]
-    pub version: Option<String>,
+    pub version: String,
 
     #[serde(default)]
     pub folder: Option<String>,
@@ -135,6 +134,8 @@ fn validate_registry(registry: &Registry) -> Result<(), String> {
         ));
     }
 
+    let mut effective_folders = BTreeMap::new();
+
     for (name, module) in &registry.modules {
         if !valid_module_id(name) {
             return Err(format!("invalid module id in registry: {name}"));
@@ -151,31 +152,38 @@ fn validate_registry(registry: &Registry) -> Result<(), String> {
             ));
         }
 
-        if let Some(version) = module.version.as_deref() {
-            let version = version.trim();
+        let version = module.version.trim();
 
-            if version.is_empty() {
-                return Err(format!(
-                    "module '{}' registry version cannot be empty",
-                    name
-                ));
-            }
-
-            Version::parse(version).map_err(|error| {
-                format!(
-                    "module '{}' registry version '{}' is not valid SemVer: {error}",
-                    name, version
-                )
-            })?;
+        if version.is_empty() {
+            return Err(format!(
+                "module '{}' registry version cannot be empty",
+                name
+            ));
         }
 
-        if let Some(folder) = module.folder.as_deref() {
-            if !valid_module_id(folder) {
-                return Err(format!(
-                    "invalid module folder '{}' in registry for '{}'",
-                    folder, name
-                ));
-            }
+        Version::parse(version).map_err(|error| {
+            format!(
+                "module '{}' registry version '{}' is not valid SemVer: {error}",
+                name, version
+            )
+        })?;
+
+        let effective_folder = module.folder.as_deref().unwrap_or(name).trim();
+
+        if !valid_module_id(effective_folder) {
+            return Err(format!(
+                "invalid effective module folder '{}' in registry for '{}'",
+                effective_folder, name
+            ));
+        }
+
+        if let Some(previous) =
+            effective_folders.insert(effective_folder.to_string(), name.to_string())
+        {
+            return Err(format!(
+                "registry folder collision: modules '{}' and '{}' both resolve to folder '{}'",
+                previous, name, effective_folder
+            ));
         }
     }
 
@@ -1490,7 +1498,7 @@ pub fn available_modules_json() -> Result<Value, String> {
 
         result.push(json!({
             "name": name,
-            "version": module.version.unwrap_or_default(),
+            "version": module.version,
             "repo": module.repo,
             "icon": icon,
             "installed": is_installed,
@@ -1620,13 +1628,11 @@ fn install_internal(
         ));
     }
 
-    if let Some(expected_version) = entry.version.as_deref() {
-        if !expected_version.is_empty() && manifest.version != expected_version {
-            return Err(format!(
-                "module '{}' manifest version '{}' does not match registry version '{}'",
-                name, manifest.version, expected_version
-            ));
-        }
+    if manifest.version != entry.version {
+        return Err(format!(
+            "module '{}' manifest version '{}' does not match registry version '{}'",
+            name, manifest.version, entry.version
+        ));
     }
 
     if manifest.tray.is_some() {
@@ -1678,6 +1684,14 @@ pub fn uninstall(name: &str) -> Result<(), String> {
         return Err(format!("module '{name}' is currently running"));
     }
 
+    if probe_tray_provider_pid(name)?.is_some() {
+        stop_tray_provider(name)?;
+    }
+
+    if probe_tray_provider_pid(name)?.is_some() {
+        return Err(format!("module '{name}' tray provider is still running"));
+    }
+
     let path = find_module_dir(name)?;
 
     fs::remove_dir_all(&path)
@@ -1706,6 +1720,22 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
 
         if probe_module_pid(name)?.is_some() {
             return Err(format!("module '{name}' did not close in time"));
+        }
+    }
+
+    if probe_tray_provider_pid(name)?.is_some() {
+        if !close_running {
+            return Err(format!(
+                "module '{name}' tray provider is currently running"
+            ));
+        }
+
+        stop_tray_provider(name)?;
+
+        if probe_tray_provider_pid(name)?.is_some() {
+            return Err(format!(
+                "module '{name}' tray provider did not close in time"
+            ));
         }
     }
 
@@ -1789,13 +1819,11 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
         ));
     }
 
-    if let Some(expected_version) = entry.version.as_deref() {
-        if !expected_version.trim().is_empty() && manifest.version != expected_version {
-            return Err(format!(
-                "module '{}' staged version '{}' does not match registry version '{}'",
-                name, manifest.version, expected_version
-            ));
-        }
+    if manifest.version != entry.version {
+        return Err(format!(
+            "module '{}' staged version '{}' does not match registry version '{}'",
+            name, manifest.version, entry.version
+        ));
     }
 
     /*
@@ -1885,11 +1913,11 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
      * completed successfully.
      */
     if let Err(error) = fs::remove_dir_all(&backup_path) {
-        return Err(format!(
-            "module '{}' update was committed successfully, but transactional backup {} could not be removed: {error}",
+        eprintln!(
+            "N.E.E.B.L.E.S.: module '{}' update was committed successfully, but transactional backup {} could not be removed: {error}",
             name,
             backup_path.display()
-        ));
+        );
     }
 
     Ok(())
