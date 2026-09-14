@@ -127,7 +127,7 @@ int main(int argc, char *argv[])
     const QString iconPath =
         findBrandingAsset(
             QStringLiteral(
-                "neebles-boss-launcher-icon.png"
+                "neebles-installer-icon.png"
             ),
             payloadRoot
         );
