@@ -34,6 +34,8 @@ GLOBAL_BIN="${DESTDIR}/usr/local/bin/neebles"
 GLOBAL_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-boss-launcher-icon.png"
 SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 SYSTEMD_WANTS="${DESTDIR}/etc/systemd/user/default.target.wants"
+RUNTIME_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-runtime.service"
+RUNTIME_WANTS="${DESTDIR}/etc/systemd/system/multi-user.target.wants"
 PLASMA_LAUNCHER="${DESTDIR}/usr/share/plasma/plasmoids/org.neebles.launcher"
 PLASMA_SPACER="${DESTDIR}/usr/share/plasma/plasmoids/org.neebles.spacer"
 
@@ -273,6 +275,7 @@ REQUIRED_FILES=(
     spacer/metadata.json
     spacer/contents/ui/main.qml
     systemd/neebles-tray-manager.service
+    systemd/neebles-runtime.service
 )
 
 for item in "${REQUIRED_FILES[@]}"; do
@@ -353,18 +356,19 @@ install -m 0755 \
     "$BACKEND_SOURCE" \
     "$CLIENT_STAGE/backend/neebles-backend"
 
+progress 44
+status_key "installer.progress.installing_auth_agent"
+
+install -m 0755 \
+    "$AUTH_AGENT_SOURCE" \
+    "$CLIENT_STAGE/auth/neebles-auth-agent"
+
 progress 50
 status_key "installer.progress.installing_ui"
 
 install -m 0755 \
     "$UI_SOURCE" \
     "$CLIENT_STAGE/ui/neebles-ui"
-
-status_key "installer.progress.installing_auth_agent"
-
-install -m 0755 \
-    "$AUTH_AGENT_SOURCE" \
-    "$CLIENT_STAGE/auth/neebles-auth-agent"
 
 progress 66
 status_key "installer.progress.installing_client_data"
@@ -406,6 +410,8 @@ backup_global_path "$GLOBAL_BIN" "global-bin"
 backup_global_path "$GLOBAL_ICON" "global-icon"
 backup_global_path "$SYSTEMD_SERVICE" "systemd-service"
 backup_global_path "$SYSTEMD_WANTS/neebles-tray-manager.service" "systemd-wants"
+backup_global_path "$RUNTIME_SERVICE" "runtime-service"
+backup_global_path "$RUNTIME_WANTS/neebles-runtime.service" "runtime-wants"
 backup_global_path "$PLASMA_LAUNCHER" "plasma-launcher"
 backup_global_path "$PLASMA_SPACER" "plasma-spacer"
 
@@ -423,6 +429,18 @@ install -m 0644 \
 
 progress 80
 status_key "installer.progress.installing_tray_manager"
+
+install -d -m 0755 "$(dirname "$RUNTIME_SERVICE")"
+
+install -m 0644 \
+    "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
+    "$RUNTIME_SERVICE"
+
+install -d -m 0755 "$RUNTIME_WANTS"
+
+ln -sfnT \
+    /usr/lib/systemd/system/neebles-runtime.service \
+    "$RUNTIME_WANTS/neebles-runtime.service"
 
 install -d -m 0755 "$(dirname "$SYSTEMD_SERVICE")"
 
@@ -492,6 +510,27 @@ cmp -s \
         echo "Installed Tray Manager service does not match payload." >&2
         exit 1
     }
+
+cmp -s \
+    "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
+    "$RUNTIME_SERVICE" \
+    || {
+        echo "Installed Boss Runtime service does not match payload." >&2
+        exit 1
+    }
+
+if [[ -z "$DESTDIR" ]]; then
+    systemctl daemon-reload
+
+    systemctl enable neebles-runtime.service
+
+    systemctl restart neebles-runtime.service
+
+    systemctl is-active --quiet neebles-runtime.service || {
+        echo "N.E.E.B.L.E.S. Boss Runtime did not start correctly." >&2
+        exit 1
+    }
+fi
 
 
 CLIENT_SWAPPED=0

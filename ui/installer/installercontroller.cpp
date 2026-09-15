@@ -382,6 +382,31 @@ void InstallerController::processError(QProcess::ProcessError error)
 
 void InstallerController::integrateDesktop()
 {
+    /*
+     * install.sh runs with elevated privileges and starts the
+     * system Boss Runtime first.
+     *
+     * We are back in the real desktop user's process here, so
+     * this is the correct place to reload and start the user
+     * Tray Manager immediately instead of waiting for next login.
+     */
+    QProcess::execute(
+        QStringLiteral("/usr/bin/systemctl"),
+        {
+            QStringLiteral("--user"),
+            QStringLiteral("daemon-reload")
+        }
+    );
+
+    QProcess::execute(
+        QStringLiteral("/usr/bin/systemctl"),
+        {
+            QStringLiteral("--user"),
+            QStringLiteral("restart"),
+            QStringLiteral("neebles-tray-manager.service")
+        }
+    );
+
     installLauncherIntoPanel();
 }
 
