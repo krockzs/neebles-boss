@@ -538,6 +538,10 @@ fn tray_command(args: &[String]) -> i32 {
             return result(tray::ipc::serve());
         }
 
+        Some("host") => {
+            return result(tray::host::run());
+        }
+
         Some("reconcile") => TrayMessage::Reconcile,
 
         Some("stop-provider") => {

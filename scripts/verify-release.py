@@ -47,6 +47,7 @@ REQUIRED_CLIENT_DATA_FILES = {
     "spacer/metadata.json",
     "spacer/contents/ui/main.qml",
     "systemd/neebles-tray-manager.service",
+    "systemd/neebles-tray-host.service",
 }
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
