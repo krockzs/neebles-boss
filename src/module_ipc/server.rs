@@ -1,0 +1,471 @@
+use crate::module_ipc::framing::{read_message, write_message};
+
+use crate::module_ipc::pending::PendingRegistry;
+
+use crate::module_ipc::protocol::{
+    ModuleError, ModuleMessage, ModuleRuntimeState, MODULES_PROTOCOL_VERSION,
+};
+
+use crate::module_ipc::registry::{ModuleRuntimeRecord, RuntimeRegistry};
+
+use std::env;
+use std::fs;
+
+use std::os::unix::net::{UnixListener, UnixStream};
+
+use std::path::PathBuf;
+
+use std::sync::{mpsc, OnceLock};
+
+const DEFAULT_SOCKET_PATH: &str = "/run/neebles/modules.sock";
+
+static RUNTIME_REGISTRY: OnceLock<RuntimeRegistry> = OnceLock::new();
+
+static PENDING_REGISTRY: OnceLock<PendingRegistry> = OnceLock::new();
+
+pub fn runtime_registry() -> &'static RuntimeRegistry {
+    RUNTIME_REGISTRY.get_or_init(RuntimeRegistry::new)
+}
+
+pub fn pending_registry() -> &'static PendingRegistry {
+    PENDING_REGISTRY.get_or_init(PendingRegistry::new)
+}
+
+pub fn socket_path() -> PathBuf {
+    match env::var("NEEBLES_MODULES_SOCKET") {
+        Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
+
+        _ => PathBuf::from(DEFAULT_SOCKET_PATH),
+    }
+}
+
+pub fn serve() -> Result<(), String> {
+    let path = socket_path();
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "could not create modules socket directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    if path.exists() {
+        fs::remove_file(&path).map_err(|error| {
+            format!(
+                "could not remove stale modules socket {}: {error}",
+                path.display()
+            )
+        })?;
+    }
+
+    let listener = UnixListener::bind(&path)
+        .map_err(|error| format!("could not bind modules socket {}: {error}", path.display()))?;
+
+    println!("N.E.E.B.L.E.S. module IPC listening on {}", path.display());
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                std::thread::spawn(move || {
+                    if let Err(error) = handle_client(stream) {
+                        eprintln!("N.E.E.B.L.E.S.: module IPC client error: {error}");
+                    }
+                });
+            }
+
+            Err(error) => {
+                eprintln!("N.E.E.B.L.E.S.: modules socket accept error: {error}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_client(mut stream: UnixStream) -> Result<(), String> {
+    /*
+     * Primer mensaje obligatorio:
+     * Register.
+     */
+    let first = read_message(&mut stream)?
+        .ok_or_else(|| "module runtime disconnected before register".to_string())?;
+
+    let (protocol, module, session_id, endpoints) = match first {
+        ModuleMessage::Register {
+            protocol,
+            module,
+            session_id,
+            endpoints,
+        } => (protocol, module, session_id, endpoints),
+
+        _ => {
+            let response = ModuleMessage::Error {
+                id: None,
+                module: None,
+
+                error: ModuleError {
+                    kind: "register_required".to_string(),
+
+                    message: "first module IPC message must be register".to_string(),
+
+                    details: None,
+                },
+            };
+
+            let _ = write_message(&mut stream, &response);
+
+            return Err("first module IPC message was not register".to_string());
+        }
+    };
+
+    if protocol != MODULES_PROTOCOL_VERSION {
+        let response = ModuleMessage::Error {
+            id: None,
+
+            module: Some(module.clone()),
+
+            error: ModuleError {
+                kind: "unsupported_protocol".to_string(),
+
+                message: format!(
+                    "module protocol {} is unsupported; Boss supports {}",
+                    protocol, MODULES_PROTOCOL_VERSION
+                ),
+
+                details: None,
+            },
+        };
+
+        let _ = write_message(&mut stream, &response);
+
+        return Err(format!("unsupported module protocol {protocol}"));
+    }
+
+    /*
+     * Una conexión Unix persistente necesita un lector
+     * y un escritor independientes.
+     *
+     * try_clone() duplica el descriptor y ambos representan
+     * la misma conexión.
+     */
+    let mut writer_stream = stream.try_clone().map_err(|error| {
+        format!(
+            "could not clone module IPC stream for '{}': {error}",
+            module
+        )
+    })?;
+
+    /*
+     * Cola interna Boss -> runtime.
+     */
+    let (writer_sender, writer_receiver) = mpsc::channel::<ModuleMessage>();
+
+    /*
+     * Registrar el runtime ANTES de anunciar Registered.
+     *
+     * Si ya existe otro runtime del mismo módulo,
+     * la nueva sesión se rechaza.
+     */
+    let record = ModuleRuntimeRecord {
+        module: module.clone(),
+
+        session_id: session_id.clone(),
+
+        protocol,
+
+        state: ModuleRuntimeState::Ready,
+
+        endpoints,
+
+        writer: writer_sender.clone(),
+    };
+
+    if let Err(error) = runtime_registry().register(record) {
+        let response = ModuleMessage::Error {
+            id: None,
+
+            module: Some(module.clone()),
+
+            error: ModuleError {
+                kind: "register_rejected".to_string(),
+
+                message: error.clone(),
+
+                details: None,
+            },
+        };
+
+        let _ = write_message(&mut stream, &response);
+
+        return Err(error);
+    }
+
+    /*
+     * Writer dedicado.
+     *
+     * Cualquier parte de Boss podrá mandar mensajes al runtime
+     * usando writer_sender sin tocar directamente UnixStream.
+     */
+    let writer_module = module.clone();
+
+    let writer_session = session_id.clone();
+
+    let writer_handle = std::thread::spawn(move || {
+        while let Ok(message) = writer_receiver.recv() {
+            if let Err(error) = write_message(&mut writer_stream, &message) {
+                eprintln!(
+                    "N.E.E.B.L.E.S.: module IPC writer failed for '{}' session '{}': {}",
+                    writer_module, writer_session, error
+                );
+
+                break;
+            }
+        }
+    });
+
+    /*
+     * Confirmar registro usando ya el writer persistente.
+     */
+    if let Err(error) = writer_sender.send(ModuleMessage::Registered {
+        protocol: MODULES_PROTOCOL_VERSION,
+
+        module: module.clone(),
+
+        session_id: session_id.clone(),
+    }) {
+        let _ = runtime_registry().unregister(&module, &session_id);
+
+        return Err(format!(
+            "could not acknowledge runtime registration for '{}': {error}",
+            module
+        ));
+    }
+
+    /*
+     * Reader persistente.
+     */
+    let result = client_loop(&mut stream, &writer_sender, &module, &session_id);
+
+    /*
+     * El reader terminó:
+     * esta sesión ya no debe aparecer como disponible.
+     */
+    let _ = runtime_registry().unregister(&module, &session_id);
+
+    /*
+     * Al soltar el sender local y el del registry ya removido,
+     * el writer_receiver terminará cuando no queden clones.
+     */
+    drop(writer_sender);
+
+    let _ = writer_handle.join();
+
+    result
+}
+
+fn client_loop(
+    stream: &mut UnixStream,
+    writer: &mpsc::Sender<ModuleMessage>,
+    module: &str,
+    session_id: &str,
+) -> Result<(), String> {
+    loop {
+        let Some(message) = read_message(stream)? else {
+            /*
+             * EOF:
+             * runtime murió o cerró limpiamente sin Unregister.
+             * handle_client eliminará la sesión del registry.
+             */
+            return Ok(());
+        };
+
+        match message {
+            ModuleMessage::Pong {
+                module: pong_module,
+
+                session_id: pong_session,
+            } => {
+                validate_session(module, session_id, &pong_module, &pong_session)?;
+            }
+
+            ModuleMessage::Ping {
+                module: ping_module,
+
+                session_id: ping_session,
+            } => {
+                validate_session(module, session_id, &ping_module, &ping_session)?;
+
+                writer
+                    .send(ModuleMessage::Pong {
+                        module: module.to_string(),
+
+                        session_id: session_id.to_string(),
+                    })
+                    .map_err(|error| {
+                        format!("could not queue pong for module '{}': {error}", module)
+                    })?;
+            }
+
+            ModuleMessage::Unregister {
+                module: unregister_module,
+
+                session_id: unregister_session,
+                ..
+            } => {
+                validate_session(module, session_id, &unregister_module, &unregister_session)?;
+
+                return Ok(());
+            }
+
+            ModuleMessage::ShutdownAck {
+                module: ack_module,
+
+                session_id: ack_session,
+            } => {
+                validate_session(module, session_id, &ack_module, &ack_session)?;
+
+                return Ok(());
+            }
+
+            ModuleMessage::Response {
+                id,
+                module: response_module,
+
+                session_id: response_session,
+
+                contract,
+                endpoint,
+                ok,
+                code,
+                result,
+                error,
+            } => {
+                validate_session(module, session_id, &response_module, &response_session)?;
+
+                let request_id = id.clone();
+
+                let response = ModuleMessage::Response {
+                    id,
+                    module: response_module,
+
+                    session_id: response_session,
+
+                    contract,
+                    endpoint,
+                    ok,
+                    code,
+                    result,
+                    error,
+                };
+
+                let resolved = pending_registry().resolve(&request_id, response)?;
+
+                if !resolved {
+                    eprintln!(
+                        "N.E.E.B.L.E.S.: module '{}' returned response for unknown request '{}'",
+                        module, request_id
+                    );
+                }
+            }
+
+            ModuleMessage::Error {
+                id,
+                module: error_module,
+                error,
+            } => {
+                if let Some(received_module) = error_module.as_deref() {
+                    if received_module != module {
+                        return Err(format!(
+                            "module IPC identity mismatch: expected '{}' received '{}'",
+                            module, received_module
+                        ));
+                    }
+                }
+
+                if let Some(request_id) = id.clone() {
+                    let response = ModuleMessage::Error {
+                        id,
+                        module: error_module,
+                        error,
+                    };
+
+                    let resolved = pending_registry().resolve(&request_id, response)?;
+
+                    if !resolved {
+                        eprintln!(
+                            "N.E.E.B.L.E.S.: module '{}' returned error for unknown request '{}'",
+                            module, request_id
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "N.E.E.B.L.E.S.: module '{}' reported runtime error: {}",
+                        module, error.message
+                    );
+                }
+            }
+
+            ModuleMessage::Register { .. }
+            | ModuleMessage::Registered { .. }
+            | ModuleMessage::Invoke { .. }
+            | ModuleMessage::Shutdown { .. } => {
+                writer
+                    .send(
+                        ModuleMessage::Error {
+                            id: None,
+
+                            module:
+                                Some(
+                                    module.to_string()
+                                ),
+
+                            error:
+                                ModuleError {
+                                    kind:
+                                        "unexpected_message"
+                                            .to_string(),
+
+                                    message:
+                                        "message is not valid from a registered runtime in the current protocol state"
+                                            .to_string(),
+
+                                    details:
+                                        None,
+                                },
+                        }
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "could not queue protocol error for module '{}': {error}",
+                            module
+                        )
+                    })?;
+            }
+        }
+    }
+}
+
+fn validate_session(
+    expected_module: &str,
+    expected_session: &str,
+    received_module: &str,
+    received_session: &str,
+) -> Result<(), String> {
+    if received_module != expected_module {
+        return Err(format!(
+            "module IPC identity mismatch: expected '{}' received '{}'",
+            expected_module, received_module
+        ));
+    }
+
+    if received_session != expected_session {
+        return Err(format!(
+            "module IPC session mismatch for '{}': expected '{}' received '{}'",
+            expected_module, expected_session, received_session
+        ));
+    }
+
+    Ok(())
+}

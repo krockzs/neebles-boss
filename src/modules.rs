@@ -1,4 +1,7 @@
 use crate::config;
+use crate::contracts::{
+    load_module_contracts, ContractDefinition, ContractEndpoint, ContractReference, ModuleContracts,
+};
 use crate::dependencies::{self, DependencySet};
 use crate::languages;
 use crate::privileges;
@@ -72,8 +75,29 @@ pub struct ModuleManifest {
     #[serde(default)]
     pub version: String,
     pub entrypoint: String,
+
+    /*
+     * Dynamic module contracts.
+     *
+     * A module may extend the N.E.E.B.L.E.S. ecosystem by
+     * declaring contract files without requiring Boss to be
+     * recompiled for each module, command or contract type.
+     *
+     * Legacy Schema 3 manifests without this field remain
+     * valid and resolve to an empty contract list.
+     */
+    #[serde(default)]
+    pub contracts: Vec<ContractReference>,
+
+    /*
+     * Legacy embedded command contracts.
+     *
+     * Kept for Schema 3 compatibility while the dynamic
+     * contract architecture is introduced.
+     */
     #[serde(default)]
     pub commands: BTreeMap<String, CommandContract>,
+
     #[serde(default)]
     pub dependencies: DependencySet,
 
@@ -269,6 +293,69 @@ pub fn installed_module_manifest(name: &str) -> Result<ModuleManifest, String> {
     let module_dir = find_module_dir(name)?;
 
     read_manifest(&module_dir.join("manifest.json"))
+}
+
+/*
+ * Load every dynamic contract declared by an installed module.
+ *
+ * Boss does not know or care whether those contracts are named
+ * "commands", "connect", "service", "llm", "whatever", etc.
+ *
+ * The manifest is the discovery index and each contract file is
+ * loaded through the generic contracts subsystem.
+ */
+pub fn installed_module_contracts(name: &str) -> Result<ModuleContracts, String> {
+    if !valid_module_id(name) {
+        return Err(format!("invalid module id: {name}"));
+    }
+
+    let module_dir = find_module_dir(name)?;
+
+    let manifest = read_manifest(&module_dir.join("manifest.json"))?;
+
+    load_module_contracts(&manifest.name, &module_dir, &manifest.contracts)
+}
+
+/*
+ * Resolve one arbitrary contract by its declared type.
+ *
+ * Contract type remains a String deliberately.
+ * Adding a new contract type must not require recompiling Boss.
+ */
+pub fn installed_module_contract(
+    name: &str,
+    contract_type: &str,
+) -> Result<Option<ContractDefinition>, String> {
+    let contracts = installed_module_contracts(name)?;
+
+    Ok(contracts.contracts.get(contract_type).cloned())
+}
+
+/*
+ * Resolve one logical endpoint from one arbitrary contract.
+ *
+ * Example:
+ *
+ * module   = test-module
+ * contract = commands
+ * name     = gradient
+ *
+ * Result may declare:
+ *
+ * endpoint   = gradient.create
+ * lifecycle  = runtime
+ * state_mode = clean
+ */
+pub fn installed_module_contract_endpoint(
+    name: &str,
+    contract_type: &str,
+    endpoint_name: &str,
+) -> Result<Option<ContractEndpoint>, String> {
+    let Some(contract) = installed_module_contract(name, contract_type)? else {
+        return Ok(None);
+    };
+
+    Ok(contract.endpoints.get(endpoint_name).cloned())
 }
 
 fn resolve_tray_contract_from(

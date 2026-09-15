@@ -1,10 +1,12 @@
 mod cli;
 mod config;
+mod contracts;
 mod dependencies;
 mod dispatcher;
 mod ipc;
 mod languages;
 mod local_installer;
+mod module_ipc;
 mod modules;
 mod notifications;
 mod privileges;

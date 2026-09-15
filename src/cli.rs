@@ -344,8 +344,75 @@ fn modules_command(args: &[String]) -> i32 {
             };
             result(modules::set_enabled(name, false))
         }
+
+        Some("runtime") => {
+            match args.get(1).map(String::as_str) {
+                Some("serve") => {
+                    result(
+                        crate::module_ipc::serve()
+                    )
+                }
+
+                Some("list") => {
+                    match crate::module_ipc::runtime_registry()
+                        .snapshot()
+                    {
+                        Ok(records) => {
+                            match serde_json::to_value(records) {
+                                Ok(value) => print_value(value),
+                                Err(error) => fail(format!(
+                                    "could not serialize module runtime list: {error}"
+                                )),
+                            }
+                        }
+
+                        Err(error) => fail(error),
+                    }
+                }
+
+                Some("status") => {
+                    let Some(name) =
+                        args.get(2)
+                    else {
+                        return fail(
+                            "modules runtime status requires a module name"
+                                .to_string()
+                        );
+                    };
+
+                    match crate::module_ipc::runtime_registry()
+                        .snapshot_module(name)
+                    {
+                        Ok(Some(record)) => {
+                            match serde_json::to_value(record) {
+                                Ok(value) => print_value(value),
+                                Err(error) => fail(format!(
+                                    "could not serialize module runtime status: {error}"
+                                )),
+                            }
+                        }
+
+                        Ok(None) => {
+                            print_value(
+                                serde_json::json!({
+                                    "module": name,
+                                    "registered": false
+                                })
+                            )
+                        }
+
+                        Err(error) => fail(error),
+                    }
+                }
+
+                _ => fail(
+                    "usage: neebles modules runtime serve|list|status <module>"
+                        .to_string()
+                ),
+            }
+        }
         _ => fail(
-            "usage: neebles modules available|installed|install|update|uninstall|enable|disable"
+            "usage: neebles modules available|installed|install|update|uninstall|enable|disable|runtime"
                 .to_string(),
         ),
     }
