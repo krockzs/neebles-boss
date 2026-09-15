@@ -195,7 +195,7 @@ jobs:
               }
             }
           }
-EOF_BOOTSTRAP
+          EOF_BOOTSTRAP
 
           sha256sum \
             dist/neebles-backend \
