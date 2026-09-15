@@ -11,6 +11,7 @@ mod modules;
 mod notifications;
 mod privileges;
 mod request;
+mod settings;
 mod tray;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

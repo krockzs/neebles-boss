@@ -1,3 +1,4 @@
+use crate::config;
 use crate::dispatcher;
 use crate::request::{ExecutionRequest, ExecutionResponse};
 use std::env;
@@ -63,6 +64,12 @@ pub fn request(request: &ExecutionRequest) -> Result<ExecutionResponse, String> 
 }
 
 pub fn serve() -> Result<(), String> {
+    /*
+     * Boss local settings must exist and be valid before
+     * any runtime surface becomes available.
+     */
+    let _ = config::load_or_initialize()?;
+
     /*
      * The Boss owns both IPC surfaces.
      *

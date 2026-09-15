@@ -5,6 +5,7 @@ use crate::contracts::{
 use crate::dependencies::{self, DependencySet};
 use crate::languages;
 use crate::privileges;
+use crate::settings;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -106,6 +107,18 @@ pub struct ModuleManifest {
 
     #[serde(default)]
     pub notifications: Option<NotificationContract>,
+
+    /*
+     * Optional persistent local-settings default.
+     *
+     * The path is relative to the module directory.
+     * If omitted, Boss treats the module default as {}.
+     *
+     * The module owns the structure and meaning of this JSON.
+     * Boss owns persistence and reconciliation.
+     */
+    #[serde(default)]
+    pub settings: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1815,6 +1828,12 @@ fn install_internal(
         resolve_tray_contract_from(staging.path(), &manifest)?;
     }
 
+    let settings_default =
+        module_settings_default_from(
+            staging.path(),
+            &manifest,
+        )?;
+
     dependencies::resolve_system_dependencies(&manifest.dependencies.system)?;
 
     for dependency in &manifest.dependencies.modules {
@@ -1850,12 +1869,90 @@ fn install_internal(
     }
     staging.commit(&destination)?;
 
+    let settings_path =
+        settings::module_settings_path(
+            &neebles_root(),
+            name,
+        );
+
+    if let Err(error) =
+        settings::load_or_create(
+            &settings_path,
+            &settings_default,
+        )
+    {
+        /*
+         * Installation is not considered committed if Boss
+         * cannot establish the persistent settings contract.
+         */
+        let rollback_error =
+            fs::remove_dir_all(&destination).err();
+
+        visiting.remove(name);
+
+        return match rollback_error {
+            None => Err(format!(
+                "could not initialize settings for module '{}': {}; module installation was rolled back",
+                name,
+                error
+            )),
+
+            Some(rollback_error) => Err(format!(
+                "CRITICAL: could not initialize settings for module '{}': {}; installation rollback also failed: {}",
+                name,
+                error,
+                rollback_error
+            )),
+        };
+    }
+
     visiting.remove(name);
 
     Ok(())
 }
 
-pub fn uninstall(name: &str) -> Result<(), String> {
+pub fn module_has_local_state(
+    name: &str,
+) -> Result<bool, String> {
+    /*
+     * Require an installed module.
+     *
+     * This keeps the query aligned with uninstall semantics
+     * and prevents arbitrary module ids from becoming settings
+     * filesystem lookups.
+     */
+    let _ = find_module_dir(name)?;
+
+    let local_settings_path =
+        settings::module_settings_path(
+            &neebles_root(),
+            name,
+        );
+
+    let module_settings_have_state =
+        if local_settings_path.exists() {
+            let value =
+                settings::load(
+                    &local_settings_path
+                )?;
+
+            !settings::is_effectively_empty(
+                &value
+            )
+        } else {
+            false
+        };
+
+    let boss_settings_have_state =
+        config::module_has_user_state(name)?;
+
+    Ok(
+        module_settings_have_state
+        || boss_settings_have_state
+    )
+}
+
+pub fn uninstall(name: &str, remove_settings: bool) -> Result<(), String> {
     /*
      * Uninstall is inherently destructive and therefore
      * owns the complete module lifecycle.
@@ -1884,6 +1981,26 @@ pub fn uninstall(name: &str) -> Result<(), String> {
     }
 
     let path = find_module_dir(name)?;
+
+    let local_settings_path =
+        settings::module_settings_path(
+            &neebles_root(),
+            name,
+        );
+
+    let local_settings_has_state =
+        module_has_local_state(name)?;
+
+    /*
+     * No meaningful user state:
+     * remove everything automatically.
+     *
+     * Meaningful local state:
+     * preserve it unless removal was explicitly requested.
+     */
+    let remove_local_settings =
+        !local_settings_has_state
+        || remove_settings;
 
     /*
      * Removing an installed module is transactional at the
@@ -1921,17 +2038,102 @@ pub fn uninstall(name: &str) -> Result<(), String> {
     })?;
 
     /*
+     * When settings must be removed, stage them instead of
+     * destroying them immediately.
+     *
+     * This lets Boss restore them if the uninstall transaction
+     * has to roll back.
+     */
+    let staged_settings_path =
+        if remove_local_settings
+            && local_settings_path.exists()
+        {
+            let staged =
+                local_settings_path.with_extension(
+                    format!(
+                        "json.uninstall-{}",
+                        transaction_id()
+                    )
+                );
+
+            if staged.exists() {
+                let _ =
+                    fs::rename(
+                        &removal_path,
+                        &path,
+                    );
+
+                return Err(format!(
+                    "settings uninstall staging path already exists and will not be overwritten: {}",
+                    staged.display()
+                ));
+            }
+
+            if let Err(error) =
+                fs::rename(
+                    &local_settings_path,
+                    &staged,
+                )
+            {
+                let rollback_error =
+                    fs::rename(
+                        &removal_path,
+                        &path,
+                    )
+                    .err();
+
+                return match rollback_error {
+                    None => Err(format!(
+                        "could not stage local settings for module '{}': {}; module installation was restored",
+                        name,
+                        error
+                    )),
+
+                    Some(rollback_error) =>
+                        Err(format!(
+                            "CRITICAL: could not stage local settings for module '{}': {}; module rollback also failed: {}",
+                            name,
+                            error,
+                            rollback_error
+                        )),
+                };
+            }
+
+            Some(staged)
+        } else {
+            None
+        };
+
+    /*
      * Boss-owned state for an uninstalled module must not
      * survive the uninstall.
      *
      * If configuration cleanup fails, restore the module
      * to its original active path.
      */
-    if let Err(config_error) = config::remove_module_state(name) {
+    let config_cleanup =
+        if remove_local_settings {
+            config::remove_module_state(name)
+        } else {
+            config::remove_module_transient_state(name)
+        };
+
+    if let Err(config_error) =
+        config_cleanup
+    {
+        if let Some(staged) =
+            staged_settings_path.as_ref()
+        {
+            let _ = fs::rename(
+                staged,
+                &local_settings_path,
+            );
+        }
+
         match fs::rename(&removal_path, &path) {
             Ok(()) => {
                 return Err(format!(
-                    "could not clean Boss state while uninstalling module '{}': {}; module installation was restored",
+                    "could not clean Boss state while uninstalling module '{}': {}; module installation and local settings were restored",
                     name,
                     config_error
                 ));
@@ -1953,13 +2155,50 @@ pub fn uninstall(name: &str) -> Result<(), String> {
      * Installation and Boss state are now detached.
      * Destroy the staged copy last.
      */
-    fs::remove_dir_all(&removal_path).map_err(|error| {
-        format!(
+    if let Err(error) =
+        fs::remove_dir_all(&removal_path)
+    {
+        /*
+         * Module files could not be destroyed.
+         * Do not destroy staged local settings either.
+         */
+        if let Some(staged) =
+            staged_settings_path.as_ref()
+        {
+            let _ = fs::rename(
+                staged,
+                &local_settings_path,
+            );
+        }
+
+        return Err(format!(
             "module '{}' was removed from the active installation and its Boss state was cleaned, but uninstall staging {} could not be deleted: {error}",
             name,
             removal_path.display()
-        )
-    })?;
+        ));
+    }
+
+    /*
+     * Module uninstall is committed.
+     *
+     * Only now destroy local settings that were selected for
+     * removal. Preserved settings never left their final path.
+     */
+    if let Some(staged) =
+        staged_settings_path.as_ref()
+    {
+        if let Err(error) = fs::remove_file(staged) {
+            let _ = fs::rename(
+                staged,
+                &local_settings_path,
+            );
+
+            return Err(format!(
+                "module '{}' was uninstalled, but its local settings could not be removed and were preserved instead: {error}",
+                name
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -2056,6 +2295,12 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
      * - safe paths
      */
     let manifest = read_manifest(&staging.path().join("manifest.json"))?;
+
+    let settings_default =
+        module_settings_default_from(
+            staging.path(),
+            &manifest,
+        )?;
 
     if manifest.name != name {
         return Err(format!(
@@ -2197,8 +2442,70 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
     /*
      * The new copy is now live.
      *
-     * Remove the old known-good copy only after the swap
-     * completed successfully.
+     * Reconcile persistent settings against the new module
+     * default before destroying the known-good backup.
+     */
+    let settings_path =
+        settings::module_settings_path(
+            &neebles_root(),
+            name,
+        );
+
+    if let Err(settings_error) =
+        settings::update_from_default(
+            &settings_path,
+            &settings_default,
+        )
+    {
+        /*
+         * Settings reconciliation is part of the update
+         * transaction. Restore the previous module version.
+         */
+        let failed_update_path =
+            root.join(format!(
+                ".neebles-failed-update-{name}-{transaction}"
+            ));
+
+        if let Err(error) =
+            fs::rename(&current_path, &failed_update_path)
+        {
+            return Err(format!(
+                "CRITICAL: module '{}' was updated but settings reconciliation failed: {}; new module could not be moved aside for rollback: {}",
+                name,
+                settings_error,
+                error
+            ));
+        }
+
+        match fs::rename(&backup_path, &current_path) {
+            Ok(()) => {
+                let _ = fs::remove_dir_all(
+                    &failed_update_path
+                );
+
+                return Err(format!(
+                    "could not reconcile settings for module '{}': {}; previous module version was restored",
+                    name,
+                    settings_error
+                ));
+            }
+
+            Err(rollback_error) => {
+                return Err(format!(
+                    "CRITICAL: could not reconcile settings for module '{}': {}; module rollback also failed: {}; previous version remains at {} and failed update remains at {}",
+                    name,
+                    settings_error,
+                    rollback_error,
+                    backup_path.display(),
+                    failed_update_path.display()
+                ));
+            }
+        }
+    }
+
+    /*
+     * Module and persistent settings are now committed.
+     * Remove the old known-good copy last.
      */
     if let Err(error) = fs::remove_dir_all(&backup_path) {
         eprintln!(
@@ -2751,6 +3058,17 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
 
     validate_module_language_contract(module_dir)?;
 
+    /*
+     * Settings are part of the installed module contract.
+     *
+     * Validation happens before installation/update commit,
+     * exactly like the other module-owned resources.
+     */
+    let _ = module_settings_default_from(
+        module_dir,
+        manifest,
+    )?;
+
     Ok(())
 }
 
@@ -2771,6 +3089,55 @@ fn read_manifest(path: &Path) -> Result<ModuleManifest, String> {
     validate_module_manifest(module_dir, &manifest)?;
 
     Ok(manifest)
+}
+
+pub fn module_settings_default_from(
+    module_dir: &Path,
+    manifest: &ModuleManifest,
+) -> Result<Value, String> {
+    let Some(settings_path) = manifest.settings.as_deref() else {
+        return Ok(json!({}));
+    };
+
+    let settings_path =
+        resolve_module_file(module_dir, settings_path, "settings")?;
+
+    let raw = fs::read_to_string(&settings_path).map_err(|error| {
+        format!(
+            "could not read module '{}' settings default {}: {error}",
+            manifest.name,
+            settings_path.display()
+        )
+    })?;
+
+    let value: Value = serde_json::from_str(&raw).map_err(|error| {
+        format!(
+            "invalid module '{}' settings default {}: {error}",
+            manifest.name,
+            settings_path.display()
+        )
+    })?;
+
+    if !value.is_object() {
+        return Err(format!(
+            "module '{}' settings default must be a JSON object",
+            manifest.name
+        ));
+    }
+
+    Ok(value)
+}
+
+pub fn installed_module_settings_default(
+    name: &str,
+) -> Result<Value, String> {
+    let module_dir = find_module_dir(name)?;
+    let manifest = read_manifest(&module_dir.join("manifest.json"))?;
+
+    module_settings_default_from(
+        &module_dir,
+        &manifest,
+    )
 }
 
 fn resolve_entrypoint(module_dir: &Path, entrypoint: &str) -> Result<PathBuf, String> {

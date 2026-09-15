@@ -330,7 +330,22 @@ fn modules_command(args: &[String]) -> i32 {
                 return fail(error);
             }
 
-            result(reconcile_after_module_operation(modules::uninstall(name)))
+            const REMOVE_SETTINGS_FLAG: &str =
+                "--remove-settings";
+
+            let remove_settings =
+                args.iter().any(
+                    |value| value == REMOVE_SETTINGS_FLAG
+                );
+
+            result(
+                reconcile_after_module_operation(
+                    modules::uninstall(
+                        name,
+                        remove_settings,
+                    )
+                )
+            )
         }
         Some("enable") => {
             let Some(name) = args.get(1) else {

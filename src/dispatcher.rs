@@ -1,9 +1,11 @@
+use crate::config;
 use crate::local_installer;
 use crate::module_ipc::protocol::ModuleMessage;
 use crate::modules;
 use crate::notifications::{self, Severity};
 use crate::request::{ExecutionRequest, ExecutionResponse};
-use serde_json::json;
+use crate::settings;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::process::Command;
 
@@ -23,7 +25,260 @@ pub fn dispatch(request: ExecutionRequest) -> ExecutionResponse {
 
         "notifications" | "boss.notifications" => dispatch_notification(request),
 
+        "settings" | "boss.settings" => dispatch_settings(request),
+
         module => dispatch_module(module, request),
+    }
+}
+
+fn settings_target(
+    target: &str,
+) -> Result<(std::path::PathBuf, Value), String> {
+    let target = target.trim();
+
+    if target.is_empty() {
+        return Err(
+            "settings target cannot be empty"
+                .to_string()
+        );
+    }
+
+    if target == "boss" {
+        return Ok((
+            config::config_path()?,
+            config::default_json()?,
+        ));
+    }
+
+    let default =
+        modules::installed_module_settings_default(
+            target,
+        )?;
+
+    Ok((
+        settings::module_settings_path(
+            &modules::neebles_root(),
+            target,
+        ),
+        default,
+    ))
+}
+
+fn dispatch_settings(
+    request: ExecutionRequest,
+) -> ExecutionResponse {
+    let Some(target) = request.args.first() else {
+        return ExecutionResponse::fail(
+            2,
+            "missing_settings_target",
+            "settings request requires a target",
+        );
+    };
+
+    let (path, default) =
+        match settings_target(target) {
+            Ok(value) => value,
+
+            Err(error) => {
+                return ExecutionResponse::fail(
+                    1,
+                    "settings_target",
+                    error,
+                );
+            }
+        };
+
+    match request.action.as_deref() {
+        Some("has-state") => {
+            if target == "boss" {
+                return ExecutionResponse::fail(
+                    2,
+                    "invalid_settings_target",
+                    "has-state requires a module target",
+                );
+            }
+
+            match modules::module_has_local_state(
+                target,
+            ) {
+                Ok(value) =>
+                    ExecutionResponse::ok(
+                        Some(json!(value))
+                    ),
+
+                Err(error) =>
+                    ExecutionResponse::fail(
+                        1,
+                        "settings_state",
+                        error,
+                    ),
+            }
+        }
+
+        Some("show") => {
+            match settings::load_or_create(
+                &path,
+                &default,
+            ) {
+                Ok(value) =>
+                    ExecutionResponse::ok(
+                        Some(value)
+                    ),
+
+                Err(error) =>
+                    ExecutionResponse::fail(
+                        1,
+                        "settings_read",
+                        error,
+                    ),
+            }
+        }
+
+        Some("get") => {
+            let Some(setting_path) =
+                request.args.get(1)
+            else {
+                return ExecutionResponse::fail(
+                    2,
+                    "missing_settings_path",
+                    "settings get requires a path",
+                );
+            };
+
+            let current =
+                match settings::load_or_create(
+                    &path,
+                    &default,
+                ) {
+                    Ok(value) => value,
+
+                    Err(error) => {
+                        return ExecutionResponse::fail(
+                            1,
+                            "settings_read",
+                            error,
+                        );
+                    }
+                };
+
+            match settings::get_path(
+                &current,
+                setting_path,
+            ) {
+                Ok(value) =>
+                    ExecutionResponse::ok(
+                        Some(value)
+                    ),
+
+                Err(error) =>
+                    ExecutionResponse::fail(
+                        1,
+                        "settings_path",
+                        error,
+                    ),
+            }
+        }
+
+        Some("set") => {
+            let Some(setting_path) =
+                request.args.get(1)
+            else {
+                return ExecutionResponse::fail(
+                    2,
+                    "missing_settings_path",
+                    "settings set requires a path",
+                );
+            };
+
+            let Some(raw_value) =
+                request.args.get(2)
+            else {
+                return ExecutionResponse::fail(
+                    2,
+                    "missing_settings_value",
+                    "settings set requires a JSON value",
+                );
+            };
+
+            let value: Value =
+                match serde_json::from_str(
+                    raw_value
+                ) {
+                    Ok(value) => value,
+
+                    Err(error) => {
+                        return ExecutionResponse::fail(
+                            2,
+                            "invalid_settings_value",
+                            format!(
+                                "settings value is not valid JSON: {error}"
+                            ),
+                        );
+                    }
+                };
+
+            match settings::set_path(
+                &path,
+                &default,
+                setting_path,
+                value,
+            ) {
+                Ok(value) =>
+                    ExecutionResponse::ok(
+                        Some(value)
+                    ),
+
+                Err(error) =>
+                    ExecutionResponse::fail(
+                        1,
+                        "settings_write",
+                        error,
+                    ),
+            }
+        }
+
+        Some("module-update") => {
+            if target == "boss" {
+                return ExecutionResponse::fail(
+                    2,
+                    "invalid_settings_target",
+                    "module-update requires a module target",
+                );
+            }
+
+            match settings::update_from_default(
+                &path,
+                &default,
+            ) {
+                Ok(value) =>
+                    ExecutionResponse::ok(
+                        Some(value)
+                    ),
+
+                Err(error) =>
+                    ExecutionResponse::fail(
+                        1,
+                        "settings_update",
+                        error,
+                    ),
+            }
+        }
+
+        Some(other) =>
+            ExecutionResponse::fail(
+                2,
+                "unknown_settings_action",
+                format!(
+                    "unknown settings action: {other}"
+                ),
+            ),
+
+        None =>
+            ExecutionResponse::fail(
+                2,
+                "missing_settings_action",
+                "settings request requires an action",
+            ),
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::languages;
+use crate::{languages, modules, settings};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
@@ -36,65 +36,135 @@ impl BossConfig {
     }
 }
 
-pub fn config_path() -> Result<PathBuf, String> {
-    if let Ok(value) = env::var("NEEBLES_CONFIG") {
-        let value = value.trim();
-
-        if value.is_empty() {
-            return Err("NEEBLES_CONFIG is explicitly set but empty".to_string());
-        }
-
-        return Ok(PathBuf::from(value));
-    }
-
+fn legacy_config_path() -> Option<PathBuf> {
     if let Ok(value) = env::var("XDG_CONFIG_HOME") {
         let value = value.trim();
 
-        if value.is_empty() {
-            return Err("XDG_CONFIG_HOME is explicitly set but empty".to_string());
+        if !value.is_empty() {
+            return Some(
+                PathBuf::from(value)
+                    .join("neebles/boss.json")
+            );
         }
-
-        return Ok(PathBuf::from(value).join("neebles/boss.json"));
     }
 
     if let Ok(value) = env::var("HOME") {
         let value = value.trim();
 
-        if value.is_empty() {
-            return Err("HOME is explicitly set but empty".to_string());
+        if !value.is_empty() {
+            return Some(
+                PathBuf::from(value)
+                    .join(".config/neebles/boss.json")
+            );
         }
-
-        return Ok(PathBuf::from(value).join(".config/neebles/boss.json"));
     }
 
-    Err("could not determine user configuration directory".to_string())
+    None
+}
+
+pub fn config_path() -> Result<PathBuf, String> {
+    /*
+     * Explicit override is retained for development/tests.
+     */
+    if let Ok(value) = env::var("NEEBLES_CONFIG") {
+        let value = value.trim();
+
+        if value.is_empty() {
+            return Err(
+                "NEEBLES_CONFIG is explicitly set but empty"
+                    .to_string()
+            );
+        }
+
+        return Ok(PathBuf::from(value));
+    }
+
+    Ok(settings::boss_settings_path(
+        &modules::neebles_root(),
+    ))
 }
 
 pub fn load_or_initialize() -> Result<BossConfig, String> {
     let path = config_path()?;
+
     if path.exists() {
-        let raw = fs::read_to_string(&path)
-            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-        return serde_json::from_str(&raw)
-            .map_err(|error| format!("invalid Boss config {}: {error}", path.display()));
+        let value = settings::load(&path)?;
+
+        return serde_json::from_value(value)
+            .map_err(|error| {
+                format!(
+                    "invalid Boss config {}: {error}",
+                    path.display()
+                )
+            });
+    }
+
+    /*
+     * One-time migration from the pre-local_settings
+     * per-user Boss configuration.
+     *
+     * NEEBLES_CONFIG is an explicit override and therefore
+     * does not participate in automatic migration.
+     */
+    if env::var("NEEBLES_CONFIG").is_err() {
+        if let Some(legacy) = legacy_config_path() {
+            if legacy.exists() {
+                let raw =
+                    fs::read_to_string(&legacy)
+                        .map_err(|error| {
+                            format!(
+                                "could not read legacy Boss config {}: {error}",
+                                legacy.display()
+                            )
+                        })?;
+
+                let config: BossConfig =
+                    serde_json::from_str(&raw)
+                        .map_err(|error| {
+                            format!(
+                                "invalid legacy Boss config {}: {error}",
+                                legacy.display()
+                            )
+                        })?;
+
+                save(&config)?;
+
+                return Ok(config);
+            }
+        }
     }
 
     let config = BossConfig::initial()?;
     save(&config)?;
+
     Ok(config)
+}
+
+pub fn default_json() -> Result<serde_json::Value, String> {
+    serde_json::to_value(
+        BossConfig::initial()?
+    )
+    .map_err(|error| {
+        format!(
+            "could not serialize Boss settings default: {error}"
+        )
+    })
 }
 
 pub fn save(config: &BossConfig) -> Result<(), String> {
     let path = config_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
-    }
 
-    let data = serde_json::to_string_pretty(config)
-        .map_err(|error| format!("could not serialize Boss config: {error}"))?;
-    fs::write(&path, format!("{data}\n"))
-        .map_err(|error| format!("could not write {}: {error}", path.display()))
+    let value = serde_json::to_value(config)
+        .map_err(|error| {
+            format!(
+                "could not serialize Boss config: {error}"
+            )
+        })?;
+
+    settings::save(
+        &path,
+        &value,
+    )
 }
 
 pub fn set_language(code: &str) -> Result<BossConfig, String> {
@@ -179,6 +249,37 @@ pub fn mark_module_update_notified(name: &str, version: &str) -> Result<BossConf
     config
         .module_update_notifications
         .insert(name.to_string(), version.to_string());
+
+    save(&config)?;
+    Ok(config)
+}
+
+pub fn module_has_user_state(name: &str) -> Result<bool, String> {
+    let config = load_or_initialize()?;
+
+    Ok(
+        config.disabled_modules.iter().any(
+            |item| item == name
+        )
+        || config.hidden_tray_modules.iter().any(
+            |item| item == name
+        )
+        || config.hidden_launcher_modules.iter().any(
+            |item| item == name
+        )
+    )
+}
+
+pub fn remove_module_transient_state(
+    name: &str,
+) -> Result<BossConfig, String> {
+    let mut config = load_or_initialize()?;
+
+    /*
+     * Update notification bookkeeping is not a user
+     * preference and must not survive an uninstall.
+     */
+    config.module_update_notifications.remove(name);
 
     save(&config)?;
     Ok(config)
