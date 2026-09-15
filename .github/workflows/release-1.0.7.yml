@@ -74,7 +74,6 @@ jobs:
             --build ui/auth-agent/build \
             --parallel
 
-
       - name: Stage release assets
         shell: bash
         run: |
@@ -93,7 +92,6 @@ jobs:
           cp \
             ui/installer/build/neebles-installer \
             dist/neebles-installer
-
 
           cp \
             ui/auth-agent/build/neebles-auth-agent \
@@ -129,7 +127,6 @@ jobs:
             awk '{print $1}'
           )"
 
-
           AUTH_AGENT_SHA="$(
             sha256sum dist/neebles-auth-agent |
             awk '{print $1}'
@@ -145,7 +142,7 @@ jobs:
             awk '{print $1}'
           )"
 
-          cat > dist/bootstrap.json <<EOF
+          cat > dist/bootstrap.json <<EOF_JSON
           {
             "schema": 2,
             "channel": "stable",
@@ -180,7 +177,7 @@ jobs:
               }
             }
           }
-          EOF
+          EOF_JSON
 
           sha256sum \
             dist/neebles-backend \
@@ -210,23 +207,32 @@ jobs:
           body: |
             N.E.E.B.L.E.S. Boss 1.0.7 stable release.
 
-            Boss installation and runtime startup ordering update.
+            1.0.7 integration rebuild.
 
             Changes:
-            - Permanent authorization agent is installed early in the Boss payload.
-            - Added persistent N.E.E.B.L.E.S. Boss Runtime system service.
-            - Boss Runtime starts immediately after a successful installation.
-            - neebles.sock and modules.sock are owned by the persistent Boss runtime.
-            - Tray Manager is started immediately in the active desktop session.
-            - Fresh installations no longer wait for the next login to start the tray.
-            - Client data payload now includes neebles-runtime.service.
-            - Installation ordering prepares Boss runtime before module operations.
-            - Boss UI, installer, runtime, tray and authorization agent aligned to 1.0.7.
+            - Desktop runtime ownership is aligned with the real graphical-session user.
+            - Boss runtime sockets remain private while being accessible to the desktop user.
+            - Shared settings preserve desktop-user ownership and private permissions.
+            - Privileged settings writes preserve the intended UID, GID and file modes.
+            - Added the canonical Boss desktop identity: org.neebles.Boss.
+            - Added the Boss desktop entry, StartupWMClass integration and global application icon.
+            - Plasma can now resolve the correct Boss window and taskbar identity.
+            - Module enable and disable operations now reconcile tray lifecycle consistently.
+            - Added the N.E.E.B.L.E.S. Tray Host user-session component.
+            - Tray Host subscribes to Tray Manager Snapshot and Event updates.
+            - Tray Host exposes visible tray records through org.kde.StatusNotifierItem.
+            - StatusNotifierItem instances are registered with org.kde.StatusNotifierWatcher.
+            - Tray activation and context actions are delegated back through Boss.
+            - Added neebles-tray-host.service to the client payload and installation contract.
+            - Clean installation, reinstall and rollback contracts include the new desktop and tray integration.
+            - Boss UI, installer, runtime, tray infrastructure and authorization agent remain aligned to version 1.0.7.
 
             Publishes the Rust Boss backend, Qt client UI, graphical installer,
-            N.E.E.B.L.E.S. authorization agent, complete client
-            data payload, privileged install script and Bootstrap Schema 2
-            manifest.
+            N.E.E.B.L.E.S. authorization agent, complete client data payload,
+            privileged install script and Bootstrap Schema 2 manifest.
+
+            This rebuild keeps version 1.0.7 while publishing new artifacts.
+            SHA-256 values are regenerated from the exact artifacts produced by this workflow.
 
           files: |
             dist/neebles-backend
