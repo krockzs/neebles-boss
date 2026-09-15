@@ -137,7 +137,7 @@ pub enum TrayMessage {
     SettingsSet {
         owner_module: String,
         path: String,
-        value: Value,
+        value: String,
     },
 
     StopProvider {
@@ -183,7 +183,7 @@ pub enum TrayMessage {
     SettingsValue {
         owner_module: String,
         path: String,
-        value: Value,
+        value: String,
     },
 
     Error {

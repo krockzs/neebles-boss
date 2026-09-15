@@ -84,11 +84,21 @@ fn dispatch_settings(request: ExecutionRequest) -> ExecutionResponse {
             }
         }
 
-        Some("show") => match settings::load_or_create(&path, &default) {
-            Ok(value) => ExecutionResponse::ok(Some(value)),
+        Some("show") => {
+            let local = match settings::load_or_create(&path, &default) {
+                Ok(value) => value,
 
-            Err(error) => ExecutionResponse::fail(1, "settings_read", error),
-        },
+                Err(error) => {
+                    return ExecutionResponse::fail(1, "settings_read", error);
+                }
+            };
+
+            match settings::effective_settings(&local, &default) {
+                Ok(value) => ExecutionResponse::ok(Some(value)),
+
+                Err(error) => ExecutionResponse::fail(1, "settings_read", error),
+            }
+        }
 
         Some("get") => {
             let Some(setting_path) = request.args.get(1) else {
@@ -99,7 +109,7 @@ fn dispatch_settings(request: ExecutionRequest) -> ExecutionResponse {
                 );
             };
 
-            let current = match settings::load_or_create(&path, &default) {
+            let local = match settings::load_or_create(&path, &default) {
                 Ok(value) => value,
 
                 Err(error) => {
@@ -107,8 +117,8 @@ fn dispatch_settings(request: ExecutionRequest) -> ExecutionResponse {
                 }
             };
 
-            match settings::get_path(&current, setting_path) {
-                Ok(value) => ExecutionResponse::ok(Some(value)),
+            match settings::get_effective_path(&local, &default, setting_path) {
+                Ok(value) => ExecutionResponse::ok(Some(json!(value))),
 
                 Err(error) => ExecutionResponse::fail(1, "settings_path", error),
             }
@@ -123,28 +133,16 @@ fn dispatch_settings(request: ExecutionRequest) -> ExecutionResponse {
                 );
             };
 
-            let Some(raw_value) = request.args.get(2) else {
+            let Some(value) = request.args.get(2) else {
                 return ExecutionResponse::fail(
                     2,
                     "missing_settings_value",
-                    "settings set requires a JSON value",
+                    "settings set requires a String value",
                 );
             };
 
-            let value: Value = match serde_json::from_str(raw_value) {
-                Ok(value) => value,
-
-                Err(error) => {
-                    return ExecutionResponse::fail(
-                        2,
-                        "invalid_settings_value",
-                        format!("settings value is not valid JSON: {error}"),
-                    );
-                }
-            };
-
-            match settings::set_path(&path, &default, setting_path, value) {
-                Ok(value) => ExecutionResponse::ok(Some(value)),
+            match settings::set_path(&path, &default, setting_path, value.clone()) {
+                Ok(value) => ExecutionResponse::ok(Some(json!(value))),
 
                 Err(error) => ExecutionResponse::fail(1, "settings_write", error),
             }

@@ -691,9 +691,9 @@ fn process_message(
             let settings_path =
                 settings::module_settings_path(&modules::neebles_root(), &owner_module);
 
-            let current = settings::load_or_create(&settings_path, &default)?;
+            let local = settings::load_or_create(&settings_path, &default)?;
 
-            let value = settings::get_path(&current, &path)?;
+            let value = settings::get_effective_path(&local, &default, &path)?;
 
             write_message(
                 writer,
@@ -737,9 +737,7 @@ fn process_message(
             let settings_path =
                 settings::module_settings_path(&modules::neebles_root(), &owner_module);
 
-            let updated = settings::set_path(&settings_path, &default, &path, value)?;
-
-            let value = settings::get_path(&updated, &path)?;
+            let value = settings::set_path(&settings_path, &default, &path, value)?;
 
             write_message(
                 writer,

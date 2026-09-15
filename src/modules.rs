@@ -1910,11 +1910,13 @@ pub fn module_has_local_state(name: &str) -> Result<bool, String> {
     let local_settings_path = settings::module_settings_path(&neebles_root(), name);
 
     let module_settings_have_state = if local_settings_path.exists() {
-        let value = settings::load(&local_settings_path)?;
+        let local = settings::load(&local_settings_path)?;
 
         let default = installed_module_settings_default(name)?;
 
-        settings::differs_from_default(&value, &default)?
+        settings::validate_local(&local, &default)?;
+
+        settings::has_local_values(&local)?
     } else {
         false
     };
@@ -3017,12 +3019,12 @@ pub fn module_settings_default_from(
         )
     })?;
 
-    if !value.is_object() {
-        return Err(format!(
-            "module '{}' settings default must be a JSON object",
-            manifest.name
-        ));
-    }
+    settings::validate_module_default(&value).map_err(|error| {
+        format!(
+            "module '{}' settings default is invalid: {}",
+            manifest.name, error
+        )
+    })?;
 
     Ok(value)
 }
