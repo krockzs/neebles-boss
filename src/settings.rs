@@ -1,7 +1,10 @@
 use serde_json::{Map, Value};
 
 use std::collections::BTreeMap;
+use std::ffi::CString;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 fn ensure_object(value: &Value, label: &str) -> Result<(), String> {
@@ -12,11 +15,41 @@ fn ensure_object(value: &Value, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn write_json(path: &Path, value: &Value) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+fn apply_settings_file_policy(path: &Path, parent: &Path) -> Result<(), String> {
+    let parent_metadata = fs::metadata(parent)
+        .map_err(|error| format!("could not inspect {}: {error}", parent.display()))?;
+
+    let uid = parent_metadata.uid();
+    let gid = parent_metadata.gid();
+
+    let raw_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        format!(
+            "settings path contains an invalid NUL byte: {}",
+            path.display()
+        )
+    })?;
+
+    let result = unsafe { libc::chown(raw_path.as_ptr(), uid as libc::uid_t, gid as libc::gid_t) };
+
+    if result != 0 {
+        return Err(format!(
+            "could not assign settings file {} to {uid}:{gid}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
     }
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("could not secure settings file {}: {error}", path.display()))
+}
+
+fn write_json(path: &Path, value: &Value) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("settings path has no parent: {}", path.display()))?;
+
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
 
     let data = serde_json::to_string_pretty(value)
         .map_err(|error| format!("could not serialize settings: {error}"))?;
@@ -25,6 +58,11 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
 
     fs::write(&temp, format!("{data}\n"))
         .map_err(|error| format!("could not write {}: {error}", temp.display()))?;
+
+    if let Err(error) = apply_settings_file_policy(&temp, parent) {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
 
     fs::rename(&temp, path).map_err(|error| {
         let _ = fs::remove_file(&temp);

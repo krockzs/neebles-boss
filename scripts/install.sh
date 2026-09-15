@@ -29,6 +29,7 @@ CONFIG_DIR="$CLIENT_ROOT/config"
 MODULES_DIR="$INSTALL_ROOT/modules"
 SHARED_DIR="$INSTALL_ROOT/shared"
 TMP_DIR="$SHARED_DIR/tmp"
+SETTINGS_DIR="$SHARED_DIR/settings"
 
 GLOBAL_BIN="${DESTDIR}/usr/local/bin/neebles"
 GLOBAL_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-boss-launcher-icon.png"
@@ -36,6 +37,7 @@ SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 SYSTEMD_WANTS="${DESTDIR}/etc/systemd/user/default.target.wants"
 RUNTIME_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-runtime.service"
 RUNTIME_WANTS="${DESTDIR}/etc/systemd/system/multi-user.target.wants"
+RUNTIME_ENV="${DESTDIR}/etc/neebles/runtime.env"
 PLASMA_LAUNCHER="${DESTDIR}/usr/share/plasma/plasmoids/org.neebles.launcher"
 PLASMA_SPACER="${DESTDIR}/usr/share/plasma/plasmoids/org.neebles.spacer"
 
@@ -182,6 +184,51 @@ validate_client_archive() {
 
 trap cleanup EXIT
 
+DESKTOP_UID=""
+DESKTOP_GID=""
+
+resolve_desktop_identity() {
+    if [[ -n "${NEEBLES_DESKTOP_UID:-}" || -n "${NEEBLES_DESKTOP_GID:-}" ]]; then
+        [[ -n "${NEEBLES_DESKTOP_UID:-}" && -n "${NEEBLES_DESKTOP_GID:-}" ]] || {
+            echo "NEEBLES_DESKTOP_UID and NEEBLES_DESKTOP_GID must be provided together." >&2
+            exit 1
+        }
+
+        DESKTOP_UID="$NEEBLES_DESKTOP_UID"
+        DESKTOP_GID="$NEEBLES_DESKTOP_GID"
+
+    elif [[ -n "${PKEXEC_UID:-}" ]]; then
+        DESKTOP_UID="$PKEXEC_UID"
+        DESKTOP_GID="$(
+            getent passwd "$DESKTOP_UID" |
+            awk -F: 'NR == 1 { print $4 }'
+        )"
+
+    elif [[ -n "${SUDO_UID:-}" ]]; then
+        DESKTOP_UID="$SUDO_UID"
+        DESKTOP_GID="$(
+            getent passwd "$DESKTOP_UID" |
+            awk -F: 'NR == 1 { print $4 }'
+        )"
+
+    else
+        DESKTOP_UID="$(id -u)"
+        DESKTOP_GID="$(id -g)"
+    fi
+
+    [[ "$DESKTOP_UID" =~ ^[0-9]+$ ]] || {
+        echo "Invalid desktop UID: $DESKTOP_UID" >&2
+        exit 1
+    }
+
+    [[ "$DESKTOP_GID" =~ ^[0-9]+$ ]] || {
+        echo "Invalid desktop GID: $DESKTOP_GID" >&2
+        exit 1
+    }
+}
+
+resolve_desktop_identity
+
 if [[ -z "$DESTDIR" && ${EUID} -ne 0 ]]; then
     echo "This installer must run as root." >&2
     exit 1
@@ -324,6 +371,15 @@ install -d -m 0755 \
     "$SHARED_DIR" \
     "$TMP_DIR"
 
+install -d -m 0700 "$SETTINGS_DIR"
+
+if [[ -z "$DESTDIR" ]]; then
+    chown -R "$DESKTOP_UID:$DESKTOP_GID" "$SETTINGS_DIR"
+
+    find "$SETTINGS_DIR" -type d -exec chmod 0700 {} +
+    find "$SETTINGS_DIR" -type f -exec chmod 0600 {} +
+fi
+
 CLIENT_STAGE="$(mktemp -d "$TMP_DIR/client-install.XXXXXX")"
 chmod 0755 "$CLIENT_STAGE"
 
@@ -412,6 +468,7 @@ backup_global_path "$SYSTEMD_SERVICE" "systemd-service"
 backup_global_path "$SYSTEMD_WANTS/neebles-tray-manager.service" "systemd-wants"
 backup_global_path "$RUNTIME_SERVICE" "runtime-service"
 backup_global_path "$RUNTIME_WANTS/neebles-runtime.service" "runtime-wants"
+backup_global_path "$RUNTIME_ENV" "runtime-env"
 backup_global_path "$PLASMA_LAUNCHER" "plasma-launcher"
 backup_global_path "$PLASMA_SPACER" "plasma-spacer"
 
@@ -429,6 +486,19 @@ install -m 0644 \
 
 progress 80
 status_key "installer.progress.installing_tray_manager"
+
+install -d -m 0755 "$(dirname "$RUNTIME_ENV")"
+
+cat > "$RUNTIME_ENV" <<EOF
+NEEBLES_DESKTOP_UID=$DESKTOP_UID
+NEEBLES_DESKTOP_GID=$DESKTOP_GID
+EOF
+
+chmod 0644 "$RUNTIME_ENV"
+
+if [[ -z "$DESTDIR" ]]; then
+    chown root:root "$RUNTIME_ENV"
+fi
 
 install -d -m 0755 "$(dirname "$RUNTIME_SERVICE")"
 

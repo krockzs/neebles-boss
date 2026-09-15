@@ -67,6 +67,8 @@ fn bind_listener() -> Result<UnixListener, String> {
     let listener = UnixListener::bind(&path)
         .map_err(|error| format!("could not bind modules socket {}: {error}", path.display()))?;
 
+    crate::ipc::secure_runtime_socket(&path)?;
+
     println!("N.E.E.B.L.E.S. module IPC listening on {}", path.display());
 
     Ok(listener)

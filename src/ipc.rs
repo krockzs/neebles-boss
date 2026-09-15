@@ -2,14 +2,71 @@ use crate::config;
 use crate::dispatcher;
 use crate::request::{ExecutionRequest, ExecutionResponse};
 use std::env;
+use std::ffi::CString;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::Shutdown;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const DEFAULT_SOCKET_PATH: &str = "/run/neebles/neebles.sock";
+
+fn runtime_desktop_identity() -> Result<(libc::uid_t, libc::gid_t), String> {
+    let uid = env::var("NEEBLES_DESKTOP_UID");
+    let gid = env::var("NEEBLES_DESKTOP_GID");
+
+    match (uid, gid) {
+        (Ok(uid), Ok(gid)) => {
+            let uid = uid
+                .parse::<u32>()
+                .map_err(|error| format!("invalid NEEBLES_DESKTOP_UID: {error}"))?;
+
+            let gid = gid
+                .parse::<u32>()
+                .map_err(|error| format!("invalid NEEBLES_DESKTOP_GID: {error}"))?;
+
+            Ok((uid as libc::uid_t, gid as libc::gid_t))
+        }
+
+        (Err(env::VarError::NotPresent), Err(env::VarError::NotPresent)) => {
+            Ok(unsafe { (libc::geteuid(), libc::getegid()) })
+        }
+
+        _ => Err(
+            "NEEBLES_DESKTOP_UID and NEEBLES_DESKTOP_GID must be configured together".to_string(),
+        ),
+    }
+}
+
+pub(crate) fn secure_runtime_socket(path: &Path) -> Result<(), String> {
+    let (uid, gid) = runtime_desktop_identity()?;
+
+    let raw_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        format!(
+            "socket path contains an invalid NUL byte: {}",
+            path.display()
+        )
+    })?;
+
+    let result = unsafe { libc::chown(raw_path.as_ptr(), uid, gid) };
+
+    if result != 0 {
+        return Err(format!(
+            "could not assign N.E.E.B.L.E.S. socket {} to desktop user {uid}:{gid}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| {
+        format!(
+            "could not secure N.E.E.B.L.E.S. socket {}: {error}",
+            path.display()
+        )
+    })
+}
 
 pub fn socket_path() -> PathBuf {
     env::var("NEEBLES_SOCKET")
@@ -119,12 +176,7 @@ pub fn serve() -> Result<(), String> {
      * Module processes must use their governed IPC surface,
      * never this generic administrative socket.
      */
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|error| {
-        format!(
-            "could not secure N.E.E.B.L.E.S. socket {}: {error}",
-            path.display()
-        )
-    })?;
+    secure_runtime_socket(&path)?;
 
     println!("N.E.E.B.L.E.S. Boss listening on {}", path.display());
 
