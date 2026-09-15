@@ -84,6 +84,11 @@ ApplicationWindow {
 
     property bool loadingConfig: true
 
+    /*
+     * Única instancia global del diálogo de desinstalación.
+     */
+    property string pendingUninstallModule: ""
+
     function asset(name) {
         if (typeof boss !== "undefined" && boss.assetUrl)
             return boss.assetUrl(name)
@@ -119,22 +124,16 @@ ApplicationWindow {
         return code.substring(0, 2).toUpperCase()
     }
 
-    function saveNow() {
+    function saveConfigValue(key, value) {
         if (
-            loadingConfig ||
-            typeof boss === "undefined" ||
-            languageBox.currentIndex < 0
+            loadingConfig
+            || typeof boss === "undefined"
         )
             return
 
-        const selected =
-            languageBox.model[languageBox.currentIndex]
-
-        boss.saveConfig(
-            selected.code,
-            traySwitch.checked,
-            launcherSwitch.checked,
-            notificationSwitch.checked
+        boss.saveConfigValue(
+            key,
+            String(value)
         )
     }
 
@@ -453,8 +452,23 @@ ApplicationWindow {
                         mipmap: true
                     }
 
-                    onActivated:
-                        root.saveNow()
+                    onActivated: {
+                        if (
+                            languageBox.currentIndex < 0
+                            || typeof boss === "undefined"
+                        )
+                            return
+
+                        const selected =
+                            languageBox.model[
+                                languageBox.currentIndex
+                            ]
+
+                        root.saveConfigValue(
+                            "language",
+                            selected.code
+                        )
+                    }
                 }
             }
 
@@ -598,7 +612,10 @@ ApplicationWindow {
                                     : true
 
                                 onToggled:
-                                    root.saveNow()
+                                    root.saveConfigValue(
+                                        "tray_enabled",
+                                        checked
+                                    )
                             }
 
                             ColumnLayout {
@@ -707,7 +724,10 @@ ApplicationWindow {
                                     : true
 
                                 onToggled:
-                                    root.saveNow()
+                                    root.saveConfigValue(
+                                        "launcher_enabled",
+                                        checked
+                                    )
                             }
 
                             ColumnLayout {
@@ -819,7 +839,10 @@ ApplicationWindow {
                                     : true
 
                                 onToggled:
-                                    root.saveNow()
+                                    root.saveConfigValue(
+                                        "normal_notifications",
+                                        checked
+                                    )
                             }
 
                             Item {
@@ -1170,9 +1193,25 @@ ApplicationWindow {
                                                     if (
                                                         moduleCard.effectiveInstalled
                                                     ) {
-                                                        boss.uninstallModule(
-                                                            modelData.name
-                                                        )
+                                                        const state =
+                                                            boss.moduleLocalState(
+                                                                modelData.name
+                                                            )
+
+                                                        if (state < 0)
+                                                            return
+
+                                                        if (state === 0) {
+                                                            boss.uninstallModule(
+                                                                modelData.name,
+                                                                false
+                                                            )
+                                                        } else {
+                                                            root.pendingUninstallModule =
+                                                                modelData.name
+
+                                                            uninstallSettingsDialog.open()
+                                                        }
                                                     } else {
                                                         boss.installModule(
                                                             modelData.name
@@ -1406,6 +1445,63 @@ ApplicationWindow {
                                                     Text.AlignRight
                                             }
 
+                                            Button {
+                                                id: moduleCopyButton
+
+                                                visible:
+                                                    moduleCard.detailsVisible
+
+                                                Layout.minimumWidth: 42
+                                                Layout.preferredWidth: 42
+                                                Layout.maximumWidth: 42
+
+                                                Layout.minimumHeight: 42
+                                                Layout.preferredHeight: 42
+                                                Layout.maximumHeight: 42
+
+                                                padding: 0
+                                                hoverEnabled: true
+
+                                                enabled:
+                                                    moduleLogText.text.length > 0
+
+                                                background: Item {
+                                                }
+
+                                                contentItem: Image {
+                                                    anchors.fill: parent
+
+                                                    source:
+                                                        !moduleCopyButton.enabled
+                                                        ? root.asset(
+                                                            "copy-icon-disabled.png"
+                                                        )
+                                                        : moduleCopyButton.down
+                                                          ? root.asset(
+                                                              "copy-icon-pressed.png"
+                                                          )
+                                                          : moduleCopyButton.hovered
+                                                            ? root.asset(
+                                                                "copy-icon-hover.png"
+                                                            )
+                                                            : root.asset(
+                                                                "copy-icon-normal.png"
+                                                            )
+
+                                                    fillMode:
+                                                        Image.PreserveAspectFit
+
+                                                    smooth: true
+                                                    mipmap: true
+                                                }
+
+                                                onClicked: {
+                                                    moduleLogText.selectAll()
+                                                    moduleLogText.copy()
+                                                    moduleLogText.deselect()
+                                                }
+                                            }
+
                                             /*
                                              * Misma flecha que el installer.
                                              */
@@ -1502,6 +1598,8 @@ ApplicationWindow {
                                                 anchors.margins: 8
 
                                                 TextArea {
+                                                    id: moduleLogText
+
                                                     readOnly: true
                                                     selectByMouse: true
 
@@ -1540,4 +1638,297 @@ ApplicationWindow {
             }
         }
     }
+
+
+    /*
+     * ==========================================================
+     * MODAL GLOBAL DE DESINSTALACIÓN
+     *
+     * Una sola instancia para todos los módulos.
+     * ==========================================================
+     */
+    Dialog {
+        id: uninstallSettingsDialog
+
+        modal: true
+        focus: true
+
+        width:
+            Math.min(
+                500,
+                root.width - 80
+            )
+
+        x:
+            Math.round(
+                (root.width - width) / 2
+            )
+
+        y:
+            Math.round(
+                (root.height - height) / 2
+            )
+
+        padding: 24
+
+        closePolicy:
+            Popup.CloseOnEscape
+
+        background: Rectangle {
+            radius: 14
+
+            color: "#0C0C10"
+
+            border.width: 2
+            border.color: "#A855F7"
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -3
+
+                z: -1
+
+                radius: 17
+                color: "transparent"
+
+                border.width: 4
+                border.color: "#4C1D95"
+
+                opacity: 0.55
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 18
+
+            Label {
+                Layout.fillWidth: true
+
+                text:
+                    root.t(
+                        "modules.uninstall_keep_settings_title"
+                    )
+
+                color: "#E9D5FF"
+
+                font.pixelSize: 20
+                font.bold: true
+
+                horizontalAlignment:
+                    Text.AlignHCenter
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+
+                color: "#4C1D95"
+            }
+
+            Label {
+                Layout.fillWidth: true
+
+                text:
+                    root.t(
+                        "modules.uninstall_keep_settings_message"
+                    ).replace(
+                        "%1",
+                        root.pendingUninstallModule
+                    )
+
+                color: "#D4D4D8"
+
+                font.pixelSize: 14
+
+                wrapMode:
+                    Text.WordWrap
+
+                horizontalAlignment:
+                    Text.AlignHCenter
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                spacing: 10
+
+                /*
+                 * CANCELAR
+                 */
+                Button {
+                    id: uninstallCancelButton
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 42
+
+                    hoverEnabled: true
+
+                    text:
+                        root.t(
+                            "common.cancel"
+                        )
+
+                    background: Rectangle {
+                        radius: 8
+
+                        color:
+                            uninstallCancelButton.down
+                            ? "#27272A"
+                            : uninstallCancelButton.hovered
+                              ? "#18181B"
+                              : "#101014"
+
+                        border.width: 1
+                        border.color: "#52525B"
+                    }
+
+                    contentItem: Text {
+                        text:
+                            uninstallCancelButton.text
+
+                        color: "#D4D4D8"
+
+                        horizontalAlignment:
+                            Text.AlignHCenter
+
+                        verticalAlignment:
+                            Text.AlignVCenter
+                    }
+
+                    onClicked:
+                        uninstallSettingsDialog.close()
+                }
+
+                /*
+                 * CONSERVAR CONFIGURACIÓN
+                 */
+                Button {
+                    id: uninstallKeepButton
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 42
+
+                    hoverEnabled: true
+
+                    text:
+                        root.t(
+                            "modules.uninstall_keep_settings_keep"
+                        )
+
+                    background: Rectangle {
+                        radius: 8
+
+                        color:
+                            uninstallKeepButton.down
+                            ? "#164E63"
+                            : uninstallKeepButton.hovered
+                              ? "#123846"
+                              : "#101A1E"
+
+                        border.width: 2
+                        border.color: "#22D3EE"
+                    }
+
+                    contentItem: Text {
+                        text:
+                            uninstallKeepButton.text
+
+                        color: "#67E8F9"
+
+                        font.bold: true
+
+                        horizontalAlignment:
+                            Text.AlignHCenter
+
+                        verticalAlignment:
+                            Text.AlignVCenter
+                    }
+
+                    onClicked: {
+                        const name =
+                            root.pendingUninstallModule
+
+                        uninstallSettingsDialog.close()
+
+                        if (
+                            typeof boss !== "undefined"
+                            && name.length > 0
+                        ) {
+                            boss.uninstallModule(
+                                name,
+                                false
+                            )
+                        }
+                    }
+                }
+
+                /*
+                 * ELIMINAR CONFIGURACIÓN
+                 */
+                Button {
+                    id: uninstallRemoveButton
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 42
+
+                    hoverEnabled: true
+
+                    text:
+                        root.t(
+                            "modules.uninstall_keep_settings_remove"
+                        )
+
+                    background: Rectangle {
+                        radius: 8
+
+                        color:
+                            uninstallRemoveButton.down
+                            ? "#6D28D9"
+                            : uninstallRemoveButton.hovered
+                              ? "#4C1D95"
+                              : "#1B1027"
+
+                        border.width: 2
+                        border.color: "#A855F7"
+                    }
+
+                    contentItem: Text {
+                        text:
+                            uninstallRemoveButton.text
+
+                        color: "#E9D5FF"
+
+                        font.bold: true
+
+                        horizontalAlignment:
+                            Text.AlignHCenter
+
+                        verticalAlignment:
+                            Text.AlignVCenter
+                    }
+
+                    onClicked: {
+                        const name =
+                            root.pendingUninstallModule
+
+                        uninstallSettingsDialog.close()
+
+                        if (
+                            typeof boss !== "undefined"
+                            && name.length > 0
+                        ) {
+                            boss.uninstallModule(
+                                name,
+                                true
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        onClosed:
+            root.pendingUninstallModule = ""
+    }
+
 }

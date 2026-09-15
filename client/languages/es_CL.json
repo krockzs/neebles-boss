@@ -110,5 +110,10 @@
   "installer.progress.installing_launcher": "Instalando paquete Launcher de Plasma para N.E.E.B.L.E.S...",
   "installer.progress.installing_spacer": "Instalando paquete Spacer de Plasma para N.E.E.B.L.E.S...",
   "installer.progress.verifying_backend": "Verificando backend instalado...",
-  "installer.progress.completed": "N.E.E.B.L.E.S. Boss instalado correctamente."
+  "installer.progress.completed": "N.E.E.B.L.E.S. Boss instalado correctamente.",
+  "common.copy": "Copiar",
+  "modules.uninstall_keep_settings_title": "Conservar configuración",
+  "modules.uninstall_keep_settings_message": "¿Deseas conservar la configuración local de %1?",
+  "modules.uninstall_keep_settings_keep": "Conservar",
+  "modules.uninstall_keep_settings_remove": "Eliminar"
 }

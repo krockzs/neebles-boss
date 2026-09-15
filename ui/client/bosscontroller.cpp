@@ -1916,6 +1916,282 @@ void BossController::runModuleOperation(
 
     setBusy(false);
 }
+void BossController::saveConfigValue(
+    const QString &key,
+    const QString &value
+)
+{
+    static const QSet<QString> allowed = {
+        QStringLiteral("language"),
+        QStringLiteral("tray_enabled"),
+        QStringLiteral("launcher_enabled"),
+        QStringLiteral("normal_notifications")
+    };
+
+    if (
+        !allowed.contains(key)
+        || m_busy
+    ) {
+        return;
+    }
+
+    const QString normalized =
+        value.trimmed();
+
+    const bool launcherWasEnabled =
+        m_launcherEnabled;
+
+    const bool notificationsWereEnabled =
+        m_normalNotifications;
+
+    const bool disablingNotifications =
+        key
+            == QStringLiteral(
+                "normal_notifications"
+            )
+        && notificationsWereEnabled
+        && normalized
+            == QStringLiteral("false");
+
+    /*
+     * OFF:
+     * avisar antes de desactivar notificaciones normales.
+     */
+    if (disablingNotifications) {
+        bool notificationOk = false;
+
+        run(
+            {
+                QStringLiteral("notify"),
+                QStringLiteral("info"),
+                QStringLiteral(
+                    "N.E.E.B.L.E.S."
+                ),
+                text(
+                    QStringLiteral(
+                        "notifications.disabled"
+                    )
+                )
+            },
+            false,
+            5000,
+            &notificationOk
+        );
+    }
+
+    setBusy(true);
+
+    bool ok = false;
+
+    /*
+     * Escritura administrativa:
+     * pasa por el auth-agent.
+     */
+    run(
+        {
+            QStringLiteral("config"),
+            QStringLiteral("set"),
+            key,
+            normalized
+        },
+        true,
+        5000,
+        &ok
+    );
+
+    if (!ok) {
+        /*
+         * Si se cancela o falla autorización,
+         * recuperamos el estado real.
+         */
+        reload();
+        setBusy(false);
+        return;
+    }
+
+    /*
+     * Launcher:
+     * mantener sincronizado estado lógico y panel Plasma.
+     */
+    if (
+        key
+            == QStringLiteral(
+                "launcher_enabled"
+            )
+    ) {
+        const bool enabled =
+            normalized
+                == QStringLiteral("true");
+
+        if (
+            enabled
+            != launcherWasEnabled
+        ) {
+            if (
+                !applyLauncherPanelState(
+                    enabled
+                )
+            ) {
+                setStatusText(
+                    text(
+                        QStringLiteral(
+                            "launcher.update_failed"
+                        )
+                    )
+                );
+            }
+        }
+    }
+
+    /*
+     * ON:
+     * primero persistir, luego avisar.
+     */
+    if (
+        key
+            == QStringLiteral(
+                "normal_notifications"
+            )
+        && !notificationsWereEnabled
+        && normalized
+            == QStringLiteral("true")
+    ) {
+        bool notificationOk = false;
+
+        run(
+            {
+                QStringLiteral("notify"),
+                QStringLiteral("success"),
+                QStringLiteral(
+                    "N.E.E.B.L.E.S."
+                ),
+                text(
+                    QStringLiteral(
+                        "notifications.enabled"
+                    )
+                )
+            },
+            false,
+            5000,
+            &notificationOk
+        );
+    }
+
+    reload();
+
+    if (
+        statusText().isEmpty()
+        || statusText()
+            == text(
+                QStringLiteral(
+                    "common.ok"
+                )
+            )
+    ) {
+        setStatusText(
+            text(
+                QStringLiteral(
+                    "common.ok"
+                )
+            )
+        );
+    }
+
+    setBusy(false);
+}
+
+
+int BossController::moduleLocalState(
+    const QString &name
+)
+{
+    if (name.isEmpty())
+        return -1;
+
+    QJsonObject request;
+
+    request.insert(
+        QStringLiteral("target"),
+        QStringLiteral("settings")
+    );
+
+    request.insert(
+        QStringLiteral("action"),
+        QStringLiteral("has-state")
+    );
+
+    QJsonArray args;
+
+    args.append(name);
+
+    request.insert(
+        QStringLiteral("args"),
+        args
+    );
+
+    QJsonObject context;
+
+    context.insert(
+        QStringLiteral("caller"),
+        QStringLiteral("ui")
+    );
+
+    request.insert(
+        QStringLiteral("context"),
+        context
+    );
+
+    const QString rawRequest =
+        QString::fromUtf8(
+            QJsonDocument(
+                request
+            ).toJson(
+                QJsonDocument::Compact
+            )
+        );
+
+    bool ok = false;
+
+    const QByteArray output =
+        run(
+            {
+                QStringLiteral(
+                    "--request-json"
+                ),
+                rawRequest
+            },
+            false,
+            5000,
+            &ok
+        );
+
+    if (!ok)
+        return -1;
+
+    const QVariantMap response =
+        parseJson(
+            output
+        ).toMap();
+
+    if (
+        !response.value(
+            QStringLiteral("ok")
+        ).toBool()
+        || !response.contains(
+            QStringLiteral("result")
+        )
+    ) {
+        return -1;
+    }
+
+    return response.value(
+        QStringLiteral("result")
+    ).toBool()
+        ? 1
+        : 0;
+}
+
+
 void BossController::installModule(
     const QString &name
 )
@@ -1946,13 +2222,24 @@ void BossController::updateModule(
 
 
 void BossController::uninstallModule(
-    const QString &name
+    const QString &name,
+    bool removeSettings
 )
 {
+    QStringList extraArguments;
+
+    if (removeSettings) {
+        extraArguments
+            << QStringLiteral(
+                "--remove-settings"
+            );
+    }
+
     startModuleProcess(
         QStringLiteral("uninstall"),
         name,
-        true
+        true,
+        extraArguments
     );
 }
 
@@ -2060,7 +2347,7 @@ void BossController::setModuleEnabled(const QString &name, bool enabled)
             ? QStringLiteral("enable")
             : QStringLiteral("disable"),
         name,
-        false
+        true
     );
 }
 
@@ -2082,7 +2369,7 @@ void BossController::setModuleVisibility(
                 ? QStringLiteral("true")
                 : QStringLiteral("false")
         },
-        false,
+        true,
         5000,
         &ok
     );

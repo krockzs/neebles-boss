@@ -49,9 +49,26 @@ public:
                                 bool trayEnabled,
                                 bool launcherEnabled,
                                 bool normalNotifications);
+
+    Q_INVOKABLE void saveConfigValue(
+        const QString &key,
+        const QString &value
+    );
+
+    /*
+     * -1 = error
+     *  0 = sin estado local significativo
+     *  1 = existe estado local significativo
+     */
+    Q_INVOKABLE int moduleLocalState(
+        const QString &name
+    );
     Q_INVOKABLE void installModule(const QString &name);
     Q_INVOKABLE void updateModule(const QString &name);
-    Q_INVOKABLE void uninstallModule(const QString &name);
+    Q_INVOKABLE void uninstallModule(
+        const QString &name,
+        bool removeSettings
+    );
     Q_INVOKABLE void openModule(const QString &name);
     Q_INVOKABLE void setModuleEnabled(const QString &name, bool enabled);
     Q_INVOKABLE void setModuleVisibility(const QString &surface,
