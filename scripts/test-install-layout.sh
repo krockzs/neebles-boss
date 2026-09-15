@@ -208,11 +208,6 @@ cmp -s \
         exit 1
     }
 
-cmp -s \
-    || {
-        echo "PACKAGING TEST INVALID: installed XDG autostart differs from source" >&2
-        exit 1
-    }
 
 echo "=== ROLLBACK AFTER GLOBAL MUTATION ==="
 
@@ -236,7 +231,6 @@ DESTDIR="$ROOT" \
     "$REPO_ROOT/scripts/install.sh" \
     "$BACKEND" \
     "$UI" \
-    "$TRAY" \
     "$ARCHIVE" \
     "$AUTH"
 ROLLBACK_RC=$?
@@ -276,11 +270,6 @@ grep -q '^# rollback-systemd$' \
         exit 1
     }
 
-grep -q '^# rollback-xdg$' \
-    || {
-        echo "PACKAGING TEST INVALID: XDG autostart was not restored after failed reinstall" >&2
-        exit 1
-    }
 
 [[ "$(readlink "$ROOT/usr/local/bin/neebles")" == "/baseline/neebles" ]] || {
     echo "PACKAGING TEST INVALID: global command symlink was not restored" >&2
@@ -329,11 +318,6 @@ cmp -s \
         exit 1
     }
 
-cmp -s \
-    || {
-        echo "PACKAGING TEST INVALID: final XDG autostart differs from source" >&2
-        exit 1
-    }
 
 [[ "$(readlink "$ROOT/usr/local/bin/neebles")" == "/opt/neebles/client/bin/neebles" ]] || {
     echo "PACKAGING TEST INVALID: final global Boss symlink is wrong" >&2

@@ -1193,7 +1193,6 @@ void BossController::saveConfig(const QString &language,
                                 bool launcherEnabled,
                                 bool normalNotifications)
 {
-    const bool trayWasEnabled = m_trayEnabled;
     const bool launcherWasEnabled = m_launcherEnabled;
     const bool notificationsWereEnabled = m_normalNotifications;
 
