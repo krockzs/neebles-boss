@@ -10,10 +10,9 @@ cd "$REPO_ROOT"
 
 BACKEND="$REPO_ROOT/target/debug/neebles-backend"
 UI="$REPO_ROOT/ui/client/build/neebles-ui"
-TRAY="$REPO_ROOT/client/tray-host/build/neebles-tray-host"
 AUTH="$REPO_ROOT/ui/auth-agent/build/neebles-auth-agent"
 
-for binary in "$BACKEND" "$UI" "$TRAY" "$AUTH"; do
+for binary in "$BACKEND" "$UI" "$AUTH"; do
     [[ -f "$binary" ]] || {
         echo "PACKAGING TEST INVALID: missing built binary: $binary" >&2
         echo "Run ./scripts/build-all.sh first." >&2
@@ -51,7 +50,6 @@ run_install_archive() {
         "$REPO_ROOT/scripts/install.sh" \
         "$BACKEND" \
         "$UI" \
-        "$TRAY" \
         "$ARCHIVE" \
         "$AUTH"
 }
@@ -61,7 +59,6 @@ run_install_directory() {
         "$REPO_ROOT/scripts/install.sh" \
         "$BACKEND" \
         "$UI" \
-        "$TRAY" \
         "$REPO_ROOT/client" \
         "$AUTH"
 }
@@ -101,13 +98,11 @@ CLIENT="$ROOT/opt/neebles/client"
 
 assert_file "$CLIENT/backend/neebles-backend"
 assert_file "$CLIENT/ui/neebles-ui"
-assert_file "$CLIENT/tray-host/neebles-tray-host"
 assert_file "$CLIENT/auth/neebles-auth-agent"
 assert_file "$CLIENT/languages/manifest.json"
 assert_file "$CLIENT/config/defaults.json"
 
 assert_file "$ROOT/usr/lib/systemd/user/neebles-tray-manager.service"
-assert_file "$ROOT/etc/xdg/autostart/neebles-tray-host.desktop"
 
 assert_dir "$ROOT/usr/share/plasma/plasmoids/org.neebles.launcher"
 assert_dir "$ROOT/usr/share/plasma/plasmoids/org.neebles.spacer"
@@ -144,7 +139,6 @@ assert_dir "$ROOT/usr/share/plasma/plasmoids/org.neebles.spacer"
 
 assert_mode 755 "$CLIENT/backend/neebles-backend"
 assert_mode 755 "$CLIENT/ui/neebles-ui"
-assert_mode 755 "$CLIENT/tray-host/neebles-tray-host"
 assert_mode 755 "$CLIENT/auth/neebles-auth-agent"
 
 for tree in \
@@ -215,8 +209,6 @@ cmp -s \
     }
 
 cmp -s \
-    client/xdg/neebles-tray-host.desktop \
-    "$ROOT/etc/xdg/autostart/neebles-tray-host.desktop" \
     || {
         echo "PACKAGING TEST INVALID: installed XDG autostart differs from source" >&2
         exit 1
@@ -230,7 +222,6 @@ printf 'rollback-spacer\n' > "$ROOT/usr/share/plasma/plasmoids/org.neebles.space
 printf 'rollback-icon\n' > "$ROOT/usr/share/icons/hicolor/256x256/apps/neebles-boss-launcher-icon.png"
 
 printf '\n# rollback-systemd\n' >> "$ROOT/usr/lib/systemd/user/neebles-tray-manager.service"
-printf '\n# rollback-xdg\n' >> "$ROOT/etc/xdg/autostart/neebles-tray-host.desktop"
 
 rm -f "$ROOT/usr/local/bin/neebles"
 ln -s /baseline/neebles "$ROOT/usr/local/bin/neebles"
@@ -286,7 +277,6 @@ grep -q '^# rollback-systemd$' \
     }
 
 grep -q '^# rollback-xdg$' \
-    "$ROOT/etc/xdg/autostart/neebles-tray-host.desktop" \
     || {
         echo "PACKAGING TEST INVALID: XDG autostart was not restored after failed reinstall" >&2
         exit 1
@@ -340,8 +330,6 @@ cmp -s \
     }
 
 cmp -s \
-    client/xdg/neebles-tray-host.desktop \
-    "$ROOT/etc/xdg/autostart/neebles-tray-host.desktop" \
     || {
         echo "PACKAGING TEST INVALID: final XDG autostart differs from source" >&2
         exit 1

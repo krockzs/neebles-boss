@@ -19,7 +19,6 @@ CLIENT_ROOT="$INSTALL_ROOT/client"
 BIN_DIR="$CLIENT_ROOT/bin"
 BACKEND_DIR="$CLIENT_ROOT/backend"
 UI_DIR="$CLIENT_ROOT/ui"
-TRAY_DIR="$CLIENT_ROOT/tray-host"
 AUTH_DIR="$CLIENT_ROOT/auth"
 LAUNCHER_DIR="$CLIENT_ROOT/launcher"
 SPACER_DIR="$CLIENT_ROOT/spacer"
@@ -35,7 +34,6 @@ GLOBAL_BIN="${DESTDIR}/usr/local/bin/neebles"
 GLOBAL_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-boss-launcher-icon.png"
 SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 SYSTEMD_WANTS="${DESTDIR}/etc/systemd/user/default.target.wants"
-XDG_AUTOSTART="${DESTDIR}/etc/xdg/autostart/neebles-tray-host.desktop"
 PLASMA_LAUNCHER="${DESTDIR}/usr/share/plasma/plasmoids/org.neebles.launcher"
 PLASMA_SPACER="${DESTDIR}/usr/share/plasma/plasmoids/org.neebles.spacer"
 
@@ -187,16 +185,15 @@ if [[ -z "$DESTDIR" && ${EUID} -ne 0 ]]; then
     exit 1
 fi
 
-if [[ $# -ne 5 ]]; then
-    echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <neebles-tray-host-binary> <client-data.tar.gz|client-data-directory> <neebles-auth-agent-binary>" >&2
+if [[ $# -ne 4 ]]; then
+    echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <client-data.tar.gz|client-data-directory> <neebles-auth-agent-binary>" >&2
     exit 1
 fi
 
 BACKEND_SOURCE="$1"
 UI_SOURCE="$2"
-TRAY_SOURCE="$3"
-CLIENT_DATA_ARCHIVE="$4"
-AUTH_AGENT_SOURCE="$5"
+CLIENT_DATA_ARCHIVE="$3"
+AUTH_AGENT_SOURCE="$4"
 CLIENT_DATA_SOURCE=""
 
 progress 5
@@ -208,7 +205,6 @@ status_key "installer.progress.validating_payload"
 for item in \
     "$BACKEND_SOURCE" \
     "$UI_SOURCE" \
-    "$TRAY_SOURCE" \
     "$AUTH_AGENT_SOURCE"
 do
     [[ -f "$item" && -r "$item" ]] || {
@@ -246,7 +242,6 @@ REQUIRED_ROOTS=(
     spacer
     notifications
     systemd
-    xdg
 )
 
 for root in "${REQUIRED_ROOTS[@]}"; do
@@ -278,7 +273,6 @@ REQUIRED_FILES=(
     spacer/metadata.json
     spacer/contents/ui/main.qml
     systemd/neebles-tray-manager.service
-    xdg/neebles-tray-host.desktop
 )
 
 for item in "${REQUIRED_FILES[@]}"; do
@@ -334,7 +328,6 @@ install -d -m 0755 \
     "$CLIENT_STAGE/bin" \
     "$CLIENT_STAGE/backend" \
     "$CLIENT_STAGE/ui" \
-    "$CLIENT_STAGE/tray-host" \
     "$CLIENT_STAGE/auth"
 
 copy_data_tree() {
@@ -372,13 +365,6 @@ status_key "installer.progress.installing_auth_agent"
 install -m 0755 \
     "$AUTH_AGENT_SOURCE" \
     "$CLIENT_STAGE/auth/neebles-auth-agent"
-
-progress 58
-status_key "installer.progress.installing_tray_host"
-
-install -m 0755 \
-    "$TRAY_SOURCE" \
-    "$CLIENT_STAGE/tray-host/neebles-tray-host"
 
 progress 66
 status_key "installer.progress.installing_client_data"
@@ -420,7 +406,6 @@ backup_global_path "$GLOBAL_BIN" "global-bin"
 backup_global_path "$GLOBAL_ICON" "global-icon"
 backup_global_path "$SYSTEMD_SERVICE" "systemd-service"
 backup_global_path "$SYSTEMD_WANTS/neebles-tray-manager.service" "systemd-wants"
-backup_global_path "$XDG_AUTOSTART" "xdg-autostart"
 backup_global_path "$PLASMA_LAUNCHER" "plasma-launcher"
 backup_global_path "$PLASMA_SPACER" "plasma-spacer"
 
@@ -451,14 +436,6 @@ ln -sfnT \
     /usr/lib/systemd/user/neebles-tray-manager.service \
     "$SYSTEMD_WANTS/neebles-tray-manager.service"
 
-progress 82
-status_key "installer.progress.registering_tray_autostart"
-
-install -d -m 0755 "$(dirname "$XDG_AUTOSTART")"
-
-install -m 0644 \
-    "$CLIENT_DATA_SOURCE/xdg/neebles-tray-host.desktop" \
-    "$XDG_AUTOSTART"
 
 progress 88
 status_key "installer.progress.installing_launcher"
@@ -516,13 +493,6 @@ cmp -s \
         exit 1
     }
 
-cmp -s \
-    "$CLIENT_DATA_SOURCE/xdg/neebles-tray-host.desktop" \
-    "$XDG_AUTOSTART" \
-    || {
-        echo "Installed Tray Host autostart does not match payload." >&2
-        exit 1
-    }
 
 CLIENT_SWAPPED=0
 GLOBAL_PATHS=()
@@ -544,6 +514,5 @@ status_key "installer.progress.completed"
 
 echo "Installed backend: $BACKEND_DIR/neebles-backend"
 echo "Installed UI: $UI_DIR/neebles-ui"
-echo "Installed tray host: $TRAY_DIR/neebles-tray-host"
 echo "OS entrypoint: $BIN_DIR/neebles"
 echo "Global command: $GLOBAL_BIN"

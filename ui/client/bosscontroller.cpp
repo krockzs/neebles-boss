@@ -1278,22 +1278,6 @@ void BossController::saveConfig(const QString &language,
 
     if (ok) {
         /*
-         * Tray OFF is handled by the tray process itself when it
-         * observes tray_enabled=false.
-         *
-         * On the OFF -> ON transition, Boss starts it again.
-         */
-        if (trayEnabled && !trayWasEnabled) {
-            const QString trayPath =
-                QStringLiteral(
-                    "/opt/neebles/client/tray-host/neebles-tray-host"
-                );
-
-            if (QFileInfo::exists(trayPath))
-                QProcess::startDetached(trayPath, {});
-        }
-
-        /*
          * Launcher is a real Plasma panel integration:
          * OFF removes launcher + spacer.
          * ON recreates both beside Kickoff.

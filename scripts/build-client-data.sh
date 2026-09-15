@@ -22,7 +22,6 @@ REQUIRED_ROOTS=(
     spacer
     notifications
     systemd
-    xdg
 )
 
 for root in "${REQUIRED_ROOTS[@]}"; do

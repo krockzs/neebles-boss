@@ -44,7 +44,6 @@ The current stable release publishes:
 - neebles-backend
 - neebles-ui
 - neebles-installer
-- neebles-tray-host
 - client-data.tar.gz
 - install.sh
 

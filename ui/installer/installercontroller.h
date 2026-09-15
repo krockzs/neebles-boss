@@ -47,7 +47,6 @@ private:
     void setStatus(const QString &value);
     void appendLog(const QString &line);
     void integrateDesktop();
-    void startTray();
     void installLauncherIntoPanel();
     void consumeLine(const QString &line);
     QString authorizationPath() const;
@@ -56,7 +55,6 @@ private:
     QString m_installScript;
     QString m_backendBinary;
     QString m_uiBinary;
-    QString m_trayBinary;
     QString m_clientDataArchive;
     QProcess m_process;
     QByteArray m_buffer;

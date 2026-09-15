@@ -119,7 +119,7 @@ static QString extractClientData(
      * No explicit payload argument:
      * this is allowed for development/local execution.
      */
-    if (arguments.size() < 6)
+    if (arguments.size() < 5)
         return {};
 
     /*
@@ -127,7 +127,7 @@ static QString extractClientData(
      * Failure must never fall through to another client root.
      */
     const QString archive =
-        arguments.at(5).trimmed();
+        arguments.at(4).trimmed();
 
     if (archive.isEmpty()) {
         if (error) {

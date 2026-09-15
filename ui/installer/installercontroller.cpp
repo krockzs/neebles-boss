@@ -21,12 +21,11 @@ InstallerController::InstallerController(
             "installer.status.waiting_authorization"
         )
     );
-    if (arguments.size() >= 6) {
+    if (arguments.size() >= 5) {
         m_installScript = arguments.at(1);
         m_backendBinary = arguments.at(2);
         m_uiBinary = arguments.at(3);
-        m_trayBinary = arguments.at(4);
-        m_clientDataArchive = arguments.at(5);
+        m_clientDataArchive = arguments.at(4);
     }
 
     m_process.setProcessChannelMode(QProcess::MergedChannels);
@@ -119,7 +118,7 @@ void InstallerController::startInstallation()
         return;
 
     if (m_installScript.isEmpty() || m_backendBinary.isEmpty() || m_uiBinary.isEmpty()
-        || m_trayBinary.isEmpty() || m_clientDataArchive.isEmpty()) {
+        || m_clientDataArchive.isEmpty()) {
         setStatus(
             text(
                 QStringLiteral(
@@ -143,7 +142,6 @@ void InstallerController::startInstallation()
     if (!QFileInfo::exists(m_installScript) ||
         !QFileInfo::exists(m_backendBinary) ||
         !QFileInfo::exists(m_uiBinary) ||
-        !QFileInfo::exists(m_trayBinary) ||
         !QFileInfo::exists(m_clientDataArchive)) {
         setStatus(
             text(
@@ -235,12 +233,11 @@ void InstallerController::startInstallation()
         m_installScript,
         m_backendBinary,
         m_uiBinary,
-        m_trayBinary,
         m_clientDataArchive,
 
         /*
          * install.sh receives the auth agent as
-         * mandatory fifth payload and installs it
+         * mandatory fourth payload and installs it
          * permanently with Boss.
          */
         authAgent
