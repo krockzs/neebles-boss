@@ -5,6 +5,7 @@ use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::Shutdown;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
@@ -108,6 +109,19 @@ pub fn serve() -> Result<(), String> {
     let listener = UnixListener::bind(&path).map_err(|error| {
         format!(
             "could not bind N.E.E.B.L.E.S. Unix socket {}: {error}",
+            path.display()
+        )
+    })?;
+
+    /*
+     * neebles.sock is the administrative Boss dispatcher.
+     *
+     * Module processes must use their governed IPC surface,
+     * never this generic administrative socket.
+     */
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|error| {
+        format!(
+            "could not secure N.E.E.B.L.E.S. socket {}: {error}",
             path.display()
         )
     })?;

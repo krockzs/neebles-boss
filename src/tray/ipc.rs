@@ -1,5 +1,6 @@
 use crate::config;
 use crate::modules;
+use crate::settings;
 use crate::tray::manager;
 use crate::tray::protocol::{TrayEvent, TrayMessage};
 
@@ -659,6 +660,97 @@ fn process_message(
             ack(writer, "unregister", Some(tray_id))
         }
 
+        TrayMessage::SettingsGet { owner_module, path } => {
+            assert_session_peer(peer)?;
+
+            if *subscribed {
+                return Err("tray subscriber connections cannot read module settings".to_string());
+            }
+
+            if let Some(registered) = registered_tray.as_deref() {
+                if registered != owner_module {
+                    return Err(format!(
+                        "registered tray '{}' cannot read settings for module '{}'",
+                        registered, owner_module
+                    ));
+                }
+            }
+
+            /*
+             * Identity comes from the kernel PID, never from
+             * owner_module alone.
+             *
+             * verify_tray_provider_process() proves that this
+             * exact process is the provider declared by the
+             * installed module.
+             */
+            modules::verify_tray_provider_process(&owner_module, peer.pid)?;
+
+            let default = modules::installed_module_settings_default(&owner_module)?;
+
+            let settings_path =
+                settings::module_settings_path(&modules::neebles_root(), &owner_module);
+
+            let current = settings::load_or_create(&settings_path, &default)?;
+
+            let value = settings::get_path(&current, &path)?;
+
+            write_message(
+                writer,
+                &TrayMessage::SettingsValue {
+                    owner_module,
+                    path,
+                    value,
+                },
+            )
+        }
+
+        TrayMessage::SettingsSet {
+            owner_module,
+            path,
+            value,
+        } => {
+            assert_session_peer(peer)?;
+
+            if *subscribed {
+                return Err("tray subscriber connections cannot write module settings".to_string());
+            }
+
+            if let Some(registered) = registered_tray.as_deref() {
+                if registered != owner_module {
+                    return Err(format!(
+                        "registered tray '{}' cannot write settings for module '{}'",
+                        registered, owner_module
+                    ));
+                }
+            }
+
+            /*
+             * The caller cannot impersonate another module:
+             * Boss verifies the real kernel PID against that
+             * module's installed tray provider.
+             */
+            modules::verify_tray_provider_process(&owner_module, peer.pid)?;
+
+            let default = modules::installed_module_settings_default(&owner_module)?;
+
+            let settings_path =
+                settings::module_settings_path(&modules::neebles_root(), &owner_module);
+
+            let updated = settings::set_path(&settings_path, &default, &path, value)?;
+
+            let value = settings::get_path(&updated, &path)?;
+
+            write_message(
+                writer,
+                &TrayMessage::SettingsValue {
+                    owner_module,
+                    path,
+                    value,
+                },
+            )
+        }
+
         TrayMessage::SetVisibility { tray_id, visible } => {
             assert_session_peer(peer)?;
 
@@ -808,6 +900,7 @@ fn process_message(
         | TrayMessage::Snapshot { .. }
         | TrayMessage::Event { .. }
         | TrayMessage::Record { .. }
+        | TrayMessage::SettingsValue { .. }
         | TrayMessage::Error { .. } => {
             Err("response-only tray message received by server".to_string())
         }

@@ -129,6 +129,17 @@ pub enum TrayMessage {
         visible: bool,
     },
 
+    SettingsGet {
+        owner_module: String,
+        path: String,
+    },
+
+    SettingsSet {
+        owner_module: String,
+        path: String,
+        value: Value,
+    },
+
     StopProvider {
         tray_id: String,
     },
@@ -167,6 +178,12 @@ pub enum TrayMessage {
 
     Record {
         tray: TrayRecord,
+    },
+
+    SettingsValue {
+        owner_module: String,
+        path: String,
+        value: Value,
     },
 
     Error {

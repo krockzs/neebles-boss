@@ -28,10 +28,7 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     fs::rename(&temp, path).map_err(|error| {
         let _ = fs::remove_file(&temp);
 
-        format!(
-            "could not commit settings {}: {error}",
-            path.display()
-        )
+        format!("could not commit settings {}: {error}", path.display())
     })
 }
 
@@ -47,10 +44,7 @@ pub fn load(path: &Path) -> Result<Value, String> {
     Ok(value)
 }
 
-pub fn load_or_create(
-    path: &Path,
-    default: &Value,
-) -> Result<Value, String> {
+pub fn load_or_create(path: &Path, default: &Value) -> Result<Value, String> {
     ensure_object(default, "settings default")?;
 
     if path.exists() {
@@ -62,39 +56,31 @@ pub fn load_or_create(
     Ok(default.clone())
 }
 
-pub fn save(
-    path: &Path,
-    value: &Value,
-) -> Result<(), String> {
+pub fn save(path: &Path, value: &Value) -> Result<(), String> {
     ensure_object(value, "settings")?;
     write_json(path, value)
 }
 
-fn merge_compatible(
-    current: &Value,
-    new_default: &Value,
-) -> Value {
+fn merge_compatible(current: &Value, new_default: &Value) -> Value {
     match (current, new_default) {
         (Value::Object(current_map), Value::Object(default_map)) => {
             let mut result = Map::new();
 
             for (key, default_value) in default_map {
                 let value = match current_map.get(key) {
-                    Some(current_value) => {
-                        match (current_value, default_value) {
-                            (Value::Object(_), Value::Object(_)) => {
-                                merge_compatible(current_value, default_value)
-                            }
-
-                            _ if std::mem::discriminant(current_value)
-                                == std::mem::discriminant(default_value) =>
-                            {
-                                current_value.clone()
-                            }
-
-                            _ => default_value.clone(),
+                    Some(current_value) => match (current_value, default_value) {
+                        (Value::Object(_), Value::Object(_)) => {
+                            merge_compatible(current_value, default_value)
                         }
-                    }
+
+                        _ if std::mem::discriminant(current_value)
+                            == std::mem::discriminant(default_value) =>
+                        {
+                            current_value.clone()
+                        }
+
+                        _ => default_value.clone(),
+                    },
 
                     None => default_value.clone(),
                 };
@@ -109,10 +95,7 @@ fn merge_compatible(
     }
 }
 
-pub fn update_from_default(
-    path: &Path,
-    new_default: &Value,
-) -> Result<Value, String> {
+pub fn update_from_default(path: &Path, new_default: &Value) -> Result<Value, String> {
     ensure_object(new_default, "settings default")?;
 
     if !path.exists() {
@@ -128,52 +111,32 @@ pub fn update_from_default(
     Ok(updated)
 }
 
-fn same_value_kind(
-    current: &Value,
-    default: &Value,
-) -> bool {
-    default.is_null()
-        || std::mem::discriminant(current)
-            == std::mem::discriminant(default)
+fn same_value_kind(current: &Value, default: &Value) -> bool {
+    default.is_null() || std::mem::discriminant(current) == std::mem::discriminant(default)
 }
 
 fn split_setting_path(path: &str) -> Result<Vec<&str>, String> {
-    let parts = path
-        .split('.')
-        .map(str::trim)
-        .collect::<Vec<_>>();
+    let parts = path.split('.').map(str::trim).collect::<Vec<_>>();
 
-    if parts.is_empty()
-        || parts.iter().any(|part| part.is_empty())
-    {
-        return Err(format!(
-            "invalid settings path: {path}"
-        ));
+    if parts.is_empty() || parts.iter().any(|part| part.is_empty()) {
+        return Err(format!("invalid settings path: {path}"));
     }
 
     Ok(parts)
 }
 
-pub fn get_path(
-    value: &Value,
-    path: &str,
-) -> Result<Value, String> {
+pub fn get_path(value: &Value, path: &str) -> Result<Value, String> {
     let parts = split_setting_path(path)?;
     let mut current = value;
 
     for part in parts {
-        let object = current.as_object().ok_or_else(|| {
-            format!(
-                "settings path '{}' crosses a non-object value",
-                path
-            )
-        })?;
+        let object = current
+            .as_object()
+            .ok_or_else(|| format!("settings path '{}' crosses a non-object value", path))?;
 
-        current = object.get(part).ok_or_else(|| {
-            format!(
-                "unknown settings path: {path}"
-            )
-        })?;
+        current = object
+            .get(part)
+            .ok_or_else(|| format!("unknown settings path: {path}"))?;
     }
 
     Ok(current.clone())
@@ -194,46 +157,29 @@ pub fn set_path(
     let mut default_node = default;
 
     for (index, part) in parts.iter().enumerate() {
-        let default_object =
-            default_node.as_object().ok_or_else(|| {
-                format!(
-                    "settings path '{}' crosses a non-object default",
-                    path
-                )
-            })?;
+        let default_object = default_node
+            .as_object()
+            .ok_or_else(|| format!("settings path '{}' crosses a non-object default", path))?;
 
-        let default_value =
-            default_object.get(*part).ok_or_else(|| {
-                format!(
-                    "unknown settings path: {path}"
-                )
-            })?;
+        let default_value = default_object
+            .get(*part)
+            .ok_or_else(|| format!("unknown settings path: {path}"))?;
 
         let is_last = index + 1 == parts.len();
 
-        let current_object =
-            current_node.as_object_mut().ok_or_else(|| {
-                format!(
-                    "settings path '{}' crosses a non-object value",
-                    path
-                )
-            })?;
+        let current_object = current_node
+            .as_object_mut()
+            .ok_or_else(|| format!("settings path '{}' crosses a non-object value", path))?;
 
         if is_last {
-            if !same_value_kind(
-                &new_value,
-                default_value,
-            ) {
+            if !same_value_kind(&new_value, default_value) {
                 return Err(format!(
                     "settings value type does not match default for path '{}'",
                     path
                 ));
             }
 
-            current_object.insert(
-                (*part).to_string(),
-                new_value,
-            );
+            current_object.insert((*part).to_string(), new_value);
 
             save(file, &current)?;
 
@@ -248,56 +194,44 @@ pub fn set_path(
         }
 
         if !current_object.contains_key(*part) {
-            current_object.insert(
-                (*part).to_string(),
-                default_value.clone(),
-            );
+            current_object.insert((*part).to_string(), default_value.clone());
         }
 
-        current_node =
-            current_object.get_mut(*part).unwrap();
+        current_node = current_object.get_mut(*part).unwrap();
 
         default_node = default_value;
     }
 
-    Err(format!(
-        "could not update settings path: {path}"
-    ))
+    Err(format!("could not update settings path: {path}"))
+}
+
+pub fn differs_from_default(current: &Value, default: &Value) -> Result<bool, String> {
+    ensure_object(current, "settings")?;
+    ensure_object(default, "settings default")?;
+
+    Ok(current != default)
 }
 
 pub fn is_effectively_empty(value: &Value) -> bool {
     match value {
-        Value::Object(map) =>
-            map.values().all(is_effectively_empty),
+        Value::Object(map) => map.values().all(is_effectively_empty),
 
-        Value::Array(values) =>
-            values.is_empty(),
+        Value::Array(values) => values.is_empty(),
 
         Value::Null => true,
 
-        Value::Bool(_)
-        | Value::Number(_)
-        | Value::String(_) => false,
+        Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
     }
 }
 
-pub fn settings_root(
-    neebles_root: &Path,
-) -> PathBuf {
+pub fn settings_root(neebles_root: &Path) -> PathBuf {
     neebles_root.join("shared/settings")
 }
 
-pub fn boss_settings_path(
-    neebles_root: &Path,
-) -> PathBuf {
-    settings_root(neebles_root)
-        .join("local_settings_boss.json")
+pub fn boss_settings_path(neebles_root: &Path) -> PathBuf {
+    settings_root(neebles_root).join("local_settings_boss.json")
 }
 
-pub fn module_settings_path(
-    neebles_root: &Path,
-    module: &str,
-) -> PathBuf {
-    settings_root(neebles_root)
-        .join(format!("local_settings_{module}.json"))
+pub fn module_settings_path(neebles_root: &Path, module: &str) -> PathBuf {
+    settings_root(neebles_root).join(format!("local_settings_{module}.json"))
 }
