@@ -439,14 +439,52 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
     let result = client_loop(&mut stream, &writer_sender, &module, &session_id);
 
     /*
-     * El reader terminó:
-     * esta sesión ya no debe aparecer como disponible.
+     * The reader ended: this exact runtime incarnation is no
+     * longer available.
+     *
+     * Remove it from RuntimeRegistry first so no new request
+     * can acquire this session.
      */
     let _ = runtime_registry().unregister(&module, &session_id);
 
     /*
-     * Al soltar el sender local y el del registry ya removido,
-     * el writer_receiver terminará cuando no queden clones.
+     * Wake every request already in flight for this exact
+     * session immediately.
+     *
+     * This must happen before joining the writer thread:
+     * waiting invoke() callers may still hold cloned writers
+     * through their runtime snapshot. Waking them releases
+     * those clones without waiting for their normal timeout.
+     */
+    let disconnect_reason = match &result {
+        Ok(()) => "runtime connection closed".to_string(),
+
+        Err(error) => {
+            format!("runtime connection failed: {}", error)
+        }
+    };
+
+    match pending_registry().fail_session(&module, &session_id, &disconnect_reason) {
+        Ok(failed) if failed > 0 => {
+            eprintln!(
+                "N.E.E.B.L.E.S.: failed {} pending request(s) for module '{}' session '{}'",
+                failed, module, session_id
+            );
+        }
+
+        Ok(_) => {}
+
+        Err(error) => {
+            eprintln!(
+                "N.E.E.B.L.E.S.: could not fail pending requests for module '{}' session '{}': {}",
+                module, session_id, error
+            );
+        }
+    }
+
+    /*
+     * Registry ownership and all in-flight request ownership
+     * for this session have now been released.
      */
     drop(writer_sender);
 

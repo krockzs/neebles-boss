@@ -52,7 +52,39 @@ pub fn invoke(
 
     let id = next_request_id();
 
-    let receiver = pending_registry().register(&id)?;
+    let receiver = pending_registry().register(&id, module, &runtime.session_id)?;
+
+    /*
+     * Close the race between taking the initial runtime
+     * snapshot and registering this pending request.
+     *
+     * If the runtime disappeared after get() but before
+     * register(), server cleanup may already have executed
+     * fail_session(). Re-check the exact session now:
+     *
+     * - if it is still the same Ready session, sending is safe;
+     * - if it disappeared or was replaced, cancel immediately.
+     *
+     * If the runtime dies after this check, server-side
+     * fail_session() will see this already-registered request.
+     */
+    let current_runtime = runtime_registry().get(module)?;
+
+    let session_still_ready = matches!(
+        current_runtime,
+        Some(ref current)
+            if current.session_id == runtime.session_id
+                && current.state == ModuleRuntimeState::Ready
+    );
+
+    if !session_still_ready {
+        let _ = pending_registry().cancel(&id);
+
+        return Err(format!(
+            "module '{}' runtime session '{}' disconnected before request '{}' could be sent",
+            module, runtime.session_id, id
+        ));
+    }
 
     let message = ModuleMessage::Invoke {
         id: id.clone(),
