@@ -13,7 +13,7 @@ PlasmoidItem {
     property var strings: ({})
     property var callbacks: ({})
     property bool bossRunning: false
-    property string bossVersion: "1.0.5"
+    property string bossVersion: "1.0.6"
     property var hiddenLauncherModules: []
 
     function safeModuleId(value) {
