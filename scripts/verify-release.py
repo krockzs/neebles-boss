@@ -12,7 +12,6 @@ REQUIRED_ASSETS = {
     "backend": "neebles-backend",
     "ui": "neebles-ui",
     "installer": "neebles-installer",
-    "tray": "neebles-tray-host",
     "auth_agent": "neebles-auth-agent",
     "client_data": "client-data.tar.gz",
     "install": "install.sh",
@@ -22,7 +21,6 @@ EXECUTABLE_ASSETS = {
     "backend",
     "ui",
     "installer",
-    "tray",
     "auth_agent",
     "install",
 }
@@ -35,7 +33,6 @@ REQUIRED_CLIENT_DATA_ROOTS = {
     "spacer",
     "notifications",
     "systemd",
-    "xdg",
 }
 
 REQUIRED_CLIENT_DATA_FILES = {
@@ -47,7 +44,6 @@ REQUIRED_CLIENT_DATA_FILES = {
     "spacer/metadata.json",
     "spacer/contents/ui/main.qml",
     "systemd/neebles-tray-manager.service",
-    "xdg/neebles-tray-host.desktop",
 }
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")

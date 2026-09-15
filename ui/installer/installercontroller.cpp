@@ -385,44 +385,7 @@ void InstallerController::processError(QProcess::ProcessError error)
 
 void InstallerController::integrateDesktop()
 {
-    startTray();
     installLauncherIntoPanel();
-}
-
-void InstallerController::startTray()
-{
-    const QString trayPath =
-        QStringLiteral(
-            "/opt/neebles/client/tray-host/neebles-tray-host"
-        );
-
-    if (!QFileInfo::exists(trayPath)) {
-        appendLog(
-            text(
-                QStringLiteral(
-                    "installer.log.tray_missing"
-                )
-            )
-        );
-        return;
-    }
-
-    const bool started =
-        QProcess::startDetached(trayPath, {});
-
-    appendLog(
-        started
-            ? text(
-                  QStringLiteral(
-                      "installer.log.tray_started"
-                  )
-              )
-            : text(
-                  QStringLiteral(
-                      "installer.log.tray_start_failed"
-                  )
-              )
-    );
 }
 
 void InstallerController::installLauncherIntoPanel()

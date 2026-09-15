@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=N.E.E.B.L.E.S. Tray Host
-Exec=/opt/neebles/client/tray-host/neebles-tray-host
-Icon=neebles-boss-launcher-icon
-Terminal=false
-X-KDE-autostart-after=panel
-X-KDE-StartupNotify=false
