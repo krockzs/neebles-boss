@@ -43,18 +43,13 @@ pub fn config_path() -> Result<PathBuf, String> {
         let value = value.trim();
 
         if value.is_empty() {
-            return Err(
-                "NEEBLES_CONFIG is explicitly set but empty"
-                    .to_string()
-            );
+            return Err("NEEBLES_CONFIG is explicitly set but empty".to_string());
         }
 
         return Ok(PathBuf::from(value));
     }
 
-    Ok(settings::boss_settings_path(
-        &modules::neebles_root(),
-    ))
+    Ok(settings::boss_settings_path(&modules::neebles_root()))
 }
 
 pub fn load_or_initialize() -> Result<BossConfig, String> {
@@ -64,12 +59,7 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
         let value = settings::load(&path)?;
 
         return serde_json::from_value(value)
-            .map_err(|error| {
-                format!(
-                    "invalid Boss config {}: {error}",
-                    path.display()
-                )
-            });
+            .map_err(|error| format!("invalid Boss config {}: {error}", path.display()));
     }
 
     /*
@@ -86,30 +76,17 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
 }
 
 pub fn default_json() -> Result<serde_json::Value, String> {
-    serde_json::to_value(
-        BossConfig::initial()?
-    )
-    .map_err(|error| {
-        format!(
-            "could not serialize Boss settings default: {error}"
-        )
-    })
+    serde_json::to_value(BossConfig::initial()?)
+        .map_err(|error| format!("could not serialize Boss settings default: {error}"))
 }
 
 pub fn save(config: &BossConfig) -> Result<(), String> {
     let path = config_path()?;
 
     let value = serde_json::to_value(config)
-        .map_err(|error| {
-            format!(
-                "could not serialize Boss config: {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not serialize Boss config: {error}"))?;
 
-    settings::save(
-        &path,
-        &value,
-    )
+    settings::save(&path, &value)
 }
 
 pub fn set_language(code: &str) -> Result<BossConfig, String> {
@@ -202,22 +179,15 @@ pub fn mark_module_update_notified(name: &str, version: &str) -> Result<BossConf
 pub fn module_has_user_state(name: &str) -> Result<bool, String> {
     let config = load_or_initialize()?;
 
-    Ok(
-        config.disabled_modules.iter().any(
-            |item| item == name
-        )
-        || config.hidden_tray_modules.iter().any(
-            |item| item == name
-        )
-        || config.hidden_launcher_modules.iter().any(
-            |item| item == name
-        )
-    )
+    Ok(config.disabled_modules.iter().any(|item| item == name)
+        || config.hidden_tray_modules.iter().any(|item| item == name)
+        || config
+            .hidden_launcher_modules
+            .iter()
+            .any(|item| item == name))
 }
 
-pub fn remove_module_transient_state(
-    name: &str,
-) -> Result<BossConfig, String> {
+pub fn remove_module_transient_state(name: &str) -> Result<BossConfig, String> {
     let mut config = load_or_initialize()?;
 
     /*

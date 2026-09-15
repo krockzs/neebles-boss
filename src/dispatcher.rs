@@ -31,42 +31,26 @@ pub fn dispatch(request: ExecutionRequest) -> ExecutionResponse {
     }
 }
 
-fn settings_target(
-    target: &str,
-) -> Result<(std::path::PathBuf, Value), String> {
+fn settings_target(target: &str) -> Result<(std::path::PathBuf, Value), String> {
     let target = target.trim();
 
     if target.is_empty() {
-        return Err(
-            "settings target cannot be empty"
-                .to_string()
-        );
+        return Err("settings target cannot be empty".to_string());
     }
 
     if target == "boss" {
-        return Ok((
-            config::config_path()?,
-            config::default_json()?,
-        ));
+        return Ok((config::config_path()?, config::default_json()?));
     }
 
-    let default =
-        modules::installed_module_settings_default(
-            target,
-        )?;
+    let default = modules::installed_module_settings_default(target)?;
 
     Ok((
-        settings::module_settings_path(
-            &modules::neebles_root(),
-            target,
-        ),
+        settings::module_settings_path(&modules::neebles_root(), target),
         default,
     ))
 }
 
-fn dispatch_settings(
-    request: ExecutionRequest,
-) -> ExecutionResponse {
+fn dispatch_settings(request: ExecutionRequest) -> ExecutionResponse {
     let Some(target) = request.args.first() else {
         return ExecutionResponse::fail(
             2,
@@ -75,18 +59,13 @@ fn dispatch_settings(
         );
     };
 
-    let (path, default) =
-        match settings_target(target) {
-            Ok(value) => value,
+    let (path, default) = match settings_target(target) {
+        Ok(value) => value,
 
-            Err(error) => {
-                return ExecutionResponse::fail(
-                    1,
-                    "settings_target",
-                    error,
-                );
-            }
-        };
+        Err(error) => {
+            return ExecutionResponse::fail(1, "settings_target", error);
+        }
+    };
 
     match request.action.as_deref() {
         Some("has-state") => {
@@ -98,46 +77,21 @@ fn dispatch_settings(
                 );
             }
 
-            match modules::module_has_local_state(
-                target,
-            ) {
-                Ok(value) =>
-                    ExecutionResponse::ok(
-                        Some(json!(value))
-                    ),
+            match modules::module_has_local_state(target) {
+                Ok(value) => ExecutionResponse::ok(Some(json!(value))),
 
-                Err(error) =>
-                    ExecutionResponse::fail(
-                        1,
-                        "settings_state",
-                        error,
-                    ),
+                Err(error) => ExecutionResponse::fail(1, "settings_state", error),
             }
         }
 
-        Some("show") => {
-            match settings::load_or_create(
-                &path,
-                &default,
-            ) {
-                Ok(value) =>
-                    ExecutionResponse::ok(
-                        Some(value)
-                    ),
+        Some("show") => match settings::load_or_create(&path, &default) {
+            Ok(value) => ExecutionResponse::ok(Some(value)),
 
-                Err(error) =>
-                    ExecutionResponse::fail(
-                        1,
-                        "settings_read",
-                        error,
-                    ),
-            }
-        }
+            Err(error) => ExecutionResponse::fail(1, "settings_read", error),
+        },
 
         Some("get") => {
-            let Some(setting_path) =
-                request.args.get(1)
-            else {
+            let Some(setting_path) = request.args.get(1) else {
                 return ExecutionResponse::fail(
                     2,
                     "missing_settings_path",
@@ -145,44 +99,23 @@ fn dispatch_settings(
                 );
             };
 
-            let current =
-                match settings::load_or_create(
-                    &path,
-                    &default,
-                ) {
-                    Ok(value) => value,
+            let current = match settings::load_or_create(&path, &default) {
+                Ok(value) => value,
 
-                    Err(error) => {
-                        return ExecutionResponse::fail(
-                            1,
-                            "settings_read",
-                            error,
-                        );
-                    }
-                };
+                Err(error) => {
+                    return ExecutionResponse::fail(1, "settings_read", error);
+                }
+            };
 
-            match settings::get_path(
-                &current,
-                setting_path,
-            ) {
-                Ok(value) =>
-                    ExecutionResponse::ok(
-                        Some(value)
-                    ),
+            match settings::get_path(&current, setting_path) {
+                Ok(value) => ExecutionResponse::ok(Some(value)),
 
-                Err(error) =>
-                    ExecutionResponse::fail(
-                        1,
-                        "settings_path",
-                        error,
-                    ),
+                Err(error) => ExecutionResponse::fail(1, "settings_path", error),
             }
         }
 
         Some("set") => {
-            let Some(setting_path) =
-                request.args.get(1)
-            else {
+            let Some(setting_path) = request.args.get(1) else {
                 return ExecutionResponse::fail(
                     2,
                     "missing_settings_path",
@@ -190,9 +123,7 @@ fn dispatch_settings(
                 );
             };
 
-            let Some(raw_value) =
-                request.args.get(2)
-            else {
+            let Some(raw_value) = request.args.get(2) else {
                 return ExecutionResponse::fail(
                     2,
                     "missing_settings_value",
@@ -200,40 +131,22 @@ fn dispatch_settings(
                 );
             };
 
-            let value: Value =
-                match serde_json::from_str(
-                    raw_value
-                ) {
-                    Ok(value) => value,
+            let value: Value = match serde_json::from_str(raw_value) {
+                Ok(value) => value,
 
-                    Err(error) => {
-                        return ExecutionResponse::fail(
-                            2,
-                            "invalid_settings_value",
-                            format!(
-                                "settings value is not valid JSON: {error}"
-                            ),
-                        );
-                    }
-                };
+                Err(error) => {
+                    return ExecutionResponse::fail(
+                        2,
+                        "invalid_settings_value",
+                        format!("settings value is not valid JSON: {error}"),
+                    );
+                }
+            };
 
-            match settings::set_path(
-                &path,
-                &default,
-                setting_path,
-                value,
-            ) {
-                Ok(value) =>
-                    ExecutionResponse::ok(
-                        Some(value)
-                    ),
+            match settings::set_path(&path, &default, setting_path, value) {
+                Ok(value) => ExecutionResponse::ok(Some(value)),
 
-                Err(error) =>
-                    ExecutionResponse::fail(
-                        1,
-                        "settings_write",
-                        error,
-                    ),
+                Err(error) => ExecutionResponse::fail(1, "settings_write", error),
             }
         }
 
@@ -246,39 +159,24 @@ fn dispatch_settings(
                 );
             }
 
-            match settings::update_from_default(
-                &path,
-                &default,
-            ) {
-                Ok(value) =>
-                    ExecutionResponse::ok(
-                        Some(value)
-                    ),
+            match settings::update_from_default(&path, &default) {
+                Ok(value) => ExecutionResponse::ok(Some(value)),
 
-                Err(error) =>
-                    ExecutionResponse::fail(
-                        1,
-                        "settings_update",
-                        error,
-                    ),
+                Err(error) => ExecutionResponse::fail(1, "settings_update", error),
             }
         }
 
-        Some(other) =>
-            ExecutionResponse::fail(
-                2,
-                "unknown_settings_action",
-                format!(
-                    "unknown settings action: {other}"
-                ),
-            ),
+        Some(other) => ExecutionResponse::fail(
+            2,
+            "unknown_settings_action",
+            format!("unknown settings action: {other}"),
+        ),
 
-        None =>
-            ExecutionResponse::fail(
-                2,
-                "missing_settings_action",
-                "settings request requires an action",
-            ),
+        None => ExecutionResponse::fail(
+            2,
+            "missing_settings_action",
+            "settings request requires an action",
+        ),
     }
 }
 
