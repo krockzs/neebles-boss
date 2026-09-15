@@ -1,8 +1,9 @@
 use crate::dispatcher;
-use crate::request::ExecutionRequest;
+use crate::request::{ExecutionRequest, ExecutionResponse};
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
+use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
@@ -14,7 +15,69 @@ pub fn socket_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(DEFAULT_SOCKET_PATH))
 }
 
+/*
+ * Send one request to the persistent Boss process.
+ *
+ * neebles.sock keeps its existing one-request-per-connection
+ * protocol:
+ *
+ * client writes JSON
+ * client closes write side
+ * Boss reads to EOF
+ * Boss dispatches
+ * Boss returns ExecutionResponse JSON
+ */
+pub fn request(request: &ExecutionRequest) -> Result<ExecutionResponse, String> {
+    let path = socket_path();
+
+    let mut stream = UnixStream::connect(&path).map_err(|error| {
+        format!(
+            "could not connect to N.E.E.B.L.E.S. Boss socket {}: {error}",
+            path.display()
+        )
+    })?;
+
+    let payload = serde_json::to_vec(request)
+        .map_err(|error| format!("could not serialize ExecutionRequest: {error}"))?;
+
+    stream
+        .write_all(&payload)
+        .map_err(|error| format!("could not write ExecutionRequest to Boss socket: {error}"))?;
+
+    /*
+     * Server uses read_to_string(), therefore EOF on the
+     * request side is the framing boundary.
+     */
+    stream
+        .shutdown(Shutdown::Write)
+        .map_err(|error| format!("could not finish ExecutionRequest write side: {error}"))?;
+
+    let mut raw = String::new();
+
+    stream
+        .read_to_string(&mut raw)
+        .map_err(|error| format!("could not read ExecutionResponse from Boss socket: {error}"))?;
+
+    serde_json::from_str(raw.trim())
+        .map_err(|error| format!("invalid ExecutionResponse received from Boss socket: {error}"))
+}
+
 pub fn serve() -> Result<(), String> {
+    /*
+     * The Boss owns both IPC surfaces.
+     *
+     * neebles.sock:
+     * external commands -> Boss
+     *
+     * modules.sock:
+     * persistent module runtimes <-> Boss
+     *
+     * Both live inside this same process so runtime registries,
+     * pending requests and module state are truly shared.
+     */
+    let _module_ipc = crate::module_ipc::start_background()
+        .map_err(|error| format!("could not start module IPC: {error}"))?;
+
     let path = socket_path();
 
     if let Some(parent) = path.parent() {

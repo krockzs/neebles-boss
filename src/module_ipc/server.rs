@@ -39,7 +39,7 @@ pub fn socket_path() -> PathBuf {
     }
 }
 
-pub fn serve() -> Result<(), String> {
+fn bind_listener() -> Result<UnixListener, String> {
     let path = socket_path();
 
     if let Some(parent) = path.parent() {
@@ -65,6 +65,10 @@ pub fn serve() -> Result<(), String> {
 
     println!("N.E.E.B.L.E.S. module IPC listening on {}", path.display());
 
+    Ok(listener)
+}
+
+fn accept_loop(listener: UnixListener) -> Result<(), String> {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
@@ -82,6 +86,24 @@ pub fn serve() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+pub fn serve() -> Result<(), String> {
+    let listener = bind_listener()?;
+
+    accept_loop(listener)
+}
+
+/*
+ * Start modules.sock inside the SAME persistent Boss process.
+ *
+ * Binding is done synchronously so startup errors are returned
+ * immediately instead of being hidden inside a background thread.
+ */
+pub fn start_background() -> Result<std::thread::JoinHandle<Result<(), String>>, String> {
+    let listener = bind_listener()?;
+
+    Ok(std::thread::spawn(move || accept_loop(listener)))
 }
 
 fn handle_client(mut stream: UnixStream) -> Result<(), String> {

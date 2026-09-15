@@ -39,6 +39,50 @@ pub fn dispatch(request: ExecutionRequest) -> ExecutionResponse {
 fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
     match request.action.as_deref() {
         Some("version") => ExecutionResponse::ok(Some(json!({ "version": crate::VERSION }))),
+
+        Some("runtime-list") => match crate::module_ipc::runtime_registry().snapshot() {
+            Ok(records) => match serde_json::to_value(records) {
+                Ok(value) => ExecutionResponse::ok(Some(value)),
+
+                Err(error) => ExecutionResponse::fail(
+                    1,
+                    "runtime_list_serialization",
+                    format!("could not serialize runtime registry: {error}"),
+                ),
+            },
+
+            Err(error) => ExecutionResponse::fail(1, "runtime_registry", error),
+        },
+
+        Some("runtime-status") => {
+            let Some(module) = request.args.first() else {
+                return ExecutionResponse::fail(
+                    2,
+                    "missing_runtime_module",
+                    "Boss runtime-status requires a module name",
+                );
+            };
+
+            match crate::module_ipc::runtime_registry().snapshot_module(module) {
+                Ok(Some(record)) => match serde_json::to_value(record) {
+                    Ok(value) => ExecutionResponse::ok(Some(value)),
+
+                    Err(error) => ExecutionResponse::fail(
+                        1,
+                        "runtime_status_serialization",
+                        format!("could not serialize runtime status: {error}"),
+                    ),
+                },
+
+                Ok(None) => ExecutionResponse::ok(Some(json!({
+                    "module": module,
+                    "registered": false
+                }))),
+
+                Err(error) => ExecutionResponse::fail(1, "runtime_registry", error),
+            }
+        }
+
         Some("start") | Some("open") => match launch_ui() {
             Ok(()) => ExecutionResponse::ok(None),
             Err(error) => ExecutionResponse::fail(1, "ui_launch", error),

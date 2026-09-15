@@ -347,6 +347,13 @@ fn modules_command(args: &[String]) -> i32 {
 
         Some("runtime") => {
             match args.get(1).map(String::as_str) {
+                /*
+                 * Standalone server remains available as a
+                 * development/debug entrypoint.
+                 *
+                 * Normal Boss operation starts modules.sock
+                 * automatically from "neebles socket serve".
+                 */
                 Some("serve") => {
                     result(
                         crate::module_ipc::serve()
@@ -354,19 +361,64 @@ fn modules_command(args: &[String]) -> i32 {
                 }
 
                 Some("list") => {
-                    match crate::module_ipc::runtime_registry()
-                        .snapshot()
-                    {
-                        Ok(records) => {
-                            match serde_json::to_value(records) {
-                                Ok(value) => print_value(value),
-                                Err(error) => fail(format!(
-                                    "could not serialize module runtime list: {error}"
-                                )),
+                    let request =
+                        ExecutionRequest {
+                            target:
+                                "boss".to_string(),
+
+                            action:
+                                Some(
+                                    "runtime-list"
+                                        .to_string()
+                                ),
+
+                            args:
+                                Vec::new(),
+
+                            context:
+                                ExecutionContext {
+                                    caller:
+                                        "cli".to_string(),
+                                },
+                        };
+
+                    match crate::ipc::request(
+                        &request
+                    ) {
+                        Ok(response)
+                            if response.ok =>
+                        {
+                            match response.result {
+                                Some(value) => {
+                                    print_value(value)
+                                }
+
+                                None => {
+                                    print_value(
+                                        serde_json::json!([])
+                                    )
+                                }
                             }
                         }
 
-                        Err(error) => fail(error),
+                        Ok(response) => {
+                            match response.error {
+                                Some(error) => {
+                                    fail(error.message)
+                                }
+
+                                None => {
+                                    fail(format!(
+                                        "Boss runtime-list failed with code {}",
+                                        response.code
+                                    ))
+                                }
+                            }
+                        }
+
+                        Err(error) => {
+                            fail(error)
+                        }
                     }
                 }
 
@@ -380,28 +432,69 @@ fn modules_command(args: &[String]) -> i32 {
                         );
                     };
 
-                    match crate::module_ipc::runtime_registry()
-                        .snapshot_module(name)
-                    {
-                        Ok(Some(record)) => {
-                            match serde_json::to_value(record) {
-                                Ok(value) => print_value(value),
-                                Err(error) => fail(format!(
-                                    "could not serialize module runtime status: {error}"
-                                )),
+                    let request =
+                        ExecutionRequest {
+                            target:
+                                "boss".to_string(),
+
+                            action:
+                                Some(
+                                    "runtime-status"
+                                        .to_string()
+                                ),
+
+                            args:
+                                vec![
+                                    name.clone()
+                                ],
+
+                            context:
+                                ExecutionContext {
+                                    caller:
+                                        "cli".to_string(),
+                                },
+                        };
+
+                    match crate::ipc::request(
+                        &request
+                    ) {
+                        Ok(response)
+                            if response.ok =>
+                        {
+                            match response.result {
+                                Some(value) => {
+                                    print_value(value)
+                                }
+
+                                None => {
+                                    print_value(
+                                        serde_json::json!({
+                                            "module": name,
+                                            "registered": false
+                                        })
+                                    )
+                                }
                             }
                         }
 
-                        Ok(None) => {
-                            print_value(
-                                serde_json::json!({
-                                    "module": name,
-                                    "registered": false
-                                })
-                            )
+                        Ok(response) => {
+                            match response.error {
+                                Some(error) => {
+                                    fail(error.message)
+                                }
+
+                                None => {
+                                    fail(format!(
+                                        "Boss runtime-status failed with code {}",
+                                        response.code
+                                    ))
+                                }
+                            }
                         }
 
-                        Err(error) => fail(error),
+                        Err(error) => {
+                            fail(error)
+                        }
                     }
                 }
 

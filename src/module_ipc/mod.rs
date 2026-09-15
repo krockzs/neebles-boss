@@ -13,4 +13,4 @@ pub use protocol::{ModuleError, ModuleMessage, ModuleRuntimeState, MODULES_PROTO
 
 pub use registry::{ModuleRuntimeRecord, RuntimeRegistry};
 
-pub use server::{pending_registry, runtime_registry, serve, socket_path};
+pub use server::{pending_registry, runtime_registry, serve, socket_path, start_background};
