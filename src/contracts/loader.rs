@@ -127,8 +127,5 @@ pub fn load_module_contracts(
         contracts.insert(reference.contract_type.clone(), contract);
     }
 
-    Ok(ModuleContracts {
-        module: module_name.to_string(),
-        contracts,
-    })
+    Ok(ModuleContracts { contracts })
 }

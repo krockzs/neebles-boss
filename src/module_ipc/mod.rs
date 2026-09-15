@@ -6,14 +6,5 @@ pub mod registry;
 mod router;
 pub mod server;
 
-pub use client::invoke;
-
-pub use pending::PendingRegistry;
-
-pub use protocol::{ModuleError, ModuleMessage, ModuleRuntimeState, MODULES_PROTOCOL_VERSION};
-
-pub use registry::{ModuleRuntimeRecord, RuntimeRegistry};
-
-pub use server::{pending_registry, runtime_registry, serve, socket_path, start_background};
-
 pub use router::invoke_declared;
+pub use server::{runtime_registry, serve, start_background};

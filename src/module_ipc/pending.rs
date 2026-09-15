@@ -179,13 +179,4 @@ impl PendingRegistry {
 
         Ok(count)
     }
-
-    pub fn len(&self) -> Result<usize, String> {
-        let pending = self
-            .inner
-            .lock()
-            .map_err(|_| "pending request registry lock poisoned".to_string())?;
-
-        Ok(pending.len())
-    }
 }

@@ -108,41 +108,6 @@ impl RuntimeRegistry {
 
         Ok(records)
     }
-
-    pub fn set_state(
-        &self,
-        module: &str,
-        session_id: &str,
-        state: ModuleRuntimeState,
-    ) -> Result<bool, String> {
-        let mut registry = self
-            .inner
-            .write()
-            .map_err(|_| "runtime registry write lock poisoned".to_string())?;
-
-        let Some(record) = registry.get_mut(module) else {
-            return Ok(false);
-        };
-
-        if record.session_id != session_id {
-            return Ok(false);
-        }
-
-        record.state = state;
-
-        Ok(true)
-    }
-
-    pub fn clear(&self) -> Result<(), String> {
-        let mut registry = self
-            .inner
-            .write()
-            .map_err(|_| "runtime registry write lock poisoned".to_string())?;
-
-        registry.clear();
-
-        Ok(())
-    }
 }
 
 use serde::Serialize;

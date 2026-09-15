@@ -102,6 +102,5 @@ pub struct ContractDefinition {
 
 #[derive(Debug, Clone, Default)]
 pub struct ModuleContracts {
-    pub module: String,
     pub contracts: BTreeMap<String, ContractDefinition>,
 }
