@@ -2,7 +2,6 @@ use crate::{languages, modules, settings};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
-use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,32 +33,6 @@ impl BossConfig {
             module_update_notifications: BTreeMap::new(),
         })
     }
-}
-
-fn legacy_config_path() -> Option<PathBuf> {
-    if let Ok(value) = env::var("XDG_CONFIG_HOME") {
-        let value = value.trim();
-
-        if !value.is_empty() {
-            return Some(
-                PathBuf::from(value)
-                    .join("neebles/boss.json")
-            );
-        }
-    }
-
-    if let Ok(value) = env::var("HOME") {
-        let value = value.trim();
-
-        if !value.is_empty() {
-            return Some(
-                PathBuf::from(value)
-                    .join(".config/neebles/boss.json")
-            );
-        }
-    }
-
-    None
 }
 
 pub fn config_path() -> Result<PathBuf, String> {
@@ -100,40 +73,12 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
     }
 
     /*
-     * One-time migration from the pre-local_settings
-     * per-user Boss configuration.
+     * local_settings is the single source of truth.
      *
-     * NEEBLES_CONFIG is an explicit override and therefore
-     * does not participate in automatic migration.
+     * No per-user HOME migration exists: runtime, Live,
+     * auth-agent and installed Boss all resolve the same
+     * N.E.E.B.L.E.S. root.
      */
-    if env::var("NEEBLES_CONFIG").is_err() {
-        if let Some(legacy) = legacy_config_path() {
-            if legacy.exists() {
-                let raw =
-                    fs::read_to_string(&legacy)
-                        .map_err(|error| {
-                            format!(
-                                "could not read legacy Boss config {}: {error}",
-                                legacy.display()
-                            )
-                        })?;
-
-                let config: BossConfig =
-                    serde_json::from_str(&raw)
-                        .map_err(|error| {
-                            format!(
-                                "invalid legacy Boss config {}: {error}",
-                                legacy.display()
-                            )
-                        })?;
-
-                save(&config)?;
-
-                return Ok(config);
-            }
-        }
-    }
-
     let config = BossConfig::initial()?;
     save(&config)?;
 
