@@ -1,3 +1,6 @@
+use crate::config;
+use crate::modules;
+
 use crate::module_ipc::framing::{read_message, write_message};
 
 use crate::module_ipc::pending::PendingRegistry;
@@ -8,6 +11,7 @@ use crate::module_ipc::protocol::{
 
 use crate::module_ipc::registry::{ModuleRuntimeRecord, RuntimeRegistry};
 
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 
@@ -106,6 +110,140 @@ pub fn start_background() -> Result<std::thread::JoinHandle<Result<(), String>>,
     Ok(std::thread::spawn(move || accept_loop(listener)))
 }
 
+/*
+ * Validate the identity and advertised capabilities of a
+ * runtime before allowing it into RuntimeRegistry.
+ *
+ * Installed contract JSON is Boss's source of truth.
+ * A runtime may advertise a subset of declared endpoints,
+ * but it may never advertise an undeclared contract or endpoint.
+ */
+fn validate_registration(
+    module: &str,
+    session_id: &str,
+    endpoints: &std::collections::BTreeMap<String, Vec<String>>,
+) -> Result<(), String> {
+    let module = module.trim();
+    let session_id = session_id.trim();
+
+    if module.is_empty() {
+        return Err("runtime module name cannot be empty".to_string());
+    }
+
+    if session_id.is_empty() {
+        return Err(format!(
+            "module '{}' runtime session id cannot be empty",
+            module
+        ));
+    }
+
+    /*
+     * This performs the canonical installed-module lookup
+     * and module-id validation already owned by modules.rs.
+     */
+    let manifest = modules::installed_module_manifest(module).map_err(|error| {
+        format!(
+            "runtime registration rejected for module '{}': {}",
+            module, error
+        )
+    })?;
+
+    /*
+     * The directory selected by Boss and the identity declared
+     * by that installation must agree with the runtime identity.
+     */
+    if manifest.name != module {
+        return Err(format!(
+            "runtime registration identity mismatch: requested '{}' but installed manifest declares '{}'",
+            module,
+            manifest.name
+        ));
+    }
+
+    if !config::module_enabled(module)? {
+        return Err(format!(
+            "module '{}' is disabled and cannot register a runtime",
+            module
+        ));
+    }
+
+    /*
+     * Load all enabled dynamic contracts through the generic
+     * contract loader. Boss still does not know contract types.
+     */
+    let declared = modules::installed_module_contracts(module).map_err(|error| {
+        format!(
+            "could not load contracts for runtime module '{}': {}",
+            module, error
+        )
+    })?;
+
+    for (contract_type, advertised_endpoints) in endpoints {
+        let contract_type = contract_type.trim();
+
+        if contract_type.is_empty() {
+            return Err(format!(
+                "module '{}' advertised an empty contract type",
+                module
+            ));
+        }
+
+        let contract = declared.contracts.get(contract_type).ok_or_else(|| {
+            format!(
+                "module '{}' advertised undeclared contract '{}'",
+                module, contract_type
+            )
+        })?;
+
+        /*
+         * Runtime endpoint identity is the `endpoint` field,
+         * not the logical key used inside contract JSON.
+         *
+         * Example:
+         *
+         * "gradient": {
+         *     "endpoint": "gradient.create"
+         * }
+         *
+         * Runtime announces "gradient.create".
+         */
+        let allowed = contract
+            .endpoints
+            .values()
+            .map(|endpoint| endpoint.endpoint.as_str())
+            .collect::<BTreeSet<_>>();
+
+        let mut seen = BTreeSet::new();
+
+        for endpoint in advertised_endpoints {
+            let endpoint = endpoint.trim();
+
+            if endpoint.is_empty() {
+                return Err(format!(
+                    "module '{}' contract '{}' advertised an empty endpoint",
+                    module, contract_type
+                ));
+            }
+
+            if !seen.insert(endpoint) {
+                return Err(format!(
+                    "module '{}' contract '{}' advertised endpoint '{}' more than once",
+                    module, contract_type, endpoint
+                ));
+            }
+
+            if !allowed.contains(endpoint) {
+                return Err(format!(
+                    "module '{}' contract '{}' advertised undeclared endpoint '{}'",
+                    module, contract_type, endpoint
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn handle_client(mut stream: UnixStream) -> Result<(), String> {
     /*
      * Primer mensaje obligatorio:
@@ -163,6 +301,36 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         let _ = write_message(&mut stream, &response);
 
         return Err(format!("unsupported module protocol {protocol}"));
+    }
+
+    /*
+     * Protocol compatibility alone is not enough.
+     * Boss now verifies that this runtime belongs to a real,
+     * enabled installation and that every advertised endpoint
+     * exists in that module's dynamic contracts.
+     */
+    if let Err(error) = validate_registration(&module, &session_id, &endpoints) {
+        let response = ModuleMessage::Error {
+            id: None,
+
+            module: if module.trim().is_empty() {
+                None
+            } else {
+                Some(module.clone())
+            },
+
+            error: ModuleError {
+                kind: "register_rejected".to_string(),
+
+                message: error.clone(),
+
+                details: None,
+            },
+        };
+
+        let _ = write_message(&mut stream, &response);
+
+        return Err(error);
     }
 
     /*

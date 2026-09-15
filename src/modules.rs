@@ -2358,29 +2358,96 @@ pub fn execute(name: &str, args: &[String], caller: &str) -> Result<i32, String>
     Ok(status.code().unwrap_or(1))
 }
 pub fn find_module_dir(name: &str) -> Result<PathBuf, String> {
-    let direct = modules_root().join(name);
-    if direct.join("manifest.json").exists() {
-        let manifest = read_manifest(&direct.join("manifest.json"))?;
-        if manifest.name == name {
-            return Ok(direct);
-        }
+    if !valid_module_id(name) {
+        return Err(format!("invalid module id: {name}"));
     }
 
+    /*
+     * Fast path: the normal installation layout uses the
+     * module id as its directory name.
+     *
+     * If that exact path exists, it is the candidate the
+     * caller asked for, so validate it fully.
+     */
+    let direct = modules_root().join(name);
+    let direct_manifest = direct.join("manifest.json");
+
+    if direct_manifest.exists() {
+        let manifest = read_manifest(&direct_manifest)?;
+
+        if manifest.name != name {
+            return Err(format!(
+                "module directory '{}' contains manifest for '{}', expected '{}'",
+                direct.display(),
+                manifest.name,
+                name
+            ));
+        }
+
+        return Ok(direct);
+    }
+
+    /*
+     * Compatibility path: registry entries may install a
+     * module under a folder whose name differs from its
+     * manifest identity.
+     *
+     * Do not fully validate every unrelated module while
+     * searching. One broken installation must not poison
+     * lookup of another module.
+     *
+     * First inspect only enough JSON to discover identity.
+     * Full validation happens only when the requested
+     * module name matches.
+     */
     let root = modules_root();
+
     if root.exists() {
         for entry in fs::read_dir(&root)
             .map_err(|error| format!("could not read {}: {error}", root.display()))?
         {
             let entry =
                 entry.map_err(|error| format!("could not read module directory entry: {error}"))?;
+
             let manifest_path = entry.path().join("manifest.json");
-            if !manifest_path.exists() {
+
+            if !manifest_path.is_file() {
                 continue;
             }
-            let manifest = read_manifest(&manifest_path)?;
-            if manifest.name == name {
-                return Ok(entry.path());
+
+            let raw = match fs::read_to_string(&manifest_path) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+
+            let value: Value = match serde_json::from_str(&raw) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+
+            let Some(candidate_name) = value.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+
+            if candidate_name != name {
+                continue;
             }
+
+            /*
+             * This is now the module requested by the caller.
+             * From this point onward failures are relevant and
+             * must be surfaced rather than ignored.
+             */
+            let manifest = read_manifest(&manifest_path)?;
+
+            if manifest.name != name {
+                return Err(format!(
+                    "module identity changed while resolving '{}'",
+                    name
+                ));
+            }
+
+            return Ok(entry.path());
         }
     }
 
@@ -2634,9 +2701,16 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
         ));
     }
 
-    if manifest.commands.is_empty() {
+    /*
+     * A module may expose capabilities through legacy embedded
+     * commands, dynamic contracts, or both.
+     *
+     * Boss must not require a specific contract type such as
+     * "commands": contract names are intentionally generic.
+     */
+    if manifest.commands.is_empty() && manifest.contracts.is_empty() {
         return Err(format!(
-            "module '{}' must declare at least one command",
+            "module '{}' must declare at least one legacy command or dynamic contract",
             manifest.name
         ));
     }
