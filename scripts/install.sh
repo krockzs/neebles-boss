@@ -23,6 +23,7 @@ AUTH_DIR="$CLIENT_ROOT/auth"
 LAUNCHER_DIR="$CLIENT_ROOT/launcher"
 SPACER_DIR="$CLIENT_ROOT/spacer"
 NOTIFICATIONS_DIR="$CLIENT_ROOT/notifications"
+APPLICATIONS_DIR="$CLIENT_ROOT/applications"
 ASSETS_DIR="$CLIENT_ROOT/assets"
 LANGUAGES_DIR="$CLIENT_ROOT/languages"
 CONFIG_DIR="$CLIENT_ROOT/config"
@@ -33,6 +34,8 @@ SETTINGS_DIR="$SHARED_DIR/settings"
 
 GLOBAL_BIN="${DESTDIR}/usr/local/bin/neebles"
 GLOBAL_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-boss-launcher-icon.png"
+GLOBAL_BOSS_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-boss-icon.png"
+GLOBAL_DESKTOP="${DESTDIR}/usr/share/applications/org.neebles.Boss.desktop"
 SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 SYSTEMD_WANTS="${DESTDIR}/etc/systemd/user/default.target.wants"
 RUNTIME_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-runtime.service"
@@ -435,6 +438,7 @@ copy_data_tree "$CLIENT_DATA_SOURCE/config" "$CLIENT_STAGE/config"
 copy_data_tree "$CLIENT_DATA_SOURCE/launcher" "$CLIENT_STAGE/launcher"
 copy_data_tree "$CLIENT_DATA_SOURCE/spacer" "$CLIENT_STAGE/spacer"
 copy_data_tree "$CLIENT_DATA_SOURCE/notifications" "$CLIENT_STAGE/notifications"
+copy_data_tree "$CLIENT_DATA_SOURCE/applications" "$CLIENT_STAGE/applications"
 
 progress 75
 status_key "installer.progress.creating_entrypoint"
@@ -464,6 +468,8 @@ chmod 0700 "$GLOBAL_BACKUP_ROOT"
 
 backup_global_path "$GLOBAL_BIN" "global-bin"
 backup_global_path "$GLOBAL_ICON" "global-icon"
+backup_global_path "$GLOBAL_BOSS_ICON" "global-boss-icon"
+backup_global_path "$GLOBAL_DESKTOP" "global-desktop"
 backup_global_path "$SYSTEMD_SERVICE" "systemd-service"
 backup_global_path "$SYSTEMD_WANTS/neebles-tray-manager.service" "systemd-wants"
 backup_global_path "$RUNTIME_SERVICE" "runtime-service"
@@ -483,6 +489,16 @@ install -d -m 0755 "$(dirname "$GLOBAL_ICON")"
 install -m 0644 \
     "$ASSETS_DIR/branding/neebles-boss-launcher-icon.png" \
     "$GLOBAL_ICON"
+
+install -m 0644 \
+    "$ASSETS_DIR/branding/neebles-boss-icon.png" \
+    "$GLOBAL_BOSS_ICON"
+
+install -d -m 0755 "$(dirname "$GLOBAL_DESKTOP")"
+
+install -m 0644 \
+    "$APPLICATIONS_DIR/org.neebles.Boss.desktop" \
+    "$GLOBAL_DESKTOP"
 
 progress 80
 status_key "installer.progress.installing_tray_manager"

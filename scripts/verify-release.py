@@ -32,11 +32,14 @@ REQUIRED_CLIENT_DATA_ROOTS = {
     "launcher",
     "spacer",
     "notifications",
+    "applications",
     "systemd",
 }
 
 REQUIRED_CLIENT_DATA_FILES = {
     "assets/branding/neebles-boss-launcher-icon.png",
+    "assets/branding/neebles-boss-icon.png",
+    "applications/org.neebles.Boss.desktop",
     "languages/manifest.json",
     "config/defaults.json",
     "launcher/metadata.json",

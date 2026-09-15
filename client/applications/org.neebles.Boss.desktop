@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=N.E.E.B.L.E.S. Boss
+Exec=/opt/neebles/client/ui/neebles-ui
+Icon=neebles-boss-icon
+Terminal=false
+Categories=System;
+StartupWMClass=org.neebles.Boss
+StartupNotify=true

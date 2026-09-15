@@ -86,6 +86,10 @@ int main(int argc, char *argv[])
         QStringLiteral("N.E.E.B.L.E.S.")
     );
 
+    app.setDesktopFileName(
+        QStringLiteral("org.neebles.Boss")
+    );
+
     QDBusConnection bus =
         QDBusConnection::sessionBus();
 

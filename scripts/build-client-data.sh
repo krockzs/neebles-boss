@@ -21,6 +21,7 @@ REQUIRED_ROOTS=(
     launcher
     spacer
     notifications
+    applications
     systemd
 )
 

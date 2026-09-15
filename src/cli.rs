@@ -351,13 +351,17 @@ fn modules_command(args: &[String]) -> i32 {
             let Some(name) = args.get(1) else {
                 return fail("modules enable requires a module name".to_string());
             };
-            result(modules::set_enabled(name, true))
+            result(reconcile_after_module_operation(
+                modules::set_enabled(name, true),
+            ))
         }
         Some("disable") => {
             let Some(name) = args.get(1) else {
                 return fail("modules disable requires a module name".to_string());
             };
-            result(modules::set_enabled(name, false))
+            result(reconcile_after_module_operation(
+                modules::set_enabled(name, false),
+            ))
         }
 
         Some("runtime") => {
