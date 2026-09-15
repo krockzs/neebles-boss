@@ -37,7 +37,7 @@ pub fn invoke(
     args: Vec<String>,
     payload: Option<Value>,
     context: BTreeMap<String, Value>,
-    timeout: Duration,
+    timeout: Option<Duration>,
 ) -> Result<ModuleMessage, String> {
     let runtime = runtime_registry()
         .get(module)?
@@ -114,22 +114,37 @@ pub fn invoke(
         ));
     }
 
-    match receiver.recv_timeout(timeout) {
-        Ok(message) => Ok(message),
+    match timeout {
+        Some(timeout) => match receiver.recv_timeout(timeout) {
+            Ok(message) => Ok(message),
 
-        Err(RecvTimeoutError::Timeout) => {
-            let _ = pending_registry().cancel(&id);
+            Err(RecvTimeoutError::Timeout) => {
+                let _ = pending_registry().cancel(&id);
 
-            Err(format!("module '{}' request '{}' timed out", module, id))
-        }
+                Err(format!("module '{}' request '{}' timed out", module, id))
+            }
 
-        Err(RecvTimeoutError::Disconnected) => {
-            let _ = pending_registry().cancel(&id);
+            Err(RecvTimeoutError::Disconnected) => {
+                let _ = pending_registry().cancel(&id);
 
-            Err(format!(
-                "module '{}' request '{}' response channel disconnected",
-                module, id
-            ))
-        }
+                Err(format!(
+                    "module '{}' request '{}' response channel disconnected",
+                    module, id
+                ))
+            }
+        },
+
+        None => match receiver.recv() {
+            Ok(message) => Ok(message),
+
+            Err(_) => {
+                let _ = pending_registry().cancel(&id);
+
+                Err(format!(
+                    "module '{}' request '{}' response channel disconnected",
+                    module, id
+                ))
+            }
+        },
     }
 }

@@ -1,8 +1,10 @@
 use crate::local_installer;
+use crate::module_ipc::protocol::ModuleMessage;
 use crate::modules;
 use crate::notifications::{self, Severity};
 use crate::request::{ExecutionRequest, ExecutionResponse};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::process::Command;
 
 pub fn launch_ui() -> Result<(), String> {
@@ -14,25 +16,114 @@ pub fn launch_ui() -> Result<(), String> {
 }
 
 pub fn dispatch(request: ExecutionRequest) -> ExecutionResponse {
-    match request.target.as_str() {
+    let target = request.target.clone();
+
+    match target.as_str() {
         "boss" => dispatch_boss(request),
+
         "notifications" | "boss.notifications" => dispatch_notification(request),
-        module => {
-            let mut args = Vec::new();
-            if let Some(action) = request.action {
-                args.push(action);
+
+        module => dispatch_module(module, request),
+    }
+}
+
+fn dispatch_module(module: &str, request: ExecutionRequest) -> ExecutionResponse {
+    /*
+     * The normal CLI module/action surface maps to the
+     * "commands" contract.
+     *
+     * This is surface semantics, not router semantics:
+     * invoke_declared remains generic over arbitrary
+     * contract types.
+     */
+    if let Some(action) = request.action.as_deref() {
+        match modules::installed_module_contract_endpoint(module, "commands", action) {
+            Ok(Some(_)) => {
+                let mut context = BTreeMap::<String, serde_json::Value>::new();
+
+                context.insert("caller".to_string(), json!(request.context.caller));
+
+                return match crate::module_ipc::invoke_declared(
+                    module,
+                    "commands",
+                    action,
+                    request.args,
+                    None,
+                    context,
+                    None,
+                ) {
+                    Ok(ModuleMessage::Response {
+                        ok,
+                        code,
+                        result,
+                        error,
+                        ..
+                    }) => {
+                        if ok {
+                            ExecutionResponse {
+                                ok: true,
+                                code,
+                                result,
+                                error: None,
+                            }
+                        } else {
+                            let message = error.map(|error| error.message).unwrap_or_else(|| {
+                                format!("module '{}' endpoint '{}' failed", module, action)
+                            });
+
+                            ExecutionResponse::fail(code, "module_runtime", message)
+                        }
+                    }
+
+                    Ok(ModuleMessage::Error { error, .. }) => {
+                        ExecutionResponse::fail(1, error.kind, error.message)
+                    }
+
+                    Ok(message) => ExecutionResponse::fail(
+                        1,
+                        "unexpected_module_response",
+                        format!(
+                            "module '{}' returned unexpected runtime message: {:?}",
+                            module, message
+                        ),
+                    ),
+
+                    Err(error) => ExecutionResponse::fail(1, "module_runtime", error),
+                };
             }
-            args.extend(request.args);
-            match modules::execute(module, &args, &request.context.caller) {
-                Ok(code) if code == 0 => ExecutionResponse::ok(Some(json!({ "exit_code": code }))),
-                Ok(code) => ExecutionResponse::fail(
-                    code,
-                    "module_exit",
-                    format!("module exited with code {code}"),
-                ),
-                Err(error) => ExecutionResponse::fail(1, "module_execution", error),
+
+            /*
+             * Dynamic endpoint not declared.
+             * Preserve Schema 3 legacy execution.
+             */
+            Ok(None) => {}
+
+            Err(error) => {
+                return ExecutionResponse::fail(1, "module_contract", error);
             }
         }
+    }
+
+    let mut args = Vec::new();
+
+    if let Some(action) = request.action {
+        args.push(action);
+    }
+
+    args.extend(request.args);
+
+    match modules::execute(module, &args, &request.context.caller) {
+        Ok(code) if code == 0 => ExecutionResponse::ok(Some(json!({
+            "exit_code": code
+        }))),
+
+        Ok(code) => ExecutionResponse::fail(
+            code,
+            "module_exit",
+            format!("module exited with code {code}"),
+        ),
+
+        Err(error) => ExecutionResponse::fail(1, "module_execution", error),
     }
 }
 

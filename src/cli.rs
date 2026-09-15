@@ -686,11 +686,13 @@ fn notify_command(args: &[String]) -> i32 {
 
 fn module_command(target: &str, args: &[String]) -> i32 {
     let action = args.first().cloned();
+
     let rest = if args.is_empty() {
         Vec::new()
     } else {
         args[1..].to_vec()
     };
+
     let request = ExecutionRequest {
         target: target.to_string(),
         action,
@@ -700,12 +702,37 @@ fn module_command(target: &str, args: &[String]) -> i32 {
         },
     };
 
-    let response = dispatcher::dispatch(request);
-    if !response.ok {
-        if let Some(error) = response.error {
-            eprintln!("N.E.E.B.L.E.S.: {}", error.message);
+    /*
+     * Module execution belongs to the persistent Boss process.
+     *
+     * That process owns RuntimeRegistry and modules.sock.
+     * Executing dispatcher::dispatch() locally here would create
+     * a separate process with an empty runtime registry.
+     */
+    let response = match crate::ipc::request(&request) {
+        Ok(response) => response,
+
+        Err(error) => {
+            return fail(error);
         }
+    };
+
+    if response.ok {
+        if let Some(value) = &response.result {
+            if !value.is_null() {
+                match serde_json::to_string_pretty(value) {
+                    Ok(json) => println!("{json}"),
+
+                    Err(error) => {
+                        return fail(format!("could not serialize module response: {error}"));
+                    }
+                }
+            }
+        }
+    } else if let Some(error) = &response.error {
+        eprintln!("N.E.E.B.L.E.S.: {}", error.message);
     }
+
     response.code
 }
 
