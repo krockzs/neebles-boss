@@ -1,0 +1,239 @@
+name: Build and release NEEBLES Boss 1.0.7
+
+on:
+  push:
+    paths:
+      - "release/trigger-v1.0.7"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    container:
+      image: debian:trixie-slim
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            ca-certificates \
+            git \
+            curl \
+            build-essential \
+            cmake \
+            pkg-config \
+            rustc \
+            cargo \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            libgl1-mesa-dev \
+            liblayershellqtinterface-dev \
+            libpolkit-qt6-1-dev
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Rust backend
+        run: |
+          cargo build --release --locked
+
+      - name: Build client UI
+        run: |
+          cmake \
+            -S ui/client \
+            -B ui/client/build \
+            -DCMAKE_BUILD_TYPE=Release
+
+          cmake \
+            --build ui/client/build \
+            --parallel
+
+      - name: Build installer UI
+        run: |
+          cmake \
+            -S ui/installer \
+            -B ui/installer/build \
+            -DCMAKE_BUILD_TYPE=Release
+
+          cmake \
+            --build ui/installer/build \
+            --parallel
+
+      - name: Build authorization agent
+        run: |
+          cmake \
+            -S ui/auth-agent \
+            -B ui/auth-agent/build \
+            -DCMAKE_BUILD_TYPE=Release
+
+          cmake \
+            --build ui/auth-agent/build \
+            --parallel
+
+
+      - name: Stage release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+
+          cp \
+            target/release/neebles-backend \
+            dist/neebles-backend
+
+          cp \
+            ui/client/build/neebles-ui \
+            dist/neebles-ui
+
+          cp \
+            ui/installer/build/neebles-installer \
+            dist/neebles-installer
+
+
+          cp \
+            ui/auth-agent/build/neebles-auth-agent \
+            dist/neebles-auth-agent
+
+          cp \
+            scripts/install.sh \
+            dist/install.sh
+
+          ./scripts/build-client-data.sh \
+            dist/client-data.tar.gz \
+            client
+
+          chmod +x \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-auth-agent \
+            dist/install.sh
+
+          BACKEND_SHA="$(
+            sha256sum dist/neebles-backend |
+            awk '{print $1}'
+          )"
+
+          UI_SHA="$(
+            sha256sum dist/neebles-ui |
+            awk '{print $1}'
+          )"
+
+          INSTALLER_SHA="$(
+            sha256sum dist/neebles-installer |
+            awk '{print $1}'
+          )"
+
+
+          AUTH_AGENT_SHA="$(
+            sha256sum dist/neebles-auth-agent |
+            awk '{print $1}'
+          )"
+
+          CLIENT_DATA_SHA="$(
+            sha256sum dist/client-data.tar.gz |
+            awk '{print $1}'
+          )"
+
+          INSTALL_SHA="$(
+            sha256sum dist/install.sh |
+            awk '{print $1}'
+          )"
+
+          cat > dist/bootstrap.json <<EOF
+          {
+            "schema": 2,
+            "channel": "stable",
+            "stable": {
+              "version": "1.0.7",
+              "base_url": "https://github.com/krockzs/neebles-boss/releases/download/v1.0.7",
+              "assets": {
+                "backend": {
+                  "file": "neebles-backend",
+                  "sha256": "${BACKEND_SHA}"
+                },
+                "ui": {
+                  "file": "neebles-ui",
+                  "sha256": "${UI_SHA}"
+                },
+                "installer": {
+                  "file": "neebles-installer",
+                  "sha256": "${INSTALLER_SHA}"
+                },
+                "auth_agent": {
+                  "file": "neebles-auth-agent",
+                  "sha256": "${AUTH_AGENT_SHA}"
+                },
+                "client_data": {
+                  "file": "client-data.tar.gz",
+                  "sha256": "${CLIENT_DATA_SHA}"
+                },
+                "install": {
+                  "file": "install.sh",
+                  "sha256": "${INSTALL_SHA}"
+                }
+              }
+            }
+          }
+          EOF
+
+          sha256sum \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-auth-agent \
+            dist/client-data.tar.gz \
+            dist/install.sh \
+            dist/bootstrap.json \
+            | sed 's#  dist/#  #' \
+            | tee dist/SHA256SUMS
+
+      - name: Verify release payload
+        run: |
+          ./scripts/verify-release.py \
+            --dist dist \
+            --cargo-toml Cargo.toml
+
+      - name: Publish v1.0.7 release
+        uses: softprops/action-gh-release@v2
+
+        with:
+          tag_name: v1.0.7
+          target_commitish: ${{ github.sha }}
+          name: N.E.E.B.L.E.S. Boss v1.0.7
+
+          body: |
+            N.E.E.B.L.E.S. Boss 1.0.7 stable release.
+
+            Boss installation and runtime startup ordering update.
+
+            Changes:
+            - Permanent authorization agent is installed early in the Boss payload.
+            - Added persistent N.E.E.B.L.E.S. Boss Runtime system service.
+            - Boss Runtime starts immediately after a successful installation.
+            - neebles.sock and modules.sock are owned by the persistent Boss runtime.
+            - Tray Manager is started immediately in the active desktop session.
+            - Fresh installations no longer wait for the next login to start the tray.
+            - Client data payload now includes neebles-runtime.service.
+            - Installation ordering prepares Boss runtime before module operations.
+            - Boss UI, installer, runtime, tray and authorization agent aligned to 1.0.7.
+
+            Publishes the Rust Boss backend, Qt client UI, graphical installer,
+            N.E.E.B.L.E.S. authorization agent, complete client
+            data payload, privileged install script and Bootstrap Schema 2
+            manifest.
+
+          files: |
+            dist/neebles-backend
+            dist/neebles-ui
+            dist/neebles-installer
+            dist/neebles-auth-agent
+            dist/client-data.tar.gz
+            dist/install.sh
+            dist/bootstrap.json
+            dist/SHA256SUMS
