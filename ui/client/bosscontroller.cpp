@@ -159,6 +159,75 @@ if (enabled) {
         && process.exitCode() == 0;
 }
 
+static bool applyTrayManagerState(
+    bool enabled
+)
+{
+    QString systemctl;
+
+    if (
+        QFileInfo::exists(
+            QStringLiteral(
+                "/usr/bin/systemctl"
+            )
+        )
+    ) {
+        systemctl =
+            QStringLiteral(
+                "/usr/bin/systemctl"
+            );
+    } else {
+        systemctl =
+            QStringLiteral(
+                "systemctl"
+            );
+    }
+
+    QProcess process;
+
+    process.start(
+        systemctl,
+        {
+            QStringLiteral("--user"),
+
+            enabled
+                ? QStringLiteral("enable")
+                : QStringLiteral("disable"),
+
+            QStringLiteral("--now"),
+
+            QStringLiteral(
+                "neebles-tray-manager.service"
+            )
+        }
+    );
+
+    if (
+        !process.waitForStarted(
+            3000
+        )
+    ) {
+        return false;
+    }
+
+    if (
+        !process.waitForFinished(
+            10000
+        )
+    ) {
+        process.kill();
+        process.waitForFinished();
+
+        return false;
+    }
+
+    return
+        process.exitStatus()
+            == QProcess::NormalExit
+        && process.exitCode() == 0;
+}
+
+
 QString BossController::commandPath() const
 {
     if (
@@ -1175,7 +1244,7 @@ void BossController::applyModuleLifecycle()
                 name,
                 remoteVersion
             },
-            false,
+            true,
             5000,
             &markOk
         );
@@ -1785,7 +1854,7 @@ void BossController::startModuleProcess(
                         QStringLiteral("enable"),
                         name
                     },
-                    false,
+                    true,
                     5000,
                     &enabled
                 );
@@ -1938,6 +2007,9 @@ void BossController::saveConfigValue(
     const QString normalized =
         value.trimmed();
 
+    const bool trayWasEnabled =
+        m_trayEnabled;
+
     const bool launcherWasEnabled =
         m_launcherEnabled;
 
@@ -2008,6 +2080,50 @@ void BossController::saveConfigValue(
         setBusy(false);
         return;
     }
+
+    /*
+     * Tray Manager:
+     *
+     * El setting persistido es la intención del usuario.
+     * El servicio real debe reflejar inmediatamente
+     * ese mismo estado.
+     *
+     * ON:
+     *   enable + start
+     *
+     * OFF:
+     *   disable + stop
+     */
+    if (
+        key
+            == QStringLiteral(
+                "tray_enabled"
+            )
+    ) {
+        const bool enabled =
+            normalized
+                == QStringLiteral("true");
+
+        if (
+            enabled
+            != trayWasEnabled
+        ) {
+            if (
+                !applyTrayManagerState(
+                    enabled
+                )
+            ) {
+                setStatusText(
+                    text(
+                        QStringLiteral(
+                            "common.error"
+                        )
+                    )
+                );
+            }
+        }
+    }
+
 
     /*
      * Launcher:
