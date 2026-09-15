@@ -3,6 +3,7 @@ pub mod framing;
 pub mod pending;
 pub mod protocol;
 pub mod registry;
+mod router;
 pub mod server;
 
 pub use client::invoke;
@@ -14,3 +15,5 @@ pub use protocol::{ModuleError, ModuleMessage, ModuleRuntimeState, MODULES_PROTO
 pub use registry::{ModuleRuntimeRecord, RuntimeRegistry};
 
 pub use server::{pending_registry, runtime_registry, serve, socket_path, start_background};
+
+pub use router::invoke_declared;
