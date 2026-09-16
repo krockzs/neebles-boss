@@ -162,7 +162,27 @@ fn dispatch_settings(request: ExecutionRequest) -> ExecutionResponse {
             };
 
             match settings::set_path(&path, &default, setting_path, value.clone()) {
-                Ok(value) => ExecutionResponse::ok(Some(json!(value))),
+                Ok(value) => {
+                    let topic = format!("settings.{}", target);
+
+                    if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
+                        &topic,
+                        "changed",
+                        json!({
+                            "target": target,
+                            "path": setting_path,
+                            "value": value
+                        }),
+                    ) {
+                        eprintln!(
+                            "N.E.E.B.L.E.S.: settings persisted but event broadcast failed for '{}': {}",
+                            target,
+                            error
+                        );
+                    }
+
+                    ExecutionResponse::ok(Some(json!(value)))
+                }
 
                 Err(error) => ExecutionResponse::fail(1, "settings_write", error),
             }
@@ -178,7 +198,25 @@ fn dispatch_settings(request: ExecutionRequest) -> ExecutionResponse {
             }
 
             match settings::update_from_default(&path, &default) {
-                Ok(value) => ExecutionResponse::ok(Some(value)),
+                Ok(value) => {
+                    let topic = format!("settings.{}", target);
+
+                    if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
+                        &topic,
+                        "reconciled",
+                        json!({
+                            "target": target
+                        }),
+                    ) {
+                        eprintln!(
+                            "N.E.E.B.L.E.S.: settings reconciled but event broadcast failed for '{}': {}",
+                            target,
+                            error
+                        );
+                    }
+
+                    ExecutionResponse::ok(Some(value))
+                }
 
                 Err(error) => ExecutionResponse::fail(1, "settings_update", error),
             }

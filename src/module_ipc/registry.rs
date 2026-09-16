@@ -121,6 +121,75 @@ impl RuntimeRegistry {
         Ok(())
     }
 
+    pub fn broadcast_event(
+        &self,
+        topic: &str,
+        event: &str,
+        payload: serde_json::Value,
+    ) -> Result<usize, String> {
+        let topic = topic.trim();
+
+        if topic.is_empty() {
+            return Err("module event topic cannot be empty".to_string());
+        }
+
+        let event = event.trim();
+
+        if event.is_empty() {
+            return Err("module event name cannot be empty".to_string());
+        }
+
+        let records = self.list()?;
+
+        let mut delivered = 0usize;
+
+        for record in records {
+            /*
+             * Persistent settings are private to their owning
+             * module runtime.
+             *
+             * A wildcard means every topic this runtime is
+             * authorized to receive, never every Boss topic.
+             */
+            if let Some(settings_owner) = topic.strip_prefix("settings.") {
+                if settings_owner != record.module {
+                    continue;
+                }
+            }
+
+            if !record.subscriptions.contains("*") && !record.subscriptions.contains(topic) {
+                continue;
+            }
+
+            let message = ModuleMessage::Event {
+                module: record.module.clone(),
+                session_id: record.session_id.clone(),
+                topic: topic.to_string(),
+                event: event.to_string(),
+                payload: payload.clone(),
+            };
+
+            match record.writer.send(message) {
+                Ok(()) => {
+                    delivered += 1;
+                }
+
+                Err(error) => {
+                    eprintln!(
+                        "N.E.E.B.L.E.S.: could not deliver event '{}:{}' to module '{}' session '{}': {}",
+                        topic,
+                        event,
+                        record.module,
+                        record.session_id,
+                        error
+                    );
+                }
+            }
+        }
+
+        Ok(delivered)
+    }
+
     pub fn get(&self, module: &str) -> Result<Option<ModuleRuntimeRecord>, String> {
         let registry = self
             .inner

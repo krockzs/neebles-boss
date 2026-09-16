@@ -581,6 +581,39 @@ fn client_loop(
                     continue;
                 }
 
+                let own_settings_topic = format!("settings.{}", module);
+
+                if let Some(forbidden) = topics.iter().find(|topic| {
+                    topic.starts_with("settings.") && topic.as_str() != own_settings_topic.as_str()
+                }) {
+                    writer
+                        .send(ModuleMessage::Error {
+                            id: None,
+
+                            module: Some(module.to_string()),
+
+                            error: ModuleError {
+                                kind: "forbidden_subscription".to_string(),
+
+                                message: format!(
+                                    "module '{}' cannot subscribe to settings topic '{}'",
+                                    module,
+                                    forbidden
+                                ),
+
+                                details: None,
+                            },
+                        })
+                        .map_err(|error| {
+                            format!(
+                                "could not queue forbidden subscription error for module '{}': {error}",
+                                module
+                            )
+                        })?;
+
+                    continue;
+                }
+
                 runtime_registry().set_subscriptions(module, session_id, topics.clone())?;
 
                 writer
