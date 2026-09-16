@@ -438,6 +438,20 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         ));
     }
 
+    if let Err(error) = runtime_registry().broadcast_event(
+        "module.lifecycle",
+        "runtime_ready",
+        serde_json::json!({
+            "module": module,
+            "session_id": session_id
+        }),
+    ) {
+        eprintln!(
+            "N.E.E.B.L.E.S.: runtime '{}' became ready but lifecycle event broadcast failed: {}",
+            module, error
+        );
+    }
+
     /*
      * Reader persistente.
      */
@@ -450,7 +464,34 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
      * Remove it from RuntimeRegistry first so no new request
      * can acquire this session.
      */
-    let _ = runtime_registry().unregister(&module, &session_id);
+    let removed = match runtime_registry().unregister(&module, &session_id) {
+        Ok(removed) => removed,
+
+        Err(error) => {
+            eprintln!(
+                "N.E.E.B.L.E.S.: could not unregister runtime '{}' session '{}': {}",
+                module, session_id, error
+            );
+
+            false
+        }
+    };
+
+    if removed {
+        if let Err(error) = runtime_registry().broadcast_event(
+            "module.lifecycle",
+            "runtime_dead",
+            serde_json::json!({
+                "module": module,
+                "session_id": session_id
+            }),
+        ) {
+            eprintln!(
+                "N.E.E.B.L.E.S.: runtime '{}' ended but lifecycle event broadcast failed: {}",
+                module, error
+            );
+        }
+    }
 
     /*
      * Wake every request already in flight for this exact

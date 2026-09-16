@@ -1894,6 +1894,20 @@ fn install_internal(
 
     visiting.remove(name);
 
+    if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
+        "module.lifecycle",
+        "installed",
+        serde_json::json!({
+            "module": name,
+            "version": manifest.version
+        }),
+    ) {
+        eprintln!(
+            "N.E.E.B.L.E.S.: module '{}' installed but lifecycle event broadcast failed: {}",
+            name, error
+        );
+    }
+
     Ok(())
 }
 
@@ -2123,6 +2137,20 @@ pub fn uninstall(name: &str, remove_settings: bool) -> Result<(), String> {
                 name
             ));
         }
+    }
+
+    if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
+        "module.lifecycle",
+        "uninstalled",
+        serde_json::json!({
+            "module": name,
+            "settings_preserved": !remove_local_settings
+        }),
+    ) {
+        eprintln!(
+            "N.E.E.B.L.E.S.: module '{}' uninstalled but lifecycle event broadcast failed: {}",
+            name, error
+        );
     }
 
     Ok(())
@@ -2425,11 +2453,28 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
 pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
     let _ = find_module_dir(name)?;
 
+    let previous = config::module_enabled(name)?;
+
     if !enabled {
         stop_tray_provider(name)?;
         stop_module(name)?;
 
         config::set_module_enabled(name, false)?;
+
+        if previous {
+            if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
+                "module.lifecycle",
+                "disabled",
+                serde_json::json!({
+                    "module": name
+                }),
+            ) {
+                eprintln!(
+                    "N.E.E.B.L.E.S.: module '{}' disabled but lifecycle event broadcast failed: {}",
+                    name, error
+                );
+            }
+        }
 
         return Ok(());
     }
@@ -2445,6 +2490,21 @@ pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
         let _ = config::set_module_enabled(name, false);
 
         return Err(error);
+    }
+
+    if !previous {
+        if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
+            "module.lifecycle",
+            "enabled",
+            serde_json::json!({
+                "module": name
+            }),
+        ) {
+            eprintln!(
+                "N.E.E.B.L.E.S.: module '{}' enabled but lifecycle event broadcast failed: {}",
+                name, error
+            );
+        }
     }
 
     Ok(())
