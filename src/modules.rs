@@ -1867,7 +1867,7 @@ fn install_internal(
 
     let settings_path = settings::module_settings_path(&neebles_root(), name);
 
-    if let Err(error) = settings::load_or_create(&settings_path, &settings_default) {
+    if let Err(error) = settings::update_from_default(&settings_path, &settings_default) {
         /*
          * Installation is not considered committed if Boss
          * cannot establish the persistent settings contract.
