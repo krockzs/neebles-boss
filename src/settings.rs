@@ -46,7 +46,6 @@ fn ensure_settings_directory_policy(path: &Path) -> Result<(), String> {
     })
 }
 
-
 fn apply_settings_file_policy(path: &Path, parent: &Path) -> Result<(), String> {
     let parent_metadata = fs::metadata(parent)
         .map_err(|error| format!("could not inspect {}: {error}", parent.display()))?;

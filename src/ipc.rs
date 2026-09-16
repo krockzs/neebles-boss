@@ -1,10 +1,6 @@
 use crate::config;
 use crate::dispatcher;
-use crate::request::{
-    BossStreamMessage,
-    ExecutionRequest,
-    ExecutionResponse,
-};
+use crate::request::{BossStreamMessage, ExecutionRequest, ExecutionResponse};
 use std::env;
 use std::ffi::CString;
 use std::fs;
@@ -16,9 +12,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
-    Mutex,
-    OnceLock,
+    Arc, Mutex, OnceLock,
 };
 
 const DEFAULT_SOCKET_PATH: &str = "/run/neebles/neebles.sock";
@@ -30,24 +24,18 @@ struct BossSubscriber {
     writer: Arc<Mutex<UnixStream>>,
 }
 
-static BOSS_SUBSCRIBERS: OnceLock<Mutex<Vec<BossSubscriber>>> =
-    OnceLock::new();
+static BOSS_SUBSCRIBERS: OnceLock<Mutex<Vec<BossSubscriber>>> = OnceLock::new();
 
-static NEXT_SUBSCRIBER_ID: AtomicU64 =
-    AtomicU64::new(1);
+static NEXT_SUBSCRIBER_ID: AtomicU64 = AtomicU64::new(1);
 
 fn subscribers() -> &'static Mutex<Vec<BossSubscriber>> {
     BOSS_SUBSCRIBERS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn topic_matches(
-    topics: &[String],
-    topic: &str,
-) -> bool {
-    topics.iter().any(|candidate| {
-        candidate == "*"
-            || candidate == topic
-    })
+fn topic_matches(topics: &[String], topic: &str) -> bool {
+    topics
+        .iter()
+        .any(|candidate| candidate == "*" || candidate == topic)
 }
 
 pub fn broadcast_event(
@@ -66,9 +54,7 @@ pub fn broadcast_event(
     let mut payload = match serde_json::to_vec(&message) {
         Ok(payload) => payload,
         Err(error) => {
-            eprintln!(
-                "N.E.E.B.L.E.S.: could not serialize Boss event: {error}"
-            );
+            eprintln!("N.E.E.B.L.E.S.: could not serialize Boss event: {error}");
             return;
         }
     };
@@ -78,9 +64,7 @@ pub fn broadcast_event(
     let current = match subscribers().lock() {
         Ok(guard) => guard.clone(),
         Err(_) => {
-            eprintln!(
-                "N.E.E.B.L.E.S.: Boss subscriber registry lock poisoned"
-            );
+            eprintln!("N.E.E.B.L.E.S.: Boss subscriber registry lock poisoned");
             return;
         }
     };
@@ -88,20 +72,14 @@ pub fn broadcast_event(
     let mut dead = Vec::new();
 
     for subscriber in current {
-        if !topic_matches(
-            &subscriber.topics,
-            &topic,
-        ) {
+        if !topic_matches(&subscriber.topics, &topic) {
             continue;
         }
 
         let write_ok = subscriber
             .writer
             .lock()
-            .map(|mut writer| {
-                writer.write_all(&payload).is_ok()
-                    && writer.flush().is_ok()
-            })
+            .map(|mut writer| writer.write_all(&payload).is_ok() && writer.flush().is_ok())
             .unwrap_or(false);
 
         if !write_ok {
@@ -114,12 +92,9 @@ pub fn broadcast_event(
     }
 
     if let Ok(mut guard) = subscribers().lock() {
-        guard.retain(|subscriber| {
-            !dead.contains(&subscriber.id)
-        });
+        guard.retain(|subscriber| !dead.contains(&subscriber.id));
     }
 }
-
 
 pub(crate) fn secure_runtime_socket(path: &Path) -> Result<(), String> {
     let (uid, gid) = crate::runtime_identity::desktop_identity()?;
@@ -224,13 +199,8 @@ pub fn serve() -> Result<(), String> {
     let _module_ipc = crate::module_ipc::start_background()
         .map_err(|error| format!("could not start module IPC: {error}"))?;
 
-    let _surface_state =
-        crate::surface_state::start_background()
-            .map_err(|error| {
-                format!(
-                    "could not start Boss surface state watcher: {error}"
-                )
-            })?;
+    let _surface_state = crate::surface_state::start_background()
+        .map_err(|error| format!("could not start Boss surface state watcher: {error}"))?;
 
     let path = socket_path();
 
@@ -301,68 +271,37 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
      */
     let reader_stream = stream
         .try_clone()
-        .map_err(|error| {
-            format!(
-                "could not clone N.E.E.B.L.E.S. Boss socket: {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not clone N.E.E.B.L.E.S. Boss socket: {error}"))?;
 
-    let mut reader =
-        BufReader::new(reader_stream);
+    let mut reader = BufReader::new(reader_stream);
 
     let mut raw = String::new();
 
     let received = reader
         .read_line(&mut raw)
-        .map_err(|error| {
-            format!(
-                "could not read ExecutionRequest from Unix socket: {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not read ExecutionRequest from Unix socket: {error}"))?;
 
     if received == 0 {
-        return Err(
-            "empty ExecutionRequest received through Unix socket"
-                .to_string()
-        );
+        return Err("empty ExecutionRequest received through Unix socket".to_string());
     }
 
-    let request: ExecutionRequest =
-        serde_json::from_str(raw.trim())
-            .map_err(|error| {
-                format!(
-                    "invalid ExecutionRequest received through Unix socket: {error}"
-                )
-            })?;
+    let request: ExecutionRequest = serde_json::from_str(raw.trim()).map_err(|error| {
+        format!("invalid ExecutionRequest received through Unix socket: {error}")
+    })?;
 
-    if request.target == "events"
-        && request.action.as_deref() == Some("subscribe")
-    {
-        return handle_subscription(
-            stream,
-            reader,
-            request,
-        );
+    if request.target == "events" && request.action.as_deref() == Some("subscribe") {
+        return handle_subscription(stream, reader, request);
     }
 
-    let response =
-        dispatcher::dispatch(request);
+    let response = dispatcher::dispatch(request);
 
-    let payload =
-        serde_json::to_vec(&response)
-            .map_err(|error| {
-                format!(
-                    "could not serialize ExecutionResponse for Unix socket: {error}"
-                )
-            })?;
+    let payload = serde_json::to_vec(&response).map_err(|error| {
+        format!("could not serialize ExecutionResponse for Unix socket: {error}")
+    })?;
 
     stream
         .write_all(&payload)
-        .map_err(|error| {
-            format!(
-                "could not write ExecutionResponse to Unix socket: {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not write ExecutionResponse to Unix socket: {error}"))?;
 
     Ok(())
 }
@@ -374,46 +313,25 @@ fn handle_subscription(
 ) -> Result<(), String> {
     let mut topics = request.args;
 
-    topics.retain(|topic| {
-        !topic.trim().is_empty()
-    });
+    topics.retain(|topic| !topic.trim().is_empty());
 
     topics.sort();
     topics.dedup();
 
     if topics.is_empty() {
-        return Err(
-            "events subscribe requires at least one topic"
-                .to_string()
-        );
+        return Err("events subscribe requires at least one topic".to_string());
     }
 
-    let id =
-        NEXT_SUBSCRIBER_ID.fetch_add(
-            1,
-            Ordering::Relaxed,
-        );
+    let id = NEXT_SUBSCRIBER_ID.fetch_add(1, Ordering::Relaxed);
 
-    let writer = Arc::new(
-        Mutex::new(
-            stream
-                .try_clone()
-                .map_err(|error| {
-                    format!(
-                        "could not clone Boss subscriber socket: {error}"
-                    )
-                })?,
-        ),
-    );
+    let writer = Arc::new(Mutex::new(stream.try_clone().map_err(|error| {
+        format!("could not clone Boss subscriber socket: {error}")
+    })?));
 
     {
-        let mut guard =
-            subscribers()
-                .lock()
-                .map_err(|_| {
-                    "Boss subscriber registry lock poisoned"
-                        .to_string()
-                })?;
+        let mut guard = subscribers()
+            .lock()
+            .map_err(|_| "Boss subscriber registry lock poisoned".to_string())?;
 
         guard.push(BossSubscriber {
             id,
@@ -422,84 +340,48 @@ fn handle_subscription(
         });
     }
 
-    let mut subscribed =
-        serde_json::to_vec(
-            &BossStreamMessage::Subscribed {
-                topics: topics.clone(),
-            },
-        )
-        .map_err(|error| {
-            format!(
-                "could not serialize Boss subscription response: {error}"
-            )
-        })?;
+    let mut subscribed = serde_json::to_vec(&BossStreamMessage::Subscribed {
+        topics: topics.clone(),
+    })
+    .map_err(|error| format!("could not serialize Boss subscription response: {error}"))?;
 
     subscribed.push(b'\n');
 
-    if let Err(error) =
-        stream.write_all(&subscribed)
-    {
-        if let Ok(mut guard) =
-            subscribers().lock()
-        {
-            guard.retain(|subscriber| {
-                subscriber.id != id
-            });
+    if let Err(error) = stream.write_all(&subscribed) {
+        if let Ok(mut guard) = subscribers().lock() {
+            guard.retain(|subscriber| subscriber.id != id);
         }
 
-        return Err(format!(
-            "could not acknowledge Boss subscription: {error}"
-        ));
+        return Err(format!("could not acknowledge Boss subscription: {error}"));
     }
 
     stream
         .flush()
-        .map_err(|error| {
-            format!(
-                "could not flush Boss subscription response: {error}"
-            )
-        })?;
+        .map_err(|error| format!("could not flush Boss subscription response: {error}"))?;
 
-    if topic_matches(
-        &topics,
-        "boss-ui",
-    ) {
-        let snapshot =
-            BossStreamMessage::Event {
-                topic: "boss-ui".to_string(),
-                event: "state_snapshot".to_string(),
-                payload: serde_json::json!({
-                    "state":
-                        crate::surface_state::boss_ui_state()
-                            .as_str()
-                }),
-            };
+    if topic_matches(&topics, "boss-ui") {
+        let snapshot = BossStreamMessage::Event {
+            topic: "boss-ui".to_string(),
+            event: "state_snapshot".to_string(),
+            payload: serde_json::json!({
+                "state":
+                    crate::surface_state::boss_ui_state()
+                        .as_str()
+            }),
+        };
 
-        let mut snapshot_payload =
-            serde_json::to_vec(&snapshot)
-                .map_err(|error| {
-                    format!(
-                        "could not serialize Boss UI state snapshot: {error}"
-                    )
-                })?;
+        let mut snapshot_payload = serde_json::to_vec(&snapshot)
+            .map_err(|error| format!("could not serialize Boss UI state snapshot: {error}"))?;
 
         snapshot_payload.push(b'\n');
 
         stream
             .write_all(&snapshot_payload)
-            .map_err(|error| {
-                format!(
-                    "could not write Boss UI state snapshot: {error}"
-                )
-            })?;
+            .map_err(|error| format!("could not write Boss UI state snapshot: {error}"))?;
 
         stream
             .flush()
-            .map_err(|error| {
-                format!(
-                    "could not flush Boss UI state snapshot: {error}"
-                )
-            })?;
+            .map_err(|error| format!("could not flush Boss UI state snapshot: {error}"))?;
     }
 
     /*
@@ -518,12 +400,8 @@ fn handle_subscription(
         }
     }
 
-    if let Ok(mut guard) =
-        subscribers().lock()
-    {
-        guard.retain(|subscriber| {
-            subscriber.id != id
-        });
+    if let Ok(mut guard) = subscribers().lock() {
+        guard.retain(|subscriber| subscriber.id != id);
     }
 
     Ok(())

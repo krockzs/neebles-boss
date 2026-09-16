@@ -12,30 +12,22 @@ use std::process::Command;
 
 pub fn launch_ui() -> Result<(), String> {
     match surface_state::boss_ui_state() {
-        BossUiState::Open
-        | BossUiState::Opening => {
+        BossUiState::Open | BossUiState::Opening => {
             return Ok(());
         }
 
         BossUiState::Closed => {}
     }
 
-    surface_state::set_boss_ui_state(
-        BossUiState::Opening
-    );
+    surface_state::set_boss_ui_state(BossUiState::Opening);
 
-    let path =
-        std::path::Path::new(
-            "/usr/lib/neebles/neebles-launcher"
-        );
+    let path = std::path::Path::new("/usr/lib/neebles/neebles-launcher");
 
     match Command::new(path).spawn() {
         Ok(_) => Ok(()),
 
         Err(error) => {
-            surface_state::set_boss_ui_state(
-                BossUiState::Closed
-            );
+            surface_state::set_boss_ui_state(BossUiState::Closed);
 
             Err(format!(
                 "could not launch Boss through {}: {error}",

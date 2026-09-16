@@ -2,32 +2,18 @@ use crate::ipc;
 
 use serde_json::json;
 
-use std::sync::{
-    OnceLock,
-    RwLock,
-};
+use std::sync::{OnceLock, RwLock};
 
 use zbus::{
-    blocking::{
-        fdo::DBusProxy,
-        Connection,
-    },
+    blocking::{fdo::DBusProxy, Connection},
     names::BusName,
 };
 
-const BOSS_UI_SERVICE: &str =
-    "org.neebles.Boss";
+const BOSS_UI_SERVICE: &str = "org.neebles.Boss";
 
-const BOSS_UI_TOPIC: &str =
-    "boss-ui";
+const BOSS_UI_TOPIC: &str = "boss-ui";
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BossUiState {
     Closed,
     Opening,
@@ -44,18 +30,10 @@ impl BossUiState {
     }
 }
 
-static BOSS_UI_STATE:
-    OnceLock<RwLock<BossUiState>> =
-    OnceLock::new();
+static BOSS_UI_STATE: OnceLock<RwLock<BossUiState>> = OnceLock::new();
 
-fn state_lock()
-    -> &'static RwLock<BossUiState>
-{
-    BOSS_UI_STATE.get_or_init(|| {
-        RwLock::new(
-            BossUiState::Closed
-        )
-    })
+fn state_lock() -> &'static RwLock<BossUiState> {
+    BOSS_UI_STATE.get_or_init(|| RwLock::new(BossUiState::Closed))
 }
 
 pub fn boss_ui_state() -> BossUiState {
@@ -65,9 +43,7 @@ pub fn boss_ui_state() -> BossUiState {
         .unwrap_or(BossUiState::Closed)
 }
 
-pub fn set_boss_ui_state(
-    state: BossUiState,
-) {
+pub fn set_boss_ui_state(state: BossUiState) {
     let changed = match state_lock().write() {
         Ok(mut guard) => {
             if *guard == state {
@@ -79,9 +55,7 @@ pub fn set_boss_ui_state(
         }
 
         Err(_) => {
-            eprintln!(
-                "N.E.E.B.L.E.S.: Boss UI state lock poisoned"
-            );
+            eprintln!("N.E.E.B.L.E.S.: Boss UI state lock poisoned");
 
             return;
         }
@@ -100,69 +74,33 @@ pub fn set_boss_ui_state(
     );
 }
 
-pub fn start_background()
-    -> Result<std::thread::JoinHandle<()>, String>
-{
-    let connection =
-        Connection::session()
-            .map_err(|error| {
-                format!(
-                    "could not connect Boss surface watcher to session D-Bus: {error}"
-                )
-            })?;
+pub fn start_background() -> Result<std::thread::JoinHandle<()>, String> {
+    let connection = Connection::session().map_err(|error| {
+        format!("could not connect Boss surface watcher to session D-Bus: {error}")
+    })?;
 
-    let proxy =
-        DBusProxy::new(&connection)
-            .map_err(|error| {
-                format!(
-                    "could not create D-Bus proxy for Boss surface watcher: {error}"
-                )
-            })?;
+    let proxy = DBusProxy::new(&connection).map_err(|error| {
+        format!("could not create D-Bus proxy for Boss surface watcher: {error}")
+    })?;
 
-    let boss_name =
-        BusName::try_from(
-            BOSS_UI_SERVICE
-        )
+    let boss_name = BusName::try_from(BOSS_UI_SERVICE)
+        .map_err(|error| format!("invalid Boss UI D-Bus service name: {error}"))?;
+
+    let open = proxy
+        .name_has_owner(boss_name.clone())
+        .map_err(|error| format!("could not query Boss UI D-Bus ownership: {error}"))?;
+
+    set_boss_ui_state(if open {
+        BossUiState::Open
+    } else {
+        BossUiState::Closed
+    });
+
+    let signals = proxy
+        .receive_name_owner_changed_with_args(&[(0, BOSS_UI_SERVICE)])
         .map_err(|error| {
-            format!(
-                "invalid Boss UI D-Bus service name: {error}"
-            )
+            format!("could not subscribe to Boss UI D-Bus ownership changes: {error}")
         })?;
-
-    let open =
-        proxy
-            .name_has_owner(
-                boss_name.clone()
-            )
-            .map_err(|error| {
-                format!(
-                    "could not query Boss UI D-Bus ownership: {error}"
-                )
-            })?;
-
-    set_boss_ui_state(
-        if open {
-            BossUiState::Open
-        } else {
-            BossUiState::Closed
-        },
-    );
-
-    let signals =
-        proxy
-            .receive_name_owner_changed_with_args(
-                &[
-                    (
-                        0,
-                        BOSS_UI_SERVICE,
-                    )
-                ]
-            )
-            .map_err(|error| {
-                format!(
-                    "could not subscribe to Boss UI D-Bus ownership changes: {error}"
-                )
-            })?;
 
     Ok(std::thread::spawn(move || {
         /*
@@ -178,27 +116,19 @@ pub fn start_background()
                 Ok(args) => args,
 
                 Err(error) => {
-                    eprintln!(
-                        "N.E.E.B.L.E.S.: invalid Boss UI ownership event: {error}"
-                    );
+                    eprintln!("N.E.E.B.L.E.S.: invalid Boss UI ownership event: {error}");
 
                     continue;
                 }
             };
 
-            let open =
-                args
-                    .new_owner()
-                    .as_ref()
-                    .is_some();
+            let open = args.new_owner().as_ref().is_some();
 
-            set_boss_ui_state(
-                if open {
-                    BossUiState::Open
-                } else {
-                    BossUiState::Closed
-                },
-            );
+            set_boss_ui_state(if open {
+                BossUiState::Open
+            } else {
+                BossUiState::Closed
+            });
         }
     }))
 }

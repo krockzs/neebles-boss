@@ -1,7 +1,7 @@
 use crate::config;
 use crate::dispatcher;
-use crate::languages;
 use crate::ipc;
+use crate::languages;
 use crate::modules;
 use crate::notifications::{self, Severity};
 use crate::privileges;
@@ -51,14 +51,10 @@ fn start_boss() -> Result<(), String> {
         return Ok(());
     }
 
-    Err(
-        response
-            .error
-            .map(|error| error.message)
-            .unwrap_or_else(|| {
-                "Boss rejected start request".to_string()
-            })
-    )
+    Err(response
+        .error
+        .map(|error| error.message)
+        .unwrap_or_else(|| "Boss rejected start request".to_string()))
 }
 
 fn request_json(args: &[String]) -> i32 {
