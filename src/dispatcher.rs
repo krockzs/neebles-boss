@@ -161,24 +161,34 @@ fn dispatch_settings(request: ExecutionRequest) -> ExecutionResponse {
                 );
             };
 
+            let previous = settings::load_or_create(&path, &default)
+                .and_then(|local| settings::get_effective_path(&local, &default, setting_path));
+
             match settings::set_path(&path, &default, setting_path, value.clone()) {
                 Ok(value) => {
-                    let topic = format!("settings.{}", target);
+                    let changed = previous
+                        .as_ref()
+                        .map(|previous| previous != &value)
+                        .unwrap_or(true);
 
-                    if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
-                        &topic,
-                        "changed",
-                        json!({
-                            "target": target,
-                            "path": setting_path,
-                            "value": value
-                        }),
-                    ) {
-                        eprintln!(
-                            "N.E.E.B.L.E.S.: settings persisted but event broadcast failed for '{}': {}",
-                            target,
-                            error
-                        );
+                    if changed {
+                        let topic = format!("settings.{}", target);
+
+                        if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
+                            &topic,
+                            "changed",
+                            json!({
+                                "target": target,
+                                "path": setting_path,
+                                "value": value
+                            }),
+                        ) {
+                            eprintln!(
+                                "N.E.E.B.L.E.S.: settings persisted but event broadcast failed for '{}': {}",
+                                target,
+                                error
+                            );
+                        }
                     }
 
                     ExecutionResponse::ok(Some(json!(value)))

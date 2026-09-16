@@ -1,5 +1,6 @@
 use crate::config;
 use crate::modules;
+use crate::settings;
 
 use crate::module_ipc::framing::{read_message, write_message};
 
@@ -632,6 +633,147 @@ fn client_loop(
                     })?;
             }
 
+            ModuleMessage::SettingsGet {
+                id,
+                module: settings_module,
+                session_id: settings_session,
+                path: setting_path,
+            } => {
+                validate_session(module, session_id, &settings_module, &settings_session)?;
+
+                let result = (|| -> Result<String, String> {
+                    let default = modules::installed_module_settings_default(module)?;
+
+                    let settings_path =
+                        settings::module_settings_path(&modules::neebles_root(), module);
+
+                    let local = settings::load_or_create(&settings_path, &default)?;
+
+                    settings::get_effective_path(&local, &default, &setting_path)
+                })();
+
+                match result {
+                    Ok(value) => {
+                        writer
+                            .send(ModuleMessage::SettingsValue {
+                                id,
+                                module: module.to_string(),
+                                session_id: session_id.to_string(),
+                                path: setting_path,
+                                value,
+                            })
+                            .map_err(|error| {
+                                format!(
+                                    "could not queue settings value for module '{}': {error}",
+                                    module
+                                )
+                            })?;
+                    }
+
+                    Err(error) => {
+                        writer
+                            .send(ModuleMessage::Error {
+                                id: Some(id),
+                                module: Some(module.to_string()),
+                                error: ModuleError {
+                                    kind: "settings_read".to_string(),
+                                    message: error,
+                                    details: None,
+                                },
+                            })
+                            .map_err(|send_error| {
+                                format!(
+                                    "could not queue settings read error for module '{}': {send_error}",
+                                    module
+                                )
+                            })?;
+                    }
+                }
+            }
+
+            ModuleMessage::SettingsSet {
+                id,
+                module: settings_module,
+                session_id: settings_session,
+                path: setting_path,
+                value,
+            } => {
+                validate_session(module, session_id, &settings_module, &settings_session)?;
+
+                let result = (|| -> Result<(String, bool), String> {
+                    let default = modules::installed_module_settings_default(module)?;
+
+                    let settings_path =
+                        settings::module_settings_path(&modules::neebles_root(), module);
+
+                    let local = settings::load_or_create(&settings_path, &default)?;
+
+                    let previous = settings::get_effective_path(&local, &default, &setting_path)?;
+
+                    let value = settings::set_path(&settings_path, &default, &setting_path, value)?;
+
+                    let changed = previous != value;
+
+                    Ok((value, changed))
+                })();
+
+                match result {
+                    Ok((value, changed)) => {
+                        writer
+                            .send(ModuleMessage::SettingsValue {
+                                id,
+                                module: module.to_string(),
+                                session_id: session_id.to_string(),
+                                path: setting_path.clone(),
+                                value: value.clone(),
+                            })
+                            .map_err(|error| {
+                                format!(
+                                    "could not queue settings value for module '{}': {error}",
+                                    module
+                                )
+                            })?;
+
+                        if changed {
+                            if let Err(error) = runtime_registry().broadcast_event(
+                                &format!("settings.{}", module),
+                                "changed",
+                                serde_json::json!({
+                                    "target": module,
+                                    "path": setting_path,
+                                    "value": value
+                                }),
+                            ) {
+                                eprintln!(
+                                    "N.E.E.B.L.E.S.: module settings persisted but event broadcast failed for '{}': {}",
+                                    module,
+                                    error
+                                );
+                            }
+                        }
+                    }
+
+                    Err(error) => {
+                        writer
+                            .send(ModuleMessage::Error {
+                                id: Some(id),
+                                module: Some(module.to_string()),
+                                error: ModuleError {
+                                    kind: "settings_write".to_string(),
+                                    message: error,
+                                    details: None,
+                                },
+                            })
+                            .map_err(|send_error| {
+                                format!(
+                                    "could not queue settings write error for module '{}': {send_error}",
+                                    module
+                                )
+                            })?;
+                    }
+                }
+            }
+
             ModuleMessage::Unregister {
                 module: unregister_module,
 
@@ -734,6 +876,7 @@ fn client_loop(
             ModuleMessage::Register { .. }
             | ModuleMessage::Registered { .. }
             | ModuleMessage::Subscribed { .. }
+            | ModuleMessage::SettingsValue { .. }
             | ModuleMessage::Event { .. }
             | ModuleMessage::Invoke { .. }
             | ModuleMessage::Shutdown { .. } => {

@@ -75,6 +75,29 @@ pub enum ModuleMessage {
         payload: Value,
     },
 
+    SettingsGet {
+        id: String,
+        module: String,
+        session_id: String,
+        path: String,
+    },
+
+    SettingsSet {
+        id: String,
+        module: String,
+        session_id: String,
+        path: String,
+        value: String,
+    },
+
+    SettingsValue {
+        id: String,
+        module: String,
+        session_id: String,
+        path: String,
+        value: String,
+    },
+
     Invoke {
         id: String,
         module: String,
