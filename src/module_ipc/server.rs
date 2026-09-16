@@ -1,4 +1,5 @@
 use crate::config;
+use crate::external;
 use crate::modules;
 use crate::settings;
 
@@ -23,6 +24,32 @@ use std::path::PathBuf;
 use std::sync::{mpsc, OnceLock};
 
 const DEFAULT_SOCKET_PATH: &str = "/run/neebles/modules.sock";
+const MODULE_EXTERNAL_ACTIVE: bool = false;
+
+fn emit_module_error_external(activate: bool, module: &str, error: &ModuleError) {
+    let Some(envelope) = external::build_external_envelope(
+        "error",
+        "",
+        activate,
+        || {
+            let mut package = serde_json::Map::new();
+            package.insert(
+                "module".to_string(),
+                serde_json::Value::String(module.to_string()),
+            );
+            package
+        },
+        || external::error_message(&error.kind, &error.message),
+    ) else {
+        return;
+    };
+
+    if let Err(send_error) = external::send(&envelope) {
+        eprintln!(
+            "N.E.E.B.L.E.S.: external module error delivery unavailable; continuing: {send_error}"
+        );
+    }
+}
 
 static RUNTIME_REGISTRY: OnceLock<RuntimeRegistry> = OnceLock::new();
 
@@ -911,6 +938,8 @@ fn client_loop(
                         "N.E.E.B.L.E.S.: module '{}' reported runtime error: {}",
                         module, error.message
                     );
+
+                    emit_module_error_external(MODULE_EXTERNAL_ACTIVE, module, &error);
                 }
             }
 

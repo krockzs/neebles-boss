@@ -1,3 +1,4 @@
+use crate::external;
 use crate::local_installer::{self, LocalInstallerRequest};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
@@ -40,6 +41,21 @@ pub enum SystemVersionScheme {
     Debian,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SystemDependencyIntegrity {
+    pub name: String,
+    pub detected: Option<String>,
+    pub required: Option<String>,
+    pub satisfied: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SystemDependencyResolution {
+    pub before: SystemDependencyIntegrity,
+    pub repair_attempted: bool,
+    pub after: SystemDependencyIntegrity,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleDependency {
     pub name: String,
@@ -52,6 +68,8 @@ pub struct ModuleDependency {
 fn default_required() -> bool {
     true
 }
+
+const DEPENDENCY_EXTERNAL_ACTIVE: bool = false;
 
 pub fn resolve_system_dependencies(dependencies: &[SystemDependency]) -> Result<(), String> {
     resolve_system_dependencies_with(dependencies, &local_installer::handle)
@@ -66,10 +84,30 @@ where
 {
     for dependency in dependencies {
         match resolve_one(dependency, execute) {
-            Ok(()) => {}
+            Ok(resolution) if resolution.after.satisfied => {}
+
+            Ok(resolution) if dependency.required => {
+                emit_incompatibility_external(DEPENDENCY_EXTERNAL_ACTIVE, &resolution.after);
+
+                return Err(format!(
+                    "dependency '{}' installation completed but dependency contract is still not satisfied",
+                    dependency.name
+                ));
+            }
+
+            Ok(resolution) => {
+                emit_incompatibility_external(DEPENDENCY_EXTERNAL_ACTIVE, &resolution.after);
+
+                eprintln!(
+                    "N.E.E.B.L.E.S.: optional dependency '{}' could not be resolved: dependency contract is still not satisfied",
+                    dependency.name
+                );
+            }
+
             Err(error) if dependency.required => {
                 return Err(error);
             }
+
             Err(error) => {
                 eprintln!(
                     "N.E.E.B.L.E.S.: optional dependency '{}' could not be resolved: {error}",
@@ -82,12 +120,56 @@ where
     Ok(())
 }
 
-fn resolve_one<F>(dependency: &SystemDependency, execute: &F) -> Result<(), String>
+fn emit_incompatibility_external(activate: bool, integrity: &SystemDependencyIntegrity) {
+    if integrity.satisfied {
+        return;
+    }
+
+    let (Some(current), Some(required)) =
+        (integrity.detected.as_deref(), integrity.required.as_deref())
+    else {
+        return;
+    };
+
+    let Some(envelope) = external::build_external_envelope(
+        "incompatibility",
+        "",
+        activate,
+        serde_json::Map::new,
+        || {
+            external::incompatibility_message(
+                &integrity.name,
+                current,
+                required,
+                "Installed version does not satisfy the required dependency contract",
+            )
+        },
+    ) else {
+        return;
+    };
+
+    if let Err(error) = external::send(&envelope) {
+        eprintln!(
+            "N.E.E.B.L.E.S.: external incompatibility delivery unavailable; continuing: {error}"
+        );
+    }
+}
+
+fn resolve_one<F>(
+    dependency: &SystemDependency,
+    execute: &F,
+) -> Result<SystemDependencyResolution, String>
 where
     F: Fn(LocalInstallerRequest) -> Result<crate::local_installer::LocalInstallerResult, String>,
 {
-    if dependency_satisfied(dependency, execute)? {
-        return Ok(());
+    let before = dependency_integrity(dependency, execute)?;
+
+    if before.satisfied {
+        return Ok(SystemDependencyResolution {
+            before: before.clone(),
+            repair_attempted: false,
+            after: before,
+        });
     }
 
     let install_result = execute(dependency.install.clone()).map_err(|error| {
@@ -108,26 +190,41 @@ where
         ));
     }
 
-    if dependency_satisfied(dependency, execute)? {
-        return Ok(());
-    }
+    let after = dependency_integrity(dependency, execute)?;
 
-    Err(format!(
-        "dependency '{}' installation completed but dependency contract is still not satisfied",
-        dependency.name
-    ))
+    Ok(SystemDependencyResolution {
+        before,
+        repair_attempted: true,
+        after,
+    })
 }
 
-fn dependency_satisfied<F>(dependency: &SystemDependency, execute: &F) -> Result<bool, String>
+fn dependency_integrity<F>(
+    dependency: &SystemDependency,
+    execute: &F,
+) -> Result<SystemDependencyIntegrity, String>
 where
     F: Fn(LocalInstallerRequest) -> Result<crate::local_installer::LocalInstallerResult, String>,
 {
     if !request_succeeds(&dependency.verify, execute)? {
-        return Ok(false);
+        return Ok(SystemDependencyIntegrity {
+            name: dependency.name.clone(),
+            detected: None,
+            required: dependency
+                .version
+                .as_ref()
+                .map(|version| version.requirement.clone()),
+            satisfied: false,
+        });
     }
 
     let Some(version) = &dependency.version else {
-        return Ok(true);
+        return Ok(SystemDependencyIntegrity {
+            name: dependency.name.clone(),
+            detected: None,
+            required: None,
+            satisfied: true,
+        });
     };
 
     let result = execute(version.query.clone()).map_err(|error| {
@@ -157,7 +254,7 @@ where
         ));
     }
 
-    match version.scheme {
+    let satisfied = match version.scheme {
         SystemVersionScheme::Semver => {
             let requirement = VersionReq::parse(version.requirement.trim()).map_err(|error| {
                 format!(
@@ -166,19 +263,27 @@ where
                 )
             })?;
 
-            let detected = Version::parse(detected).map_err(|error| {
+            let parsed = Version::parse(detected).map_err(|error| {
                 format!(
                     "version query for dependency '{}' returned invalid semantic version '{}': {error}",
                     dependency.name, detected
                 )
             })?;
 
-            Ok(requirement.matches(&detected))
+            requirement.matches(&parsed)
         }
+
         SystemVersionScheme::Debian => {
-            debian_requirement_matches(&dependency.name, detected, &version.requirement)
+            debian_requirement_matches(&dependency.name, detected, &version.requirement)?
         }
-    }
+    };
+
+    Ok(SystemDependencyIntegrity {
+        name: dependency.name.clone(),
+        detected: Some(detected.to_string()),
+        required: Some(version.requirement.clone()),
+        satisfied,
+    })
 }
 
 fn debian_requirement_matches(
@@ -435,6 +540,125 @@ mod resolver_policy_tests {
             version: None,
             required,
         }
+    }
+
+    #[test]
+    fn integrity_preserves_detected_and_required_versions() {
+        let dependency = SystemDependency {
+            name: "fake-versioned-package".to_string(),
+            install: LocalInstallerRequest {
+                installer: "fake".to_string(),
+                operation: "install".to_string(),
+                variables: Default::default(),
+            },
+            verify: LocalInstallerRequest {
+                installer: "fake".to_string(),
+                operation: "verify".to_string(),
+                variables: Default::default(),
+            },
+            version: Some(SystemDependencyVersion {
+                scheme: SystemVersionScheme::Semver,
+                requirement: ">=2.0.0".to_string(),
+                query: LocalInstallerRequest {
+                    installer: "fake".to_string(),
+                    operation: "version".to_string(),
+                    variables: Default::default(),
+                },
+            }),
+            required: true,
+        };
+
+        let execute = |request: LocalInstallerRequest| match request.operation.as_str() {
+            "verify" => Ok(result("verify", true)),
+            "version" => {
+                let mut output = result("version", true);
+                output.stdout = "1.5.0\n".to_string();
+                Ok(output)
+            }
+            other => Err(format!("unexpected operation: {other}")),
+        };
+
+        let integrity = dependency_integrity(&dependency, &execute).unwrap();
+
+        assert_eq!(integrity.name, "fake-versioned-package");
+        assert_eq!(integrity.detected.as_deref(), Some("1.5.0"));
+        assert_eq!(integrity.required.as_deref(), Some(">=2.0.0"));
+        assert!(!integrity.satisfied);
+    }
+
+    #[test]
+    fn integrity_distinguishes_missing_dependency() {
+        let dependency = dependency(true);
+
+        let execute = |request: LocalInstallerRequest| match request.operation.as_str() {
+            "verify" => Ok(result("verify", false)),
+            other => Err(format!("unexpected operation: {other}")),
+        };
+
+        let integrity = dependency_integrity(&dependency, &execute).unwrap();
+
+        assert_eq!(integrity.name, "fake-package");
+        assert_eq!(integrity.detected, None);
+        assert_eq!(integrity.required, None);
+        assert!(!integrity.satisfied);
+    }
+
+    #[test]
+    fn structured_resolution_preserves_before_and_after_repair() {
+        let dependency = dependency(true);
+        let verify_count = RefCell::new(0usize);
+
+        let execute = |request: LocalInstallerRequest| match request.operation.as_str() {
+            "verify" => {
+                let mut count = verify_count.borrow_mut();
+                *count += 1;
+                Ok(result("verify", *count >= 2))
+            }
+            "install" => Ok(result("install", true)),
+            other => Err(format!("unexpected operation: {other}")),
+        };
+
+        let resolution = resolve_one(&dependency, &execute).unwrap();
+
+        assert!(!resolution.before.satisfied);
+        assert!(resolution.repair_attempted);
+        assert!(resolution.after.satisfied);
+        assert_eq!(*verify_count.borrow(), 2);
+    }
+
+    #[test]
+    fn structured_resolution_skips_repair_when_already_healthy() {
+        let dependency = dependency(true);
+
+        let execute = |request: LocalInstallerRequest| match request.operation.as_str() {
+            "verify" => Ok(result("verify", true)),
+            "install" => panic!("install must not run for healthy dependency"),
+            other => Err(format!("unexpected operation: {other}")),
+        };
+
+        let resolution = resolve_one(&dependency, &execute).unwrap();
+
+        assert!(resolution.before.satisfied);
+        assert!(!resolution.repair_attempted);
+        assert!(resolution.after.satisfied);
+        assert_eq!(resolution.before, resolution.after);
+    }
+
+    #[test]
+    fn structured_resolution_preserves_unsatisfied_after_repair() {
+        let dependency = dependency(true);
+
+        let execute = |request: LocalInstallerRequest| match request.operation.as_str() {
+            "verify" => Ok(result("verify", false)),
+            "install" => Ok(result("install", true)),
+            other => Err(format!("unexpected operation: {other}")),
+        };
+
+        let resolution = resolve_one(&dependency, &execute).unwrap();
+
+        assert!(!resolution.before.satisfied);
+        assert!(resolution.repair_attempted);
+        assert!(!resolution.after.satisfied);
     }
 
     #[test]

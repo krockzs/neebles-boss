@@ -27,6 +27,7 @@ pub fn run(args: Vec<String>) -> i32 {
         "--request-json" => request_json(&args),
         "start" => result(start_boss()),
         "config" => config_command(&args[1..]),
+        "external" => external_command(&args[1..]),
         "i18n" => i18n_command(&args[1..]),
         "modules" => modules_command(&args[1..]),
         "notify" => notify_command(&args[1..]),
@@ -707,6 +708,13 @@ fn tray_command(args: &[String]) -> i32 {
         },
 
         Err(error) => fail(error),
+    }
+}
+
+fn external_command(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("serve") => result(crate::external::serve()),
+        _ => fail("usage: neebles external serve".to_string()),
     }
 }
 

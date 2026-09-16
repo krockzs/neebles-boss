@@ -1,6 +1,7 @@
 [Unit]
 Description=N.E.E.B.L.E.S. Stage0 Preflight
-After=local-fs.target
+Wants=neebles-external.socket
+After=local-fs.target neebles-external.socket
 
 [Service]
 Type=oneshot

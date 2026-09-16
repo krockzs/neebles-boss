@@ -1,4 +1,5 @@
 use crate::dependencies::{self, SystemDependency, SystemDependencyVersion, SystemVersionScheme};
+use crate::external;
 use crate::local_installer::{self, LocalInstallerRequest};
 use crate::modules;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const STAGE0_STATE_PATH: &str = "/run/neebles/stage0.json";
+const STAGE0_EXTERNAL_ACTIVE: bool = false;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Stage0State {
@@ -99,6 +101,12 @@ fn wait_for_state(path: &Path, timeout: Duration, poll_interval: Duration) -> Re
 pub fn run() -> Result<(), String> {
     write_state(false, "checking")?;
 
+    emit_stage0_external(
+        STAGE0_EXTERNAL_ACTIVE,
+        "checking",
+        "Stage0 preflight started",
+    );
+
     refresh_dictionary_non_blocking();
 
     let dependencies = critical_dependencies();
@@ -107,6 +115,20 @@ pub fn run() -> Result<(), String> {
     modules::preflight_installed_modules()?;
 
     write_state(true, "ready")
+}
+
+fn emit_stage0_external(activate: bool, state: &str, message: &str) {
+    let Some(envelope) =
+        external::build_external_envelope("stage0", "", activate, serde_json::Map::new, || {
+            external::stage0_message(state, message)
+        })
+    else {
+        return;
+    };
+
+    if let Err(error) = external::send(&envelope) {
+        eprintln!("N.E.E.B.L.E.S. Stage0: external delivery unavailable; continuing: {error}");
+    }
 }
 
 fn installer_request(
@@ -206,6 +228,11 @@ mod tests {
         };
 
         fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn disabled_stage0_external_is_non_blocking() {
+        emit_stage0_external(false, "checking", "Stage0 preflight started");
     }
 
     #[test]

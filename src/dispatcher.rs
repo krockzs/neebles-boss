@@ -1,4 +1,5 @@
 use crate::config;
+use crate::external;
 use crate::local_installer;
 use crate::module_ipc::protocol::ModuleMessage;
 use crate::modules;
@@ -37,10 +38,12 @@ pub fn launch_ui() -> Result<(), String> {
     }
 }
 
+const BOSS_EXTERNAL_ACTIVE: bool = false;
+
 pub fn dispatch(request: ExecutionRequest) -> ExecutionResponse {
     let target = request.target.clone();
 
-    match target.as_str() {
+    let response = match target.as_str() {
         "boss" => dispatch_boss(request),
 
         "notifications" | "boss.notifications" => dispatch_notification(request),
@@ -48,6 +51,30 @@ pub fn dispatch(request: ExecutionRequest) -> ExecutionResponse {
         "settings" | "boss.settings" => dispatch_settings(request),
 
         module => dispatch_module(module, request),
+    };
+
+    emit_error_external(BOSS_EXTERNAL_ACTIVE, &response);
+
+    response
+}
+
+fn emit_error_external(activate: bool, response: &ExecutionResponse) {
+    let Some(error) = response.error.as_ref() else {
+        return;
+    };
+
+    let Some(envelope) =
+        external::build_external_envelope("error", "", activate, serde_json::Map::new, || {
+            external::error_message(&error.kind, &error.message)
+        })
+    else {
+        return;
+    };
+
+    if let Err(send_error) = external::send(&envelope) {
+        eprintln!(
+            "N.E.E.B.L.E.S. Boss: external error delivery unavailable; continuing: {send_error}"
+        );
     }
 }
 

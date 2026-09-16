@@ -1,0 +1,11 @@
+[Unit]
+Description=N.E.E.B.L.E.S. External Envelope Receiver
+Requires=neebles-external.socket
+After=neebles-external.socket
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/neebles/runtime.env
+ExecStart=/opt/neebles/client/backend/neebles-backend external serve
+Restart=on-failure
+RestartSec=1

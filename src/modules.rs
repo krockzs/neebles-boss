@@ -1819,6 +1819,38 @@ pub fn install(name: &str) -> Result<(), String> {
     install_internal(name, &registry, &mut visiting)
 }
 
+const MODULE_DEPENDENCY_EXTERNAL_ACTIVE: bool = false;
+
+fn emit_module_incompatibility_external(
+    activate: bool,
+    name: &str,
+    current: &Version,
+    required: &Version,
+) {
+    let Some(envelope) = crate::external::build_external_envelope(
+        "incompatibility",
+        "",
+        activate,
+        serde_json::Map::new,
+        || {
+            crate::external::incompatibility_message(
+                name,
+                current.to_string(),
+                required.to_string(),
+                "Installed module version does not satisfy the required dependency contract",
+            )
+        },
+    ) else {
+        return;
+    };
+
+    if let Err(error) = crate::external::send(&envelope) {
+        eprintln!(
+            "N.E.E.B.L.E.S.: external module incompatibility delivery unavailable; continuing: {error}"
+        );
+    }
+}
+
 fn ensure_minimum_module_version(name: &str, minimum_version: Option<&str>) -> Result<(), String> {
     let Some(minimum_version) = minimum_version else {
         return Ok(());
@@ -1841,6 +1873,13 @@ fn ensure_minimum_module_version(name: &str, minimum_version: Option<&str>) -> R
     })?;
 
     if installed_version < minimum_version {
+        emit_module_incompatibility_external(
+            MODULE_DEPENDENCY_EXTERNAL_ACTIVE,
+            name,
+            &installed_version,
+            &minimum_version,
+        );
+
         return Err(format!(
             "module '{}' version {} is installed but version {} or newer is required",
             name, installed_version, minimum_version

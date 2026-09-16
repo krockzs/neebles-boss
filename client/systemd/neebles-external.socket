@@ -1,0 +1,12 @@
+[Unit]
+Description=N.E.E.B.L.E.S. External Envelope Socket
+Before=neebles-stage0.service
+
+[Socket]
+ListenSequentialPacket=/run/neebles/external.sock
+SocketMode=0600
+RemoveOnStop=yes
+Service=neebles-external.service
+
+[Install]
+WantedBy=sockets.target
