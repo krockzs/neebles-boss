@@ -10,6 +10,7 @@ mod module_ipc;
 mod modules;
 mod notifications;
 mod privileges;
+mod reporting;
 mod request;
 mod runtime_identity;
 mod settings;
