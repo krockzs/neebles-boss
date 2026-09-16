@@ -19,3 +19,7 @@ pub fn resolve_only(request: &LocalInstallerRequest) -> Result<ResolvedOperation
 pub fn audit_dictionary() -> Result<DictionaryAudit, String> {
     dictionary::audit_dictionary()
 }
+
+pub fn refresh_dictionary_cache() -> Result<DictionaryAudit, String> {
+    dictionary::refresh_dictionary_cache()
+}

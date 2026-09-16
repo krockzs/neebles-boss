@@ -1,0 +1,11 @@
+[Unit]
+Description=N.E.E.B.L.E.S. Stage0 Preflight
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/neebles/client/backend/neebles-backend stage0 run
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

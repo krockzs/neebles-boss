@@ -3,10 +3,20 @@ use super::LocalInstallerRequest;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const CURRENT_ARCHITECTURE: &str = "amd64";
+const CURRENT_DICTIONARY_SCHEMA: u64 = 4;
 const NEEBLES_OS_REPOSITORY: &str = "https://github.com/krockzs/neebles-os.git";
+const BUNDLED_DICTIONARY_PATH: &str =
+    "/opt/neebles/client/config/installers/instaladores_amd64.json";
+const CACHED_DICTIONARY_PATH: &str = "/opt/neebles/shared/cache/installers/instaladores_amd64.json";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedOperation {
@@ -168,7 +178,10 @@ pub fn resolve(request: &LocalInstallerRequest) -> Result<ResolvedOperation, Str
 
 pub fn audit_dictionary() -> Result<DictionaryAudit, String> {
     let dictionary = fetch_dictionary()?;
+    audit_dictionary_value(&dictionary)
+}
 
+fn audit_dictionary_value(dictionary: &Value) -> Result<DictionaryAudit, String> {
     let architecture = dictionary
         .get("architecture")
         .and_then(Value::as_str)
@@ -199,6 +212,17 @@ pub fn audit_dictionary() -> Result<DictionaryAudit, String> {
             "dictionary architecture '{}' does not match Boss architecture '{}'",
             architecture, CURRENT_ARCHITECTURE
         ));
+    }
+
+    match schema {
+        Some(schema) if schema == CURRENT_DICTIONARY_SCHEMA => {}
+        Some(schema) => audit.errors.push(format!(
+            "dictionary schema '{}' is incompatible with Boss schema '{}'",
+            schema, CURRENT_DICTIONARY_SCHEMA
+        )),
+        None => audit
+            .errors
+            .push("installer dictionary does not declare a valid schema".to_string()),
     }
 
     let Some(distributions) = dictionary.get("distributions").and_then(Value::as_object) else {
@@ -557,6 +581,152 @@ fn validate_expect(context: &str, expect: Option<&Value>) -> Result<(), String> 
 }
 
 fn fetch_dictionary() -> Result<Value, String> {
+    let mut failures = Vec::new();
+
+    for (label, path) in [
+        ("cached", CACHED_DICTIONARY_PATH),
+        ("bundled", BUNDLED_DICTIONARY_PATH),
+    ] {
+        match load_local_dictionary(Path::new(path), label) {
+            Ok(Some(dictionary)) => return Ok(dictionary),
+            Ok(None) => {}
+            Err(error) => failures.push(error),
+        }
+    }
+
+    match fetch_remote_dictionary() {
+        Ok(dictionary) => Ok(dictionary),
+        Err(error) => {
+            failures.push(error);
+            Err(format!(
+                "no usable installer dictionary is available: {}",
+                failures.join("; ")
+            ))
+        }
+    }
+}
+
+fn load_local_dictionary(path: &Path, label: &str) -> Result<Option<Value>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let payload = fs::read(path).map_err(|error| {
+        format!(
+            "could not read {label} installer dictionary {}: {error}",
+            path.display()
+        )
+    })?;
+
+    let dictionary: Value = serde_json::from_slice(&payload).map_err(|error| {
+        format!(
+            "invalid {label} installer dictionary {}: {error}",
+            path.display()
+        )
+    })?;
+
+    let audit = audit_dictionary_value(&dictionary)?;
+
+    if !audit.ok {
+        return Err(format!(
+            "invalid {label} installer dictionary {}: {}",
+            path.display(),
+            audit.errors.join("; ")
+        ));
+    }
+
+    Ok(Some(dictionary))
+}
+
+pub fn refresh_dictionary_cache() -> Result<DictionaryAudit, String> {
+    let dictionary = fetch_remote_dictionary()?;
+    let audit = audit_dictionary_value(&dictionary)?;
+
+    if !audit.ok {
+        return Err(format!(
+            "remote installer dictionary failed validation: {}",
+            audit.errors.join("; ")
+        ));
+    }
+
+    let cache_path = Path::new(CACHED_DICTIONARY_PATH);
+    let parent = cache_path.parent().ok_or_else(|| {
+        format!(
+            "cached installer dictionary path has no parent: {}",
+            cache_path.display()
+        )
+    })?;
+
+    fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "could not create installer dictionary cache directory {}: {error}",
+            parent.display()
+        )
+    })?;
+
+    let parent_metadata = fs::symlink_metadata(parent).map_err(|error| {
+        format!(
+            "could not inspect installer dictionary cache directory {}: {error}",
+            parent.display()
+        )
+    })?;
+
+    if parent_metadata.file_type().is_symlink() {
+        return Err(format!(
+            "installer dictionary cache directory must not be a symlink: {}",
+            parent.display()
+        ));
+    }
+
+    let payload = serde_json::to_vec_pretty(&dictionary)
+        .map_err(|error| format!("could not serialize validated installer dictionary: {error}"))?;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("could not generate cache temporary timestamp: {error}"))?
+        .as_nanos();
+
+    let temporary = parent.join(format!(
+        ".instaladores_amd64.json.tmp.{}.{}",
+        std::process::id(),
+        nonce
+    ));
+
+    let mut temporary_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&temporary)
+        .map_err(|error| {
+            format!(
+                "could not create temporary installer dictionary cache {}: {error}",
+                temporary.display()
+            )
+        })?;
+
+    if let Err(error) = temporary_file.write_all(&payload) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!(
+            "could not write temporary installer dictionary cache {}: {error}",
+            temporary.display()
+        ));
+    }
+
+    drop(temporary_file);
+
+    if let Err(error) = fs::rename(&temporary, cache_path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!(
+            "could not publish installer dictionary cache {}: {error}",
+            cache_path.display()
+        ));
+    }
+
+    Ok(audit)
+}
+
+fn fetch_remote_dictionary() -> Result<Value, String> {
     let ref_output = Command::new("git")
         .args(["ls-remote", NEEBLES_OS_REPOSITORY, "refs/heads/main"])
         .output()

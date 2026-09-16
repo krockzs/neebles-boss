@@ -5,6 +5,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
+ExecStartPre=/opt/neebles/client/backend/neebles-backend stage0 wait
 ExecStart=/opt/neebles/client/backend/neebles-backend tray serve
 Restart=on-failure
 RestartSec=1

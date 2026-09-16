@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=N.E.E.B.L.E.S. Boss
-Exec=/opt/neebles/client/ui/neebles-ui
+Exec=neebles start
 Icon=neebles-boss-icon
 Terminal=false
 Categories=System;

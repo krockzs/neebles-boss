@@ -1,6 +1,7 @@
 [Unit]
 Description=N.E.E.B.L.E.S. Boss Runtime
-After=local-fs.target network.target
+Requires=neebles-stage0.service
+After=neebles-stage0.service
 
 [Service]
 Type=simple

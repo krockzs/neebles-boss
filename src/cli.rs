@@ -6,6 +6,7 @@ use crate::modules;
 use crate::notifications::{self, Severity};
 use crate::privileges;
 use crate::request::{ExecutionContext, ExecutionRequest};
+use crate::stage0;
 use crate::tray;
 use serde_json::Value;
 
@@ -30,12 +31,34 @@ pub fn run(args: Vec<String>) -> i32 {
         "modules" => modules_command(&args[1..]),
         "notify" => notify_command(&args[1..]),
         "socket" => socket_command(&args[1..]),
+        "stage0" => stage0_command(&args[1..]),
         "tray" => tray_command(&args[1..]),
         target => module_command(target, &args[1..]),
     }
 }
 
+fn stage0_command(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("run") => match stage0::run() {
+            Ok(()) => 0,
+            Err(error) => {
+                stage0::mark_failed();
+                fail(error)
+            }
+        },
+
+        Some("wait") => match stage0::wait(std::time::Duration::from_secs(30)) {
+            Ok(()) => 0,
+            Err(error) => fail(error),
+        },
+
+        _ => fail("usage: neebles stage0 <run|wait>".to_string()),
+    }
+}
+
 fn start_boss() -> Result<(), String> {
+    stage0::wait(std::time::Duration::from_secs(30))?;
+
     let request = ExecutionRequest {
         target: "boss".to_string(),
         action: Some("start".to_string()),

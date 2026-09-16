@@ -1609,6 +1609,112 @@ pub fn fetch_registry() -> Result<Registry, String> {
     Ok(registry)
 }
 
+pub fn preflight_installed_modules() -> Result<(), String> {
+    let root = modules_root();
+
+    if !root.exists() {
+        return Ok(());
+    }
+
+    let mut discovered = HashSet::new();
+
+    for entry in fs::read_dir(&root)
+        .map_err(|error| format!("could not read module root {}: {error}", root.display()))?
+    {
+        let entry =
+            entry.map_err(|error| format!("could not read module directory entry: {error}"))?;
+
+        let path = entry.path();
+
+        if !path.is_dir() {
+            continue;
+        }
+
+        let Some(folder_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+
+        /*
+         * Transactional staging/backup directories are not
+         * active installed modules.
+         */
+        if folder_name.starts_with('.') {
+            continue;
+        }
+
+        let manifest_path = path.join("manifest.json");
+
+        if !manifest_path.is_file() {
+            continue;
+        }
+
+        /*
+         * read_manifest() is the complete static module gate.
+         * It validates the module contract without executing
+         * module-owned code.
+         */
+        let manifest = read_manifest(&manifest_path).map_err(|error| {
+            format!(
+                "installed module at {} failed manifest preflight: {error}",
+                path.display()
+            )
+        })?;
+
+        if !discovered.insert(manifest.name.clone()) {
+            return Err(format!(
+                "duplicate installed module identity '{}' detected during Stage0 preflight",
+                manifest.name
+            ));
+        }
+
+        /*
+         * System dependencies may use Boss-owned repair
+         * mechanisms. The module itself is never executed.
+         */
+        dependencies::resolve_system_dependencies(&manifest.dependencies.system).map_err(
+            |error| {
+                format!(
+                    "installed module '{}' failed system dependency preflight: {error}",
+                    manifest.name
+                )
+            },
+        )?;
+
+        /*
+         * Module dependencies are inspected locally only.
+         * Stage0 must not fetch/install modules from the network.
+         */
+        for dependency in &manifest.dependencies.modules {
+            let result = find_module_dir(&dependency.name).and_then(|_| {
+                ensure_minimum_module_version(
+                    &dependency.name,
+                    dependency.minimum_version.as_deref(),
+                )
+            });
+
+            match result {
+                Ok(()) => {}
+
+                Err(error) if dependency.required => {
+                    return Err(format!(
+                        "installed module '{}' requires module dependency '{}' that failed preflight: {error}",
+                        manifest.name, dependency.name
+                    ));
+                }
+
+                Err(error) => {
+                    eprintln!(
+                        "N.E.E.B.L.E.S. Stage0: optional module dependency '{}' for '{}' failed preflight: {error}",
+                        dependency.name, manifest.name
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn installed_modules_json() -> Result<Value, String> {
     let mut result = Vec::new();
     let root = modules_root();
@@ -2920,6 +3026,46 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
             manifest.name, manifest.version
         )
     })?;
+
+    for dependency in &manifest.dependencies.system {
+        if dependency.name.trim().is_empty() {
+            return Err(format!(
+                "module '{}' declares a system dependency with an empty name",
+                manifest.name
+            ));
+        }
+
+        if let Some(version) = &dependency.version {
+            let requirement = version.requirement.trim();
+
+            if requirement.is_empty() {
+                return Err(format!(
+                    "module '{}' declares an empty system dependency version requirement for '{}'",
+                    manifest.name, dependency.name
+                ));
+            }
+
+            match version.scheme {
+                dependencies::SystemVersionScheme::Semver => {
+                    semver::VersionReq::parse(requirement).map_err(|error| {
+                        format!(
+                            "module '{}' declares invalid semantic system dependency version requirement '{}' for '{}': {error}",
+                            manifest.name, requirement, dependency.name
+                        )
+                    })?;
+                }
+
+                dependencies::SystemVersionScheme::Debian => {
+                    dependencies::validate_debian_requirement(requirement).map_err(|error| {
+                        format!(
+                            "module '{}' declares invalid Debian system dependency version requirement '{}' for '{}': {error}",
+                            manifest.name, requirement, dependency.name
+                        )
+                    })?;
+                }
+            }
+        }
+    }
 
     for dependency in &manifest.dependencies.modules {
         if !valid_module_id(&dependency.name) {

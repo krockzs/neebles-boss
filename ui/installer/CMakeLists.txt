@@ -4,9 +4,11 @@ project(neebles_installer VERSION 1.0.7 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Quick)
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NeeblesQt.cmake")
 
-qt_standard_project_setup(REQUIRES 6.5)
+find_package(Qt6 ${NEEBLES_QT_VERSION_RANGE} REQUIRED COMPONENTS Core Quick)
+
+qt_standard_project_setup(REQUIRES ${NEEBLES_QT_MIN_VERSION})
 
 qt_add_executable(neebles-installer
     main.cpp

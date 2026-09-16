@@ -39,6 +39,7 @@ GLOBAL_DESKTOP="${DESTDIR}/usr/share/applications/org.neebles.Boss.desktop"
 SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 TRAY_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-host.service"
 SYSTEMD_WANTS="${DESTDIR}/etc/systemd/user/default.target.wants"
+STAGE0_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-stage0.service"
 RUNTIME_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-runtime.service"
 RUNTIME_WANTS="${DESTDIR}/etc/systemd/system/multi-user.target.wants"
 RUNTIME_ENV="${DESTDIR}/etc/neebles/runtime.env"
@@ -326,6 +327,7 @@ REQUIRED_FILES=(
     spacer/metadata.json
     spacer/contents/ui/main.qml
     systemd/neebles-tray-manager.service
+    systemd/neebles-stage0.service
     systemd/neebles-runtime.service
 )
 
@@ -347,6 +349,14 @@ progress 16
 status_key "installer.progress.checking_dependencies"
 
 if [[ -z "$DESTDIR" ]] && command -v apt >/dev/null 2>&1; then
+    BOSS_RUNTIME_PACKAGES=(
+        git
+        curl
+        libnotify-bin
+        libqt6quick6
+        liblayershellqtinterface6
+    )
+
     MISSING=()
 
     command -v git >/dev/null 2>&1 || MISSING+=(git)
@@ -364,6 +374,8 @@ if [[ -z "$DESTDIR" ]] && command -v apt >/dev/null 2>&1; then
     if (( ${#MISSING[@]} > 0 )); then
         apt install -y "${MISSING[@]}"
     fi
+
+    apt-mark manual "${BOSS_RUNTIME_PACKAGES[@]}"
 fi
 
 progress 25
@@ -376,6 +388,7 @@ install -d -m 0755 \
     "$TMP_DIR"
 
 install -d -m 0700 "$SETTINGS_DIR"
+install -d -m 0755 "$SHARED_DIR/cache/installers"
 
 if [[ -z "$DESTDIR" ]]; then
     chown -R "$DESKTOP_UID:$DESKTOP_GID" "$SETTINGS_DIR"
@@ -475,7 +488,9 @@ backup_global_path "$SYSTEMD_SERVICE" "systemd-service"
 backup_global_path "$TRAY_HOST_SERVICE" "tray-host-service"
 backup_global_path "$SYSTEMD_WANTS/neebles-tray-manager.service" "systemd-wants"
 backup_global_path "$SYSTEMD_WANTS/neebles-tray-host.service" "tray-host-wants"
+backup_global_path "$STAGE0_SERVICE" "stage0-service"
 backup_global_path "$RUNTIME_SERVICE" "runtime-service"
+backup_global_path "$RUNTIME_WANTS/neebles-stage0.service" "stage0-wants"
 backup_global_path "$RUNTIME_WANTS/neebles-runtime.service" "runtime-wants"
 backup_global_path "$RUNTIME_ENV" "runtime-env"
 backup_global_path "$PLASMA_LAUNCHER" "plasma-launcher"
@@ -522,10 +537,18 @@ fi
 install -d -m 0755 "$(dirname "$RUNTIME_SERVICE")"
 
 install -m 0644 \
+    "$CLIENT_DATA_SOURCE/systemd/neebles-stage0.service" \
+    "$STAGE0_SERVICE"
+
+install -m 0644 \
     "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
     "$RUNTIME_SERVICE"
 
 install -d -m 0755 "$RUNTIME_WANTS"
+
+ln -sfnT \
+    /usr/lib/systemd/system/neebles-stage0.service \
+    "$RUNTIME_WANTS/neebles-stage0.service"
 
 ln -sfnT \
     /usr/lib/systemd/system/neebles-runtime.service \
@@ -617,6 +640,14 @@ cmp -s \
     }
 
 cmp -s \
+    "$CLIENT_DATA_SOURCE/systemd/neebles-stage0.service" \
+    "$STAGE0_SERVICE" \
+    || {
+        echo "Installed Stage0 service does not match payload." >&2
+        exit 1
+    }
+
+cmp -s \
     "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
     "$RUNTIME_SERVICE" \
     || {
@@ -627,8 +658,10 @@ cmp -s \
 if [[ -z "$DESTDIR" ]]; then
     systemctl daemon-reload
 
+    systemctl enable neebles-stage0.service
     systemctl enable neebles-runtime.service
 
+    systemctl restart neebles-stage0.service
     systemctl restart neebles-runtime.service
 
     systemctl is-active --quiet neebles-runtime.service || {

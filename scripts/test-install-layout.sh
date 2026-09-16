@@ -107,6 +107,9 @@ assert_file "$ROOT/usr/lib/systemd/user/neebles-tray-manager.service"
 assert_dir "$ROOT/opt/neebles/shared/settings"
 assert_mode 700 "$ROOT/opt/neebles/shared/settings"
 
+assert_dir "$ROOT/opt/neebles/shared/cache/installers"
+assert_mode 755 "$ROOT/opt/neebles/shared/cache/installers"
+
 assert_dir "$ROOT/usr/share/plasma/plasmoids/org.neebles.launcher"
 assert_dir "$ROOT/usr/share/plasma/plasmoids/org.neebles.spacer"
 

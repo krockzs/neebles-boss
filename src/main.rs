@@ -13,6 +13,7 @@ mod privileges;
 mod request;
 mod runtime_identity;
 mod settings;
+mod stage0;
 mod surface_state;
 mod tray;
 
