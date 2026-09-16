@@ -9,6 +9,7 @@ mod languages;
 mod local_installer;
 mod module_ipc;
 mod modules;
+pub mod nightmare;
 mod notifications;
 mod privileges;
 mod request;
