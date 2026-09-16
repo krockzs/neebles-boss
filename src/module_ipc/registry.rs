@@ -1,6 +1,6 @@
 use crate::module_ipc::protocol::{ModuleMessage, ModuleRuntimeState, MODULES_PROTOCOL_VERSION};
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use std::sync::{mpsc::Sender, Arc, RwLock};
 
@@ -15,6 +15,13 @@ pub struct ModuleRuntimeRecord {
      * contract -> runtime endpoints realmente disponibles.
      */
     pub endpoints: BTreeMap<String, Vec<String>>,
+
+    /*
+     * Topics que este runtime pidió recibir desde Boss.
+     *
+     * "*" significa todos los eventos disponibles.
+     */
+    pub subscriptions: BTreeSet<String>,
 
     /*
      * Canal interno Boss -> writer dedicado del runtime.
@@ -87,6 +94,33 @@ impl RuntimeRegistry {
         Ok(true)
     }
 
+    pub fn set_subscriptions(
+        &self,
+        module: &str,
+        session_id: &str,
+        topics: BTreeSet<String>,
+    ) -> Result<(), String> {
+        let mut registry = self
+            .inner
+            .write()
+            .map_err(|_| "runtime registry write lock poisoned".to_string())?;
+
+        let record = registry
+            .get_mut(module)
+            .ok_or_else(|| format!("module '{}' has no registered runtime", module))?;
+
+        if record.session_id != session_id {
+            return Err(format!(
+                "module '{}' runtime session mismatch while updating subscriptions",
+                module
+            ));
+        }
+
+        record.subscriptions = topics;
+
+        Ok(())
+    }
+
     pub fn get(&self, module: &str) -> Result<Option<ModuleRuntimeRecord>, String> {
         let registry = self
             .inner
@@ -119,6 +153,7 @@ pub struct ModuleRuntimeSnapshot {
     pub protocol: u32,
     pub state: ModuleRuntimeState,
     pub endpoints: BTreeMap<String, Vec<String>>,
+    pub subscriptions: BTreeSet<String>,
 }
 
 impl From<ModuleRuntimeRecord> for ModuleRuntimeSnapshot {
@@ -133,6 +168,8 @@ impl From<ModuleRuntimeRecord> for ModuleRuntimeSnapshot {
             state: record.state,
 
             endpoints: record.endpoints,
+
+            subscriptions: record.subscriptions,
         }
     }
 }

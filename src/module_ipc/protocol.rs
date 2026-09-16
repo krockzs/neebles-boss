@@ -51,6 +51,30 @@ pub enum ModuleMessage {
         session_id: String,
     },
 
+    Subscribe {
+        module: String,
+        session_id: String,
+
+        #[serde(default)]
+        topics: Vec<String>,
+    },
+
+    Subscribed {
+        module: String,
+        session_id: String,
+        topics: Vec<String>,
+    },
+
+    Event {
+        module: String,
+        session_id: String,
+        topic: String,
+        event: String,
+
+        #[serde(default)]
+        payload: Value,
+    },
+
     Invoke {
         id: String,
         module: String,

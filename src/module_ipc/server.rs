@@ -371,6 +371,8 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
 
         endpoints,
 
+        subscriptions: BTreeSet::new(),
+
         writer: writer_sender.clone(),
     };
 
@@ -538,6 +540,65 @@ fn client_loop(
                     })?;
             }
 
+            ModuleMessage::Subscribe {
+                module: subscribe_module,
+
+                session_id: subscribe_session,
+
+                topics,
+            } => {
+                validate_session(module, session_id, &subscribe_module, &subscribe_session)?;
+
+                let topics = topics
+                    .into_iter()
+                    .map(|topic| topic.trim().to_string())
+                    .filter(|topic| !topic.is_empty())
+                    .collect::<BTreeSet<_>>();
+
+                if topics.is_empty() {
+                    writer
+                        .send(ModuleMessage::Error {
+                            id: None,
+
+                            module: Some(module.to_string()),
+
+                            error: ModuleError {
+                                kind: "invalid_subscription".to_string(),
+
+                                message: "module subscription requires at least one topic"
+                                    .to_string(),
+
+                                details: None,
+                            },
+                        })
+                        .map_err(|error| {
+                            format!(
+                                "could not queue subscription error for module '{}': {error}",
+                                module
+                            )
+                        })?;
+
+                    continue;
+                }
+
+                runtime_registry().set_subscriptions(module, session_id, topics.clone())?;
+
+                writer
+                    .send(ModuleMessage::Subscribed {
+                        module: module.to_string(),
+
+                        session_id: session_id.to_string(),
+
+                        topics: topics.into_iter().collect(),
+                    })
+                    .map_err(|error| {
+                        format!(
+                            "could not acknowledge subscriptions for module '{}': {error}",
+                            module
+                        )
+                    })?;
+            }
+
             ModuleMessage::Unregister {
                 module: unregister_module,
 
@@ -639,6 +700,8 @@ fn client_loop(
 
             ModuleMessage::Register { .. }
             | ModuleMessage::Registered { .. }
+            | ModuleMessage::Subscribed { .. }
+            | ModuleMessage::Event { .. }
             | ModuleMessage::Invoke { .. }
             | ModuleMessage::Shutdown { .. } => {
                 writer
