@@ -23,6 +23,13 @@ qt_add_qml_module(neebles-installer
         qml/Main.qml
 )
 
+qt_add_resources(neebles-installer "neebles_installer_assets"
+    PREFIX "/neebles/installer"
+    BASE "../../client/assets/branding"
+    FILES
+        ../../client/assets/branding/neebles-installer-icon.png
+)
+
 target_link_libraries(neebles-installer
     PRIVATE
         Qt6::Core

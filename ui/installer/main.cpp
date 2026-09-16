@@ -761,6 +761,10 @@ int main(int argc, char *argv[])
         QStringLiteral("N.E.E.B.L.E.S.")
     );
 
+    app.setDesktopFileName(
+        QStringLiteral("org.neebles.Installer")
+    );
+
     QTemporaryDir payloadDirectory;
     QString payloadError;
 
@@ -786,8 +790,17 @@ int main(int argc, char *argv[])
             payloadRoot
         );
 
-    if (!iconPath.isEmpty())
+    if (!iconPath.isEmpty()) {
         app.setWindowIcon(QIcon(iconPath));
+    } else {
+        app.setWindowIcon(
+            QIcon(
+                QStringLiteral(
+                    ":/neebles/installer/neebles-installer-icon.png"
+                )
+            )
+        );
+    }
 
     QString installerLanguage;
     QString languageError;

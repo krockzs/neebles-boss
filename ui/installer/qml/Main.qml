@@ -468,6 +468,60 @@ ApplicationWindow {
                 }
 
                 Button {
+                    id: copyButton
+
+                    Layout.minimumWidth: 42
+                    Layout.preferredWidth: 42
+                    Layout.maximumWidth: 42
+
+                    Layout.minimumHeight: 42
+                    Layout.preferredHeight: 42
+                    Layout.maximumHeight: 42
+
+                    padding: 0
+                    hoverEnabled: true
+
+                    enabled:
+                        logArea.text.length > 0
+
+                    background: Item {
+                    }
+
+                    contentItem: Image {
+                        anchors.fill: parent
+
+                        source:
+                            !copyButton.enabled
+                            ? window.asset(
+                                "copy-icon-disabled.png"
+                            )
+                            : copyButton.down
+                            ? window.asset(
+                                "copy-icon-pressed.png"
+                            )
+                            : copyButton.hovered
+                            ? window.asset(
+                                "copy-icon-hover.png"
+                            )
+                            : window.asset(
+                                "copy-icon-normal.png"
+                            )
+
+                        fillMode:
+                            Image.PreserveAspectFit
+
+                        smooth: true
+                        mipmap: true
+                    }
+
+                    onClicked: {
+                        logArea.selectAll()
+                        logArea.copy()
+                        logArea.deselect()
+                    }
+                }
+
+                Button {
                     id: detailsButton
 
                     Layout.preferredWidth: 58
