@@ -63,6 +63,16 @@ where
     })
 }
 
+fn master_telemetry_enabled() -> bool {
+    crate::config::load_or_initialize()
+        .map(|config| config.telemetry_enabled)
+        .unwrap_or(false)
+}
+
+fn external_delivery_allowed(envelope_active: bool, telemetry_enabled: bool) -> bool {
+    envelope_active && telemetry_enabled
+}
+
 pub fn build_external_envelope<PackageBuilder, MessageBuilder>(
     envelope_type: impl Into<String>,
     endpoint: impl Into<String>,
@@ -82,9 +92,7 @@ where
      * Any settings read failure is privacy-safe:
      * transmission remains disabled.
      */
-    let activate = crate::config::load_or_initialize()
-        .map(|config| config.telemetry_enabled)
-        .unwrap_or(false);
+    let activate = master_telemetry_enabled();
 
     build_external_envelope_with_activation(
         envelope_type,
@@ -508,13 +516,15 @@ fn discard_packet(client: libc::c_int) -> Result<(), String> {
 
 fn consume_external_envelope(envelope: ExternalEnvelope) -> Result<(), String> {
     /*
-     * activate=false is a hard guard on both sides of the boundary.
+     * The External boundary independently enforces the Boss master
+     * telemetry setting.
      *
-     * Producers should never send a disabled envelope, but the receiver
-     * independently refuses to process one if a malformed or nonconforming
-     * local client sends it anyway.
+     * envelope.activate is not authority. A local producer cannot bypass
+     * telemetry.enabled by manually constructing activate=true.
+     *
+     * Any settings read failure resolves to telemetry disabled.
      */
-    if !envelope.activate {
+    if !external_delivery_allowed(envelope.activate, master_telemetry_enabled()) {
         return Ok(());
     }
 
@@ -539,6 +549,14 @@ mod tests {
             .as_object()
             .expect("test value must be a JSON object")
             .clone()
+    }
+
+    #[test]
+    fn external_delivery_requires_active_envelope_and_master_telemetry() {
+        assert!(!external_delivery_allowed(false, false));
+        assert!(!external_delivery_allowed(false, true));
+        assert!(!external_delivery_allowed(true, false));
+        assert!(external_delivery_allowed(true, true));
     }
 
     #[test]
