@@ -1,4 +1,6 @@
 #include "traysocketclient.h"
+#include "../shared/bosseventclient.h"
+#include "../shared/bosscommandclient.h"
 
 #include <LayerShellQt/Window>
 
@@ -1099,6 +1101,8 @@ int main(
     }
 
     TraySocketClient trayClient;
+    BossEventClient bossEvents;
+    BossCommandClient bossCommands;
 
     QString languageError;
 
@@ -1140,6 +1144,22 @@ int main(
                 "bossStrings"
             ),
             bossStrings
+        );
+
+    engine.rootContext()
+        ->setContextProperty(
+            QStringLiteral(
+                "bossEvents"
+            ),
+            &bossEvents
+        );
+
+    engine.rootContext()
+        ->setContextProperty(
+            QStringLiteral(
+                "bossCommands"
+            ),
+            &bossCommands
         );
 
     QObject::connect(
@@ -1238,6 +1258,12 @@ int main(
         0,
         &trayClient,
         &TraySocketClient::connectToManager
+    );
+
+    QTimer::singleShot(
+        0,
+        &bossEvents,
+        &BossEventClient::connectToBoss
     );
 
     return app.exec();

@@ -29,6 +29,10 @@ qt_add_executable(
     main.cpp
     traysocketclient.cpp
     traysocketclient.h
+    ../shared/bosseventclient.cpp
+    ../shared/bosseventclient.h
+    ../shared/bosscommandclient.cpp
+    ../shared/bosscommandclient.h
 )
 
 set_source_files_properties(

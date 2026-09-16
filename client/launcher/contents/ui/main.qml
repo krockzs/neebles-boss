@@ -4,6 +4,7 @@ import QtQuick.Controls as QQC2
 import org.kde.plasma.plasmoid
 import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.plasma5support as Plasma5Support
+import NEEBLES.BossEvents 1.0
 
 PlasmoidItem {
     id: root
@@ -12,9 +13,15 @@ PlasmoidItem {
     property var modules: []
     property var strings: ({})
     property var callbacks: ({})
-    property bool bossRunning: false
     property string bossVersion: "1.0.7"
     property var hiddenLauncherModules: []
+
+    LauncherBossEvents {
+        id: bossEvents
+
+        Component.onCompleted:
+            connectToBoss()
+    }
 
     function safeModuleId(value) {
         return /^[A-Za-z0-9._-]+$/.test(value)
@@ -80,12 +87,6 @@ PlasmoidItem {
             }
         })
 
-        exec(
-            "qdbus6 org.freedesktop.DBus / org.freedesktop.DBus.NameHasOwner org.neebles.Boss",
-            function(output) {
-                bossRunning = output.trim() === "true"
-            }
-        )
     }
 
     function t(key) {
@@ -485,7 +486,9 @@ PlasmoidItem {
                         "launcher.open_boss"
                     )
 
-                enabled: !root.bossRunning
+                enabled:
+                    bossEvents.connected
+                    && bossEvents.bossUiState === "closed"
 
                 background: Item {
                     Rectangle {

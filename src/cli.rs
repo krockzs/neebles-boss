@@ -1,6 +1,7 @@
 use crate::config;
 use crate::dispatcher;
 use crate::languages;
+use crate::ipc;
 use crate::modules;
 use crate::notifications::{self, Severity};
 use crate::privileges;
@@ -10,7 +11,7 @@ use serde_json::Value;
 
 pub fn run(args: Vec<String>) -> i32 {
     if args.is_empty() {
-        return result(dispatcher::launch_ui());
+        return result(start_boss());
     }
 
     match args[0].as_str() {
@@ -23,7 +24,7 @@ pub fn run(args: Vec<String>) -> i32 {
             0
         }
         "--request-json" => request_json(&args),
-        "start" => result(dispatcher::launch_ui()),
+        "start" => result(start_boss()),
         "config" => config_command(&args[1..]),
         "i18n" => i18n_command(&args[1..]),
         "modules" => modules_command(&args[1..]),
@@ -32,6 +33,32 @@ pub fn run(args: Vec<String>) -> i32 {
         "tray" => tray_command(&args[1..]),
         target => module_command(target, &args[1..]),
     }
+}
+
+fn start_boss() -> Result<(), String> {
+    let request = ExecutionRequest {
+        target: "boss".to_string(),
+        action: Some("start".to_string()),
+        args: Vec::new(),
+        context: ExecutionContext {
+            caller: "cli".to_string(),
+        },
+    };
+
+    let response = ipc::request(&request)?;
+
+    if response.ok {
+        return Ok(());
+    }
+
+    Err(
+        response
+            .error
+            .map(|error| error.message)
+            .unwrap_or_else(|| {
+                "Boss rejected start request".to_string()
+            })
+    )
 }
 
 fn request_json(args: &[String]) -> i32 {

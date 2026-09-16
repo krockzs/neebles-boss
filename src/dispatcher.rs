@@ -5,16 +5,44 @@ use crate::modules;
 use crate::notifications::{self, Severity};
 use crate::request::{ExecutionRequest, ExecutionResponse};
 use crate::settings;
+use crate::surface_state::{self, BossUiState};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::process::Command;
 
 pub fn launch_ui() -> Result<(), String> {
-    let path = crate::languages::client_root()?.join("ui/neebles-ui");
-    Command::new(&path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("could not launch UI at {}: {error}", path.display()))
+    match surface_state::boss_ui_state() {
+        BossUiState::Open
+        | BossUiState::Opening => {
+            return Ok(());
+        }
+
+        BossUiState::Closed => {}
+    }
+
+    surface_state::set_boss_ui_state(
+        BossUiState::Opening
+    );
+
+    let path =
+        std::path::Path::new(
+            "/usr/lib/neebles/neebles-launcher"
+        );
+
+    match Command::new(path).spawn() {
+        Ok(_) => Ok(()),
+
+        Err(error) => {
+            surface_state::set_boss_ui_state(
+                BossUiState::Closed
+            );
+
+            Err(format!(
+                "could not launch Boss through {}: {error}",
+                path.display()
+            ))
+        }
+    }
 }
 
 pub fn dispatch(request: ExecutionRequest) -> ExecutionResponse {

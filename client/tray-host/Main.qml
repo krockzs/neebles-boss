@@ -663,7 +663,13 @@ Window {
 
                     Layout.fillWidth: true
 
-                    enabled: false
+                    enabled:
+                        bossEvents.connected
+                        && bossEvents.bossUiState === "closed"
+
+                    onClicked: {
+                        bossCommands.startBoss()
+                    }
                 }
             }
         }
