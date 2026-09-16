@@ -38,8 +38,6 @@ pub fn launch_ui() -> Result<(), String> {
     }
 }
 
-const BOSS_EXTERNAL_ACTIVE: bool = false;
-
 pub fn dispatch(request: ExecutionRequest) -> ExecutionResponse {
     let target = request.target.clone();
 
@@ -53,18 +51,18 @@ pub fn dispatch(request: ExecutionRequest) -> ExecutionResponse {
         module => dispatch_module(module, request),
     };
 
-    emit_error_external(BOSS_EXTERNAL_ACTIVE, &response);
+    emit_error_external(&response);
 
     response
 }
 
-fn emit_error_external(activate: bool, response: &ExecutionResponse) {
+fn emit_error_external(response: &ExecutionResponse) {
     let Some(error) = response.error.as_ref() else {
         return;
     };
 
     let Some(envelope) =
-        external::build_external_envelope("error", "", activate, serde_json::Map::new, || {
+        external::build_external_envelope("error", "", serde_json::Map::new, || {
             external::error_message(&error.kind, &error.message)
         })
     else {

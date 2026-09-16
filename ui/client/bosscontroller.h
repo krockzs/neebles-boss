@@ -16,6 +16,7 @@ class BossController final : public QObject
     Q_PROPERTY(bool trayEnabled READ trayEnabled NOTIFY configChanged)
     Q_PROPERTY(bool launcherEnabled READ launcherEnabled NOTIFY configChanged)
     Q_PROPERTY(bool normalNotifications READ normalNotifications NOTIFY configChanged)
+    Q_PROPERTY(bool telemetryEnabled READ telemetryEnabled NOTIFY configChanged)
     Q_PROPERTY(QVariantList hiddenTrayModules READ hiddenTrayModules NOTIFY configChanged)
     Q_PROPERTY(QVariantList hiddenLauncherModules READ hiddenLauncherModules NOTIFY configChanged)
     Q_PROPERTY(QVariantList languages READ languages NOTIFY languagesChanged)
@@ -32,6 +33,7 @@ public:
     bool trayEnabled() const { return m_trayEnabled; }
     bool launcherEnabled() const { return m_launcherEnabled; }
     bool normalNotifications() const { return m_normalNotifications; }
+    bool telemetryEnabled() const { return m_telemetryEnabled; }
     QVariantList hiddenTrayModules() const { return m_hiddenTrayModules; }
     QVariantList hiddenLauncherModules() const { return m_hiddenLauncherModules; }
     QVariantList languages() const { return m_languages; }
@@ -118,6 +120,7 @@ private:
     bool m_trayEnabled = true;
     bool m_launcherEnabled = true;
     bool m_normalNotifications = true;
+    bool m_telemetryEnabled = false;
     QVariantList m_hiddenTrayModules;
     QVariantList m_hiddenLauncherModules;
     QVariantList m_languages;

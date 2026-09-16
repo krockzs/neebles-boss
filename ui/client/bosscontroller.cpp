@@ -711,7 +711,8 @@ void BossController::loadConfig()
         QStringLiteral("language"),
         QStringLiteral("tray_enabled"),
         QStringLiteral("launcher_enabled"),
-        QStringLiteral("normal_notifications")
+        QStringLiteral("normal_notifications"),
+        QStringLiteral("telemetry_enabled")
     };
 
     for (const QString &key : requiredKeys) {
@@ -757,6 +758,12 @@ void BossController::loadConfig()
         map.value(
             QStringLiteral("normal_notifications")
         ).toBool();
+
+    m_telemetryEnabled =
+        map.value(
+            QStringLiteral("telemetry_enabled")
+        ).toBool();
+
 
     m_hiddenTrayModules =
         map.value(
@@ -1994,7 +2001,8 @@ void BossController::saveConfigValue(
         QStringLiteral("language"),
         QStringLiteral("tray_enabled"),
         QStringLiteral("launcher_enabled"),
-        QStringLiteral("normal_notifications")
+        QStringLiteral("normal_notifications"),
+        QStringLiteral("telemetry_enabled")
     };
 
     if (
@@ -2015,6 +2023,9 @@ void BossController::saveConfigValue(
 
     const bool notificationsWereEnabled =
         m_normalNotifications;
+
+    const bool telemetryWasEnabled =
+        m_telemetryEnabled;
 
     const bool disablingNotifications =
         key
@@ -2191,6 +2202,56 @@ void BossController::saveConfigValue(
             5000,
             &notificationOk
         );
+    }
+
+    /*
+     * Telemetry:
+     * notificar sólo después de una escritura persistente
+     * correcta y únicamente cuando el estado cambió.
+     */
+    if (
+        key
+            == QStringLiteral(
+                "telemetry_enabled"
+            )
+    ) {
+        const bool telemetryEnabled =
+            normalized
+                == QStringLiteral("true");
+
+        if (
+            telemetryEnabled
+            != telemetryWasEnabled
+        ) {
+            bool notificationOk = false;
+
+            run(
+                {
+                    QStringLiteral("notify"),
+
+                    telemetryEnabled
+                        ? QStringLiteral("success")
+                        : QStringLiteral("info"),
+
+                    QStringLiteral(
+                        "N.E.E.B.L.E.S."
+                    ),
+
+                    text(
+                        telemetryEnabled
+                            ? QStringLiteral(
+                                "telemetry.activated"
+                            )
+                            : QStringLiteral(
+                                "telemetry.deactivated"
+                            )
+                    )
+                },
+                false,
+                5000,
+                &notificationOk
+            );
+        }
     }
 
     reload();

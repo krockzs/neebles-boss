@@ -11,7 +11,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const STAGE0_STATE_PATH: &str = "/run/neebles/stage0.json";
-const STAGE0_EXTERNAL_ACTIVE: bool = false;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Stage0State {
@@ -101,11 +100,7 @@ fn wait_for_state(path: &Path, timeout: Duration, poll_interval: Duration) -> Re
 pub fn run() -> Result<(), String> {
     write_state(false, "checking")?;
 
-    emit_stage0_external(
-        STAGE0_EXTERNAL_ACTIVE,
-        "checking",
-        "Stage0 preflight started",
-    );
+    emit_stage0_external("checking", "Stage0 preflight started");
 
     refresh_dictionary_non_blocking();
 
@@ -117,9 +112,9 @@ pub fn run() -> Result<(), String> {
     write_state(true, "ready")
 }
 
-fn emit_stage0_external(activate: bool, state: &str, message: &str) {
+fn emit_stage0_external(state: &str, message: &str) {
     let Some(envelope) =
-        external::build_external_envelope("stage0", "", activate, serde_json::Map::new, || {
+        external::build_external_envelope("stage0", "", serde_json::Map::new, || {
             external::stage0_message(state, message)
         })
     else {
@@ -231,8 +226,8 @@ mod tests {
     }
 
     #[test]
-    fn disabled_stage0_external_is_non_blocking() {
-        emit_stage0_external(false, "checking", "Stage0 preflight started");
+    fn stage0_external_is_non_blocking() {
+        emit_stage0_external("checking", "Stage0 preflight started");
     }
 
     #[test]

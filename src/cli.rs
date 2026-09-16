@@ -121,7 +121,10 @@ fn config_command(args: &[String]) -> i32 {
             };
             let response = match key.as_str() {
                 "language" => config::set_language(value),
-                "tray_enabled" | "launcher_enabled" | "normal_notifications" => {
+                "tray_enabled"
+                | "launcher_enabled"
+                | "normal_notifications"
+                | "telemetry_enabled" => {
                     match parse_bool(value) {
                         Ok(value) => config::set_bool(key, value),
                         Err(error) => return fail(error),

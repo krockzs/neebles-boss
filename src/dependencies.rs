@@ -69,8 +69,6 @@ fn default_required() -> bool {
     true
 }
 
-const DEPENDENCY_EXTERNAL_ACTIVE: bool = false;
-
 pub fn resolve_system_dependencies(dependencies: &[SystemDependency]) -> Result<(), String> {
     resolve_system_dependencies_with(dependencies, &local_installer::handle)
 }
@@ -87,7 +85,7 @@ where
             Ok(resolution) if resolution.after.satisfied => {}
 
             Ok(resolution) if dependency.required => {
-                emit_incompatibility_external(DEPENDENCY_EXTERNAL_ACTIVE, &resolution.after);
+                emit_incompatibility_external(&resolution.after);
 
                 return Err(format!(
                     "dependency '{}' installation completed but dependency contract is still not satisfied",
@@ -96,7 +94,7 @@ where
             }
 
             Ok(resolution) => {
-                emit_incompatibility_external(DEPENDENCY_EXTERNAL_ACTIVE, &resolution.after);
+                emit_incompatibility_external(&resolution.after);
 
                 eprintln!(
                     "N.E.E.B.L.E.S.: optional dependency '{}' could not be resolved: dependency contract is still not satisfied",
@@ -120,7 +118,7 @@ where
     Ok(())
 }
 
-fn emit_incompatibility_external(activate: bool, integrity: &SystemDependencyIntegrity) {
+fn emit_incompatibility_external(integrity: &SystemDependencyIntegrity) {
     if integrity.satisfied {
         return;
     }
@@ -131,20 +129,16 @@ fn emit_incompatibility_external(activate: bool, integrity: &SystemDependencyInt
         return;
     };
 
-    let Some(envelope) = external::build_external_envelope(
-        "incompatibility",
-        "",
-        activate,
-        serde_json::Map::new,
-        || {
+    let Some(envelope) =
+        external::build_external_envelope("incompatibility", "", serde_json::Map::new, || {
             external::incompatibility_message(
                 &integrity.name,
                 current,
                 required,
                 "Installed version does not satisfy the required dependency contract",
             )
-        },
-    ) else {
+        })
+    else {
         return;
     };
 

@@ -1819,18 +1819,10 @@ pub fn install(name: &str) -> Result<(), String> {
     install_internal(name, &registry, &mut visiting)
 }
 
-const MODULE_DEPENDENCY_EXTERNAL_ACTIVE: bool = false;
-
-fn emit_module_incompatibility_external(
-    activate: bool,
-    name: &str,
-    current: &Version,
-    required: &Version,
-) {
+fn emit_module_incompatibility_external(name: &str, current: &Version, required: &Version) {
     let Some(envelope) = crate::external::build_external_envelope(
         "incompatibility",
         "",
-        activate,
         serde_json::Map::new,
         || {
             crate::external::incompatibility_message(
@@ -1873,12 +1865,7 @@ fn ensure_minimum_module_version(name: &str, minimum_version: Option<&str>) -> R
     })?;
 
     if installed_version < minimum_version {
-        emit_module_incompatibility_external(
-            MODULE_DEPENDENCY_EXTERNAL_ACTIVE,
-            name,
-            &installed_version,
-            &minimum_version,
-        );
+        emit_module_incompatibility_external(name, &installed_version, &minimum_version);
 
         return Err(format!(
             "module '{}' version {} is installed but version {} or newer is required",

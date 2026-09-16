@@ -13,6 +13,7 @@ pub struct BossConfig {
     pub tray_enabled: bool,
     pub launcher_enabled: bool,
     pub normal_notifications: bool,
+    pub telemetry_enabled: bool,
 
     #[serde(default)]
     pub disabled_modules: Vec<String>,
@@ -53,6 +54,10 @@ pub fn default_json() -> Result<Value, String> {
         "tray": {
             "enabled": "true",
             "hidden_modules": "[]"
+        },
+
+        "telemetry": {
+            "enabled": "false"
         },
 
         "ui": {
@@ -151,6 +156,8 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
 
         normal_notifications: boss_bool(&local, &default, "ui.normal_notifications")?,
 
+        telemetry_enabled: boss_bool(&local, &default, "telemetry.enabled")?,
+
         disabled_modules: boss_list(&local, &default, "ui.disabled_modules")?,
 
         hidden_tray_modules: boss_list(&local, &default, "tray.hidden_modules")?,
@@ -183,6 +190,8 @@ pub fn set_bool(key: &str, value: bool) -> Result<BossConfig, String> {
         "launcher_enabled" => "launcher.enabled",
 
         "normal_notifications" => "ui.normal_notifications",
+
+        "telemetry_enabled" => "telemetry.enabled",
 
         _ => {
             return Err(format!("unknown Boss config key: {key}"));

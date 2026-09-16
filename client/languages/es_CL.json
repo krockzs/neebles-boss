@@ -114,5 +114,12 @@
   "common.copy": "Copiar",
   "modules.uninstall_title": "Desinstalar módulo",
   "modules.uninstall_remove_local_state": "Eliminar también configuración/estado local",
-  "modules.uninstall_confirm": "Desinstalar"
+  "modules.uninstall_confirm": "Desinstalar",
+  "telemetry.settings": "Configuración de telemetría",
+  "telemetry.enable": "Activar telemetría",
+  "telemetry.description": "Al activarla, N.E.E.B.L.E.S. puede enviar eventos External de ejecución y diagnóstico al servidor configurado. Al desactivarla, la transmisión External permanece bloqueada.",
+  "telemetry.more_information": "Más información sobre telemetría",
+  "telemetry.exit": "Salir",
+  "telemetry.activated": "Telemetría activada",
+  "telemetry.deactivated": "Telemetría desactivada"
 }

@@ -39,7 +39,7 @@ pub fn stage0_message(state: impl Into<String>, message: impl Into<String>) -> M
     ])
 }
 
-pub fn build_external_envelope<PackageBuilder, MessageBuilder>(
+fn build_external_envelope_with_activation<PackageBuilder, MessageBuilder>(
     envelope_type: impl Into<String>,
     endpoint: impl Into<String>,
     activate: bool,
@@ -61,6 +61,38 @@ where
         package: package_builder(),
         message: message_builder(),
     })
+}
+
+pub fn build_external_envelope<PackageBuilder, MessageBuilder>(
+    envelope_type: impl Into<String>,
+    endpoint: impl Into<String>,
+    package_builder: PackageBuilder,
+    message_builder: MessageBuilder,
+) -> Option<ExternalEnvelope>
+where
+    PackageBuilder: FnOnce() -> Map<String, Value>,
+    MessageBuilder: FnOnce() -> Map<String, Value>,
+{
+    /*
+     * Global External transmission gate.
+     *
+     * No producer decides whether telemetry is active.
+     * Boss persistent settings are the single source of truth.
+     *
+     * Any settings read failure is privacy-safe:
+     * transmission remains disabled.
+     */
+    let activate = crate::config::load_or_initialize()
+        .map(|config| config.telemetry_enabled)
+        .unwrap_or(false);
+
+    build_external_envelope_with_activation(
+        envelope_type,
+        endpoint,
+        activate,
+        package_builder,
+        message_builder,
+    )
 }
 
 const SYSTEMD_LISTEN_FD: libc::c_int = 3;
@@ -590,10 +622,11 @@ mod tests {
 
         assert_eq!(result, 0);
 
-        let envelope = build_external_envelope("stage0", "", true, Map::new, || {
-            stage0_message("ready", "Stage0 completed")
-        })
-        .expect("external envelope should be built");
+        let envelope =
+            build_external_envelope_with_activation("stage0", "", true, Map::new, || {
+                stage0_message("ready", "Stage0 completed")
+            })
+            .expect("external envelope should be built");
 
         let payload = serde_json::to_vec(&envelope).expect("external envelope should serialize");
 
@@ -643,15 +676,15 @@ mod tests {
         assert_eq!(result, 0);
 
         let envelopes = vec![
-            build_external_envelope("stage0", "", true, Map::new, || {
+            build_external_envelope_with_activation("stage0", "", true, Map::new, || {
                 stage0_message("ready", "Stage0 completed")
             })
             .expect("stage0 envelope should be built"),
-            build_external_envelope("error", "", true, Map::new, || {
+            build_external_envelope_with_activation("error", "", true, Map::new, || {
                 error_message("installer_failed", "Installer recipe failed")
             })
             .expect("error envelope should be built"),
-            build_external_envelope("incompatibility", "", true, Map::new, || {
+            build_external_envelope_with_activation("incompatibility", "", true, Map::new, || {
                 incompatibility_message(
                     "libqt6quick6",
                     "6.4",
@@ -704,7 +737,7 @@ mod tests {
         let package_called = Cell::new(false);
         let message_called = Cell::new(false);
 
-        let envelope = build_external_envelope(
+        let envelope = build_external_envelope_with_activation(
             "stage0",
             "https://example.invalid/report",
             false,
@@ -765,10 +798,11 @@ mod tests {
 
     #[test]
     fn enabled_external_builds_generic_envelope() {
-        let envelope = build_external_envelope("stage0", "", true, Map::new, || {
-            stage0_message("failed", "example")
-        })
-        .expect("external envelope should be built");
+        let envelope =
+            build_external_envelope_with_activation("stage0", "", true, Map::new, || {
+                stage0_message("failed", "example")
+            })
+            .expect("external envelope should be built");
 
         assert_eq!(envelope.envelope_type, "stage0");
         assert_eq!(envelope.endpoint, "");

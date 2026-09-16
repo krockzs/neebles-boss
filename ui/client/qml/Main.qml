@@ -175,6 +175,72 @@ ApplicationWindow {
                     Layout.fillWidth: true
                 }
 
+                Button {
+                    id: telemetryButton
+
+                    visible:
+                        !telemetryDialog.opened
+
+                    Layout.preferredWidth: 180
+                    Layout.preferredHeight: 42
+
+                    Layout.alignment:
+                        Qt.AlignTop | Qt.AlignHCenter
+
+                    hoverEnabled: true
+
+                    text:
+                        root.t("telemetry.settings")
+
+                    background: Rectangle {
+                        radius: 10
+
+                        color:
+                            telemetryButton.down
+                            ? "#24102F"
+                            : telemetryButton.hovered
+                              ? "#1B1027"
+                              : "#101014"
+
+                        border.width: 2
+                        border.color: "#EF4444"
+
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: -3
+
+                            z: -1
+
+                            radius: 13
+                            color: "transparent"
+
+                            border.width: 4
+                            border.color: "#DC2626"
+
+                            opacity: 0.55
+                        }
+                    }
+
+                    contentItem: Text {
+                        text:
+                            telemetryButton.text
+
+                        color: "#E9D5FF"
+
+                        font.pixelSize: 13
+                        font.bold: true
+
+                        horizontalAlignment:
+                            Text.AlignHCenter
+
+                        verticalAlignment:
+                            Text.AlignVCenter
+                    }
+
+                    onClicked:
+                        telemetryDialog.open()
+                }
+
                 /*
                  * LANGUAGE SELECTOR
                  *
@@ -1635,6 +1701,207 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+        }
+    }
+
+
+    /*
+     * ==========================================================
+     * TELEMETRY SETTINGS
+     * ==========================================================
+     */
+    Dialog {
+        id: telemetryDialog
+
+        modal: true
+        focus: true
+
+        width:
+            Math.min(
+                520,
+                root.width - 80
+            )
+
+        x:
+            Math.round(
+                (root.width - width) / 2
+            )
+
+        y:
+            Math.round(
+                (root.height - height) / 2
+            )
+
+        padding: 24
+
+        closePolicy:
+            Popup.CloseOnEscape
+            | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            radius: 14
+
+            color: "#0C0C10"
+
+            border.width: 2
+            border.color: "#EF4444"
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -3
+
+                z: -1
+
+                radius: 17
+                color: "transparent"
+
+                border.width: 4
+                border.color: "#991B1B"
+
+                opacity: 0.55
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 18
+
+            Label {
+                Layout.fillWidth: true
+
+                text:
+                    root.t("telemetry.settings")
+
+                color: "#E9D5FF"
+
+                font.pixelSize: 20
+                font.bold: true
+
+                horizontalAlignment:
+                    Text.AlignHCenter
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+
+                color: "#4C1D95"
+            }
+
+            Label {
+                Layout.fillWidth: true
+
+                text:
+                    root.t("telemetry.description")
+
+                color: "#A1A1AA"
+
+                font.pixelSize: 13
+
+                wrapMode:
+                    Text.WordWrap
+            }
+
+            NeeblesSwitch {
+                id: telemetrySwitch
+
+                Layout.fillWidth: true
+
+                text:
+                    root.t("telemetry.enable")
+
+                checked:
+                    typeof boss !== "undefined"
+                    ? boss.telemetryEnabled
+                    : false
+
+                onToggled:
+                    root.saveConfigValue(
+                        "telemetry_enabled",
+                        checked
+                    )
+            }
+
+            Button {
+                id: telemetryInformationButton
+
+                Layout.fillWidth: true
+                Layout.preferredHeight: 34
+
+                hoverEnabled: true
+
+                background: Item {
+                }
+
+                contentItem: Text {
+                    text:
+                        root.t(
+                            "telemetry.more_information"
+                        )
+
+                    color:
+                        telemetryInformationButton.hovered
+                        ? "#67E8F9"
+                        : "#22D3EE"
+
+                    font.pixelSize: 13
+                    font.underline: true
+
+                    horizontalAlignment:
+                        Text.AlignHCenter
+
+                    verticalAlignment:
+                        Text.AlignVCenter
+                }
+
+                onClicked:
+                    Qt.openUrlExternally(
+                        "https://github.com/krockzs/neebles-boss/blob/main/TELEMETRY.md"
+                    )
+            }
+
+            Button {
+                id: telemetryExitButton
+
+                Layout.fillWidth: true
+                Layout.preferredHeight: 42
+
+                hoverEnabled: true
+
+                text:
+                    root.t("telemetry.exit")
+
+                background: Rectangle {
+                    radius: 8
+
+                    color:
+                        telemetryExitButton.down
+                        ? "#6D28D9"
+                        : telemetryExitButton.hovered
+                          ? "#4C1D95"
+                          : "#1B1027"
+
+                    border.width: 2
+                    border.color: "#A855F7"
+                }
+
+                contentItem: Text {
+                    text:
+                        telemetryExitButton.text
+
+                    color: "#E9D5FF"
+
+                    font.bold: true
+
+                    horizontalAlignment:
+                        Text.AlignHCenter
+
+                    verticalAlignment:
+                        Text.AlignVCenter
+                }
+
+                onClicked:
+                    telemetryDialog.close()
             }
         }
     }

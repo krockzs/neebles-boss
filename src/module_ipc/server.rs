@@ -24,13 +24,10 @@ use std::path::PathBuf;
 use std::sync::{mpsc, OnceLock};
 
 const DEFAULT_SOCKET_PATH: &str = "/run/neebles/modules.sock";
-const MODULE_EXTERNAL_ACTIVE: bool = false;
-
-fn emit_module_error_external(activate: bool, module: &str, error: &ModuleError) {
+fn emit_module_error_external(module: &str, error: &ModuleError) {
     let Some(envelope) = external::build_external_envelope(
         "error",
         "",
-        activate,
         || {
             let mut package = serde_json::Map::new();
             package.insert(
@@ -939,7 +936,7 @@ fn client_loop(
                         module, error.message
                     );
 
-                    emit_module_error_external(MODULE_EXTERNAL_ACTIVE, module, &error);
+                    emit_module_error_external(module, &error);
                 }
             }
 
