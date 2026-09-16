@@ -98,18 +98,43 @@ fn wait_for_state(path: &Path, timeout: Duration, poll_interval: Duration) -> Re
 }
 
 pub fn run() -> Result<(), String> {
-    write_state(false, "checking")?;
+    run_with(
+        |ready, status| write_state(ready, status),
+        || emit_stage0_external("checking", "Stage0 preflight started"),
+        refresh_dictionary_non_blocking,
+        || {
+            let dependencies = critical_dependencies();
+            dependencies::resolve_system_dependencies(&dependencies)
+        },
+        modules::preflight_installed_modules,
+    )
+}
 
-    emit_stage0_external("checking", "Stage0 preflight started");
+fn run_with<WriteState, EmitExternal, Refresh, Dependencies, Modules>(
+    mut write_state_fn: WriteState,
+    mut emit_external_fn: EmitExternal,
+    mut refresh_fn: Refresh,
+    mut dependencies_fn: Dependencies,
+    mut modules_fn: Modules,
+) -> Result<(), String>
+where
+    WriteState: FnMut(bool, &str) -> Result<(), String>,
+    EmitExternal: FnMut(),
+    Refresh: FnMut(),
+    Dependencies: FnMut() -> Result<(), String>,
+    Modules: FnMut() -> Result<(), String>,
+{
+    write_state_fn(false, "checking")?;
 
-    refresh_dictionary_non_blocking();
+    emit_external_fn();
 
-    let dependencies = critical_dependencies();
-    dependencies::resolve_system_dependencies(&dependencies)?;
+    refresh_fn();
 
-    modules::preflight_installed_modules()?;
+    dependencies_fn()?;
 
-    write_state(true, "ready")
+    modules_fn()?;
+
+    write_state_fn(true, "ready")
 }
 
 fn emit_stage0_external(state: &str, message: &str) {
@@ -223,6 +248,118 @@ mod tests {
         };
 
         fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn certification_stage0_runs_complete_preflight_in_order() {
+        use std::cell::RefCell;
+
+        let calls = RefCell::new(Vec::<String>::new());
+
+        run_with(
+            |ready, status| {
+                calls.borrow_mut().push(format!("state:{ready}:{status}"));
+                Ok(())
+            },
+            || calls.borrow_mut().push("external".to_string()),
+            || calls.borrow_mut().push("refresh".to_string()),
+            || {
+                calls.borrow_mut().push("dependencies".to_string());
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("modules".to_string());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            calls.into_inner(),
+            vec![
+                "state:false:checking",
+                "external",
+                "refresh",
+                "dependencies",
+                "modules",
+                "state:true:ready",
+            ]
+        );
+    }
+
+    #[test]
+    fn certification_stage0_stops_before_modules_when_required_dependency_fails() {
+        use std::cell::RefCell;
+
+        let calls = RefCell::new(Vec::<String>::new());
+
+        let error = run_with(
+            |ready, status| {
+                calls.borrow_mut().push(format!("state:{ready}:{status}"));
+                Ok(())
+            },
+            || calls.borrow_mut().push("external".to_string()),
+            || calls.borrow_mut().push("refresh".to_string()),
+            || {
+                calls.borrow_mut().push("dependencies".to_string());
+                Err("required dependency failed".to_string())
+            },
+            || {
+                calls.borrow_mut().push("modules".to_string());
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "required dependency failed");
+
+        assert_eq!(
+            calls.into_inner(),
+            vec![
+                "state:false:checking",
+                "external",
+                "refresh",
+                "dependencies",
+            ]
+        );
+    }
+
+    #[test]
+    fn certification_stage0_does_not_publish_ready_when_module_preflight_fails() {
+        use std::cell::RefCell;
+
+        let calls = RefCell::new(Vec::<String>::new());
+
+        let error = run_with(
+            |ready, status| {
+                calls.borrow_mut().push(format!("state:{ready}:{status}"));
+                Ok(())
+            },
+            || calls.borrow_mut().push("external".to_string()),
+            || calls.borrow_mut().push("refresh".to_string()),
+            || {
+                calls.borrow_mut().push("dependencies".to_string());
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("modules".to_string());
+                Err("module preflight failed".to_string())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "module preflight failed");
+
+        assert_eq!(
+            calls.into_inner(),
+            vec![
+                "state:false:checking",
+                "external",
+                "refresh",
+                "dependencies",
+                "modules",
+            ]
+        );
     }
 
     #[test]

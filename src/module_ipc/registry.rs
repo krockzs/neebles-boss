@@ -256,3 +256,145 @@ impl RuntimeRegistry {
         Ok(self.get(module)?.map(ModuleRuntimeSnapshot::from))
     }
 }
+
+#[cfg(test)]
+mod certification_tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    fn record(
+        module: &str,
+        session_id: &str,
+        subscriptions: &[&str],
+    ) -> (ModuleRuntimeRecord, mpsc::Receiver<ModuleMessage>) {
+        let (tx, rx) = mpsc::channel();
+
+        (
+            ModuleRuntimeRecord {
+                module: module.to_string(),
+                session_id: session_id.to_string(),
+                protocol: MODULES_PROTOCOL_VERSION,
+                state: ModuleRuntimeState::Ready,
+                endpoints: BTreeMap::new(),
+                subscriptions: subscriptions
+                    .iter()
+                    .map(|value| value.to_string())
+                    .collect(),
+                writer: tx,
+            },
+            rx,
+        )
+    }
+
+    #[test]
+    fn certification_registry_rejects_duplicate_runtime_and_wrong_session() {
+        let registry = RuntimeRegistry::new();
+
+        let (first, _rx_first) = record("alpha", "session-a", &[]);
+        registry.register(first).unwrap();
+
+        let (duplicate, _rx_duplicate) = record("alpha", "session-b", &[]);
+        assert!(registry.register(duplicate).is_err());
+
+        assert!(!registry.unregister("alpha", "wrong-session").unwrap());
+        assert!(registry.get("alpha").unwrap().is_some());
+
+        assert!(registry.unregister("alpha", "session-a").unwrap());
+        assert!(registry.get("alpha").unwrap().is_none());
+    }
+
+    #[test]
+    fn certification_registry_settings_are_owner_isolated() {
+        let registry = RuntimeRegistry::new();
+
+        let (alpha, alpha_rx) = record("alpha", "session-a", &["*"]);
+        let (beta, beta_rx) = record("beta", "session-b", &["*"]);
+
+        registry.register(alpha).unwrap();
+        registry.register(beta).unwrap();
+
+        let delivered = registry
+            .broadcast_event(
+                "settings.alpha",
+                "changed",
+                serde_json::json!({"path": "ui.enabled"}),
+            )
+            .unwrap();
+
+        assert_eq!(delivered, 1);
+
+        match alpha_rx
+            .try_recv()
+            .expect("owner must receive settings event")
+        {
+            ModuleMessage::Event {
+                module,
+                topic,
+                event,
+                ..
+            } => {
+                assert_eq!(module, "alpha");
+                assert_eq!(topic, "settings.alpha");
+                assert_eq!(event, "changed");
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+
+        assert!(beta_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn certification_registry_subscriptions_filter_normal_topics() {
+        let registry = RuntimeRegistry::new();
+
+        let (alpha, alpha_rx) = record("alpha", "session-a", &["module.lifecycle"]);
+
+        registry.register(alpha).unwrap();
+
+        assert_eq!(
+            registry
+                .broadcast_event(
+                    "module.lifecycle",
+                    "installed",
+                    serde_json::json!({"module": "demo"}),
+                )
+                .unwrap(),
+            1
+        );
+
+        assert!(alpha_rx.try_recv().is_ok());
+
+        assert_eq!(
+            registry
+                .broadcast_event("other.topic", "event", serde_json::json!({}),)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn certification_registry_subscription_update_requires_same_session() {
+        let registry = RuntimeRegistry::new();
+
+        let (alpha, _rx) = record("alpha", "session-a", &[]);
+        registry.register(alpha).unwrap();
+
+        let mut topics = BTreeSet::new();
+        topics.insert("module.lifecycle".to_string());
+
+        assert!(registry
+            .set_subscriptions("alpha", "wrong-session", topics.clone())
+            .is_err());
+
+        registry
+            .set_subscriptions("alpha", "session-a", topics)
+            .unwrap();
+
+        assert!(registry
+            .get("alpha")
+            .unwrap()
+            .unwrap()
+            .subscriptions
+            .contains("module.lifecycle"));
+    }
+}

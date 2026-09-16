@@ -664,3 +664,170 @@ pub fn boss_settings_path(neebles_root: &Path) -> PathBuf {
 pub fn module_settings_path(neebles_root: &Path, module: &str) -> PathBuf {
     settings_root(neebles_root).join(format!("local_settings_{module}.json"))
 }
+
+#[cfg(test)]
+mod certification_tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_settings_path(label: &str) -> PathBuf {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+        std::env::temp_dir()
+            .join(format!(
+                "neebles-settings-cert-{}-{}-{}",
+                label,
+                std::process::id(),
+                id
+            ))
+            .join("local_settings_test.json")
+    }
+
+    fn default_v1() -> Value {
+        json!({
+            "hardcoded": {
+                "ROOT": "/opt/neebles"
+            },
+            "ui": {
+                "theme": "dark",
+                "language": "en_US",
+                "path": "${ROOT}/client"
+            },
+            "telemetry": {
+                "enabled": "false"
+            }
+        })
+    }
+
+    #[test]
+    fn certification_settings_sparse_override_and_convergence() {
+        let path = temp_settings_path("sparse");
+        let default = default_v1();
+
+        let local = load_or_create(&path, &default).expect("settings must initialize");
+
+        assert_eq!(local["ui"], json!({}));
+        assert_eq!(local["telemetry"], json!({}));
+        assert!(local.get("hardcoded").is_none());
+
+        set_path(&path, &default, "ui.theme", "light".to_string()).expect("override must persist");
+
+        let local = load(&path).expect("local settings must load");
+
+        assert_eq!(local["ui"]["theme"], "light");
+        assert!(local["ui"].get("language").is_none());
+
+        set_path(&path, &default, "ui.theme", "dark".to_string())
+            .expect("returning to default must converge");
+
+        let local = load(&path).expect("local settings must load");
+
+        assert!(local["ui"].get("theme").is_none());
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn certification_settings_hardcoded_is_immutable_and_resolved() {
+        let path = temp_settings_path("hardcoded");
+        let default = default_v1();
+
+        load_or_create(&path, &default).expect("settings must initialize");
+
+        let local = load(&path).expect("local settings must load");
+
+        assert_eq!(
+            get_effective_path(&local, &default, "ui.path").unwrap(),
+            "/opt/neebles/client"
+        );
+
+        let error = set_path(&path, &default, "hardcoded.ROOT", "/tmp/evil".to_string())
+            .expect_err("hardcoded values must not be locally writable");
+
+        assert!(error.contains("cannot be overridden"));
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn certification_settings_update_preserves_compatible_local_state() {
+        let path = temp_settings_path("update");
+        let old_default = default_v1();
+
+        load_or_create(&path, &old_default).unwrap();
+
+        set_path(&path, &old_default, "ui.language", "es_CL".to_string()).unwrap();
+
+        let new_default = json!({
+            "hardcoded": {
+                "ROOT": "/opt/neebles"
+            },
+            "ui": {
+                "language": "en_US",
+                "path": "${ROOT}/client",
+                "density": "compact"
+            },
+            "telemetry": {
+                "enabled": "false"
+            },
+            "new_namespace": {
+                "enabled": "true"
+            }
+        });
+
+        let local = update_from_default(&path, &new_default).expect("settings must reconcile");
+
+        assert_eq!(local["ui"]["language"], "es_CL");
+        assert!(local["ui"].get("theme").is_none());
+        assert_eq!(local["new_namespace"], json!({}));
+
+        let effective =
+            effective_settings(&local, &new_default).expect("effective settings must resolve");
+
+        assert_eq!(effective["ui"]["language"], "es_CL");
+        assert_eq!(effective["ui"]["density"], "compact");
+        assert_eq!(effective["new_namespace"]["enabled"], "true");
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn certification_settings_rejects_unknown_or_non_string_local_state() {
+        let default = default_v1();
+
+        let unknown = json!({
+            "ui": {
+                "does_not_exist": "value"
+            }
+        });
+
+        assert!(validate_local(&unknown, &default).is_err());
+
+        let invalid = json!({
+            "ui": {
+                "theme": true
+            }
+        });
+
+        assert!(validate_local(&invalid, &default).is_err());
+    }
+
+    #[test]
+    fn certification_settings_detects_meaningful_local_state() {
+        assert!(!has_local_values(&json!({
+            "ui": {},
+            "telemetry": {}
+        }))
+        .unwrap());
+
+        assert!(has_local_values(&json!({
+            "ui": {
+                "language": "es_CL"
+            }
+        }))
+        .unwrap());
+    }
+}

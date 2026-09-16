@@ -581,23 +581,36 @@ fn validate_expect(context: &str, expect: Option<&Value>) -> Result<(), String> 
 }
 
 fn fetch_dictionary() -> Result<Value, String> {
+    fetch_dictionary_with(
+        Path::new(CACHED_DICTIONARY_PATH),
+        Path::new(BUNDLED_DICTIONARY_PATH),
+        fetch_remote_dictionary,
+    )
+}
+
+fn fetch_dictionary_with<F>(
+    cached_path: &Path,
+    bundled_path: &Path,
+    fetch_remote: F,
+) -> Result<Value, String>
+where
+    F: FnOnce() -> Result<Value, String>,
+{
     let mut failures = Vec::new();
 
-    for (label, path) in [
-        ("cached", CACHED_DICTIONARY_PATH),
-        ("bundled", BUNDLED_DICTIONARY_PATH),
-    ] {
-        match load_local_dictionary(Path::new(path), label) {
+    for (label, path) in [("cached", cached_path), ("bundled", bundled_path)] {
+        match load_local_dictionary(path, label) {
             Ok(Some(dictionary)) => return Ok(dictionary),
             Ok(None) => {}
             Err(error) => failures.push(error),
         }
     }
 
-    match fetch_remote_dictionary() {
+    match fetch_remote() {
         Ok(dictionary) => Ok(dictionary),
         Err(error) => {
             failures.push(error);
+
             Err(format!(
                 "no usable installer dictionary is available: {}",
                 failures.join("; ")
@@ -785,4 +798,149 @@ fn fetch_remote_dictionary() -> Result<Value, String> {
             commit_sha
         )
     })
+}
+
+#[cfg(test)]
+mod certification_tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+        std::env::temp_dir().join(format!(
+            "neebles-dictionary-cert-{}-{}-{}",
+            label,
+            std::process::id(),
+            id
+        ))
+    }
+
+    fn valid_dictionary(marker: &str) -> Value {
+        let mut dictionary: Value = serde_json::from_str(include_str!(
+            "../../client/config/installers/instaladores_amd64.json"
+        ))
+        .expect("bundled repository dictionary must parse");
+
+        dictionary
+            .as_object_mut()
+            .expect("dictionary must be object")
+            .insert(
+                "_certification_marker".to_string(),
+                Value::String(marker.to_string()),
+            );
+
+        dictionary
+    }
+
+    fn write_dictionary(path: &Path, dictionary: &Value) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        std::fs::write(path, serde_json::to_vec_pretty(dictionary).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn certification_dictionary_prefers_cache_without_remote() {
+        let root = temp_root("cache");
+        let cached = root.join("cached.json");
+        let bundled = root.join("bundled.json");
+
+        write_dictionary(&cached, &valid_dictionary("cached"));
+        write_dictionary(&bundled, &valid_dictionary("bundled"));
+
+        let remote_called = Cell::new(false);
+
+        let resolved = fetch_dictionary_with(&cached, &bundled, || {
+            remote_called.set(true);
+            Ok(valid_dictionary("remote"))
+        })
+        .unwrap();
+
+        assert_eq!(resolved["_certification_marker"], "cached");
+        assert!(!remote_called.get());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn certification_dictionary_falls_back_to_bundled_without_remote() {
+        let root = temp_root("bundled");
+        let cached = root.join("missing-cache.json");
+        let bundled = root.join("bundled.json");
+
+        write_dictionary(&bundled, &valid_dictionary("bundled"));
+
+        let remote_called = Cell::new(false);
+
+        let resolved = fetch_dictionary_with(&cached, &bundled, || {
+            remote_called.set(true);
+            Ok(valid_dictionary("remote"))
+        })
+        .unwrap();
+
+        assert_eq!(resolved["_certification_marker"], "bundled");
+        assert!(!remote_called.get());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn certification_dictionary_uses_remote_only_when_local_sources_are_unusable() {
+        let root = temp_root("remote");
+        let cached = root.join("cached.json");
+        let bundled = root.join("bundled.json");
+
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&cached, b"{broken-json").unwrap();
+        std::fs::write(&bundled, b"{also-broken").unwrap();
+
+        let remote_called = Cell::new(false);
+
+        let resolved = fetch_dictionary_with(&cached, &bundled, || {
+            remote_called.set(true);
+            Ok(valid_dictionary("remote"))
+        })
+        .unwrap();
+
+        assert_eq!(resolved["_certification_marker"], "remote");
+        assert!(remote_called.get());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn certification_dictionary_survives_remote_failure_with_valid_local_data() {
+        let root = temp_root("offline");
+        let cached = root.join("cached.json");
+        let bundled = root.join("bundled.json");
+
+        write_dictionary(&bundled, &valid_dictionary("offline-bundled"));
+
+        let resolved =
+            fetch_dictionary_with(&cached, &bundled, || Err("network unavailable".to_string()))
+                .expect("valid local recovery data must make remote failure irrelevant");
+
+        assert_eq!(resolved["_certification_marker"], "offline-bundled");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn certification_dictionary_reports_failure_when_no_source_is_usable() {
+        let root = temp_root("none");
+        let cached = root.join("cached.json");
+        let bundled = root.join("bundled.json");
+
+        let error =
+            fetch_dictionary_with(&cached, &bundled, || Err("network unavailable".to_string()))
+                .expect_err("all unavailable sources must fail");
+
+        assert!(error.contains("no usable installer dictionary"));
+        assert!(error.contains("network unavailable"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
