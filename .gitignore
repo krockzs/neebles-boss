@@ -4,3 +4,5 @@
 ui/auth-agent/build/
 /ui/client/build/
 /ui/installer/build/
+
+/client/tray-host/build/
