@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "neebles-backend"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "libc",
  "semver",
