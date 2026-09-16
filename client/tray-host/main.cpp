@@ -22,6 +22,12 @@
 #include <QSize>
 #include <QTimer>
 
+#include <cerrno>
+#include <cstring>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
 static QString normalizeLocale(QString value)
 {
     value = value.trimmed();
@@ -512,85 +518,381 @@ static QString languageFromConfig(
     return canonical;
 }
 
+static QString bossSocketPath()
+{
+    const QString overridePath =
+        qEnvironmentVariable(
+            "NEEBLES_SOCKET"
+        ).trimmed();
+
+    if (!overridePath.isEmpty()) {
+        return overridePath;
+    }
+
+    return QStringLiteral(
+        "/run/neebles/neebles.sock"
+    );
+}
+
+static QJsonObject bossRequest(
+    const QString &target,
+    const QString &action,
+    const QJsonArray &args,
+    const QString &caller,
+    QString *error
+)
+{
+    const QString socketPath =
+        bossSocketPath();
+
+    const QByteArray encodedPath =
+        QFile::encodeName(
+            socketPath
+        );
+
+    if (
+        encodedPath.isEmpty()
+        || encodedPath.size()
+            >= static_cast<qsizetype>(
+                sizeof(sockaddr_un::sun_path)
+            )
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "invalid N.E.E.B.L.E.S. Boss socket path: "
+                ) + socketPath;
+        }
+
+        return {};
+    }
+
+    const int socketFd =
+        ::socket(
+            AF_UNIX,
+            SOCK_STREAM,
+            0
+        );
+
+    if (socketFd < 0) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "could not create Boss IPC socket: "
+                )
+                + QString::fromLocal8Bit(
+                    std::strerror(errno)
+                );
+        }
+
+        return {};
+    }
+
+    const auto closeSocket =
+        [&socketFd]() {
+            ::close(socketFd);
+        };
+
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+
+    std::memcpy(
+        address.sun_path,
+        encodedPath.constData(),
+        static_cast<std::size_t>(
+            encodedPath.size()
+        )
+    );
+
+    address.sun_path[
+        encodedPath.size()
+    ] = '\0';
+
+    if (
+        ::connect(
+            socketFd,
+            reinterpret_cast<sockaddr *>(
+                &address
+            ),
+            sizeof(address)
+        ) != 0
+    ) {
+        const QString message =
+            QStringLiteral(
+                "could not connect to N.E.E.B.L.E.S. Boss socket "
+            )
+            + socketPath
+            + QStringLiteral(": ")
+            + QString::fromLocal8Bit(
+                std::strerror(errno)
+            );
+
+        closeSocket();
+
+        if (error)
+            *error = message;
+
+        return {};
+    }
+
+    const QJsonObject request{
+        {
+            QStringLiteral("target"),
+            target
+        },
+        {
+            QStringLiteral("action"),
+            action
+        },
+        {
+            QStringLiteral("args"),
+            args
+        },
+        {
+            QStringLiteral("context"),
+            QJsonObject{
+                {
+                    QStringLiteral("caller"),
+                    caller
+                }
+            }
+        }
+    };
+
+    const QByteArray payload =
+        QJsonDocument(request)
+            .toJson(
+                QJsonDocument::Compact
+            );
+
+    qsizetype written = 0;
+
+    while (written < payload.size()) {
+        const ssize_t result =
+            ::write(
+                socketFd,
+                payload.constData()
+                    + written,
+                static_cast<std::size_t>(
+                    payload.size()
+                        - written
+                )
+            );
+
+        if (result < 0) {
+            if (errno == EINTR)
+                continue;
+
+            const QString message =
+                QStringLiteral(
+                    "could not write Boss IPC request: "
+                )
+                + QString::fromLocal8Bit(
+                    std::strerror(errno)
+                );
+
+            closeSocket();
+
+            if (error)
+                *error = message;
+
+            return {};
+        }
+
+        written += result;
+    }
+
+    /*
+     * neebles.sock uses EOF as the request framing
+     * boundary. Preserve the read side so Boss can
+     * return ExecutionResponse on the same connection.
+     */
+    if (
+        ::shutdown(
+            socketFd,
+            SHUT_WR
+        ) != 0
+    ) {
+        const QString message =
+            QStringLiteral(
+                "could not finish Boss IPC request: "
+            )
+            + QString::fromLocal8Bit(
+                std::strerror(errno)
+            );
+
+        closeSocket();
+
+        if (error)
+            *error = message;
+
+        return {};
+    }
+
+    QByteArray raw;
+    char buffer[4096];
+
+    while (true) {
+        const ssize_t count =
+            ::read(
+                socketFd,
+                buffer,
+                sizeof(buffer)
+            );
+
+        if (count == 0)
+            break;
+
+        if (count < 0) {
+            if (errno == EINTR)
+                continue;
+
+            const QString message =
+                QStringLiteral(
+                    "could not read Boss IPC response: "
+                )
+                + QString::fromLocal8Bit(
+                    std::strerror(errno)
+                );
+
+            closeSocket();
+
+            if (error)
+                *error = message;
+
+            return {};
+        }
+
+        raw.append(
+            buffer,
+            static_cast<qsizetype>(
+                count
+            )
+        );
+    }
+
+    closeSocket();
+
+    QJsonParseError parseError;
+
+    const QJsonDocument responseDocument =
+        QJsonDocument::fromJson(
+            raw.trimmed(),
+            &parseError
+        );
+
+    if (
+        parseError.error
+            != QJsonParseError::NoError
+        || !responseDocument.isObject()
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "invalid ExecutionResponse from N.E.E.B.L.E.S. Boss: "
+                )
+                + parseError.errorString();
+        }
+
+        return {};
+    }
+
+    const QJsonObject response =
+        responseDocument.object();
+
+    if (
+        !response.value(
+            QStringLiteral("ok")
+        ).toBool()
+    ) {
+        const QString message =
+            response.value(
+                QStringLiteral("error")
+            )
+            .toObject()
+            .value(
+                QStringLiteral("message")
+            )
+            .toString();
+
+        if (error) {
+            *error =
+                message.isEmpty()
+                ? QStringLiteral(
+                    "N.E.E.B.L.E.S. Boss request failed"
+                )
+                : message;
+        }
+
+        return {};
+    }
+
+    return response;
+}
+
 static QString activeBossLanguage(
     const QJsonObject &manifest,
     QString *error
 )
 {
-    if (
-        qEnvironmentVariableIsSet(
-            "NEEBLES_LANGUAGE"
-        )
-    ) {
-        const QString requested =
-            qEnvironmentVariable(
-                "NEEBLES_LANGUAGE"
-            ).trimmed();
+    QString requestError;
 
-        if (requested.isEmpty()) {
-            if (error) {
-                *error =
-                    QStringLiteral(
-                        "NEEBLES_LANGUAGE is explicitly set but empty"
-                    );
-            }
-
-            return {};
-        }
-
-        const QString canonical =
-            canonicalLanguage(
-                manifest,
-                requested
-            );
-
-        if (canonical.isEmpty()) {
-            if (error) {
-                *error =
-                    QStringLiteral(
-                        "unsupported explicit N.E.E.B.L.E.S. language: "
-                    ) + requested;
-            }
-
-            return {};
-        }
-
-        return canonical;
-    }
-
-    bool configFound = false;
-    QString configError;
-
-    const QString configLanguage =
-        languageFromConfig(
-            manifest,
-            &configError,
-            &configFound
+    const QJsonObject response =
+        bossRequest(
+            QStringLiteral("settings"),
+            QStringLiteral("get"),
+            QJsonArray{
+                QStringLiteral("boss"),
+                QStringLiteral("ui.language")
+            },
+            QStringLiteral("tray-host"),
+            &requestError
         );
 
-    if (!configError.isEmpty()) {
+    if (response.isEmpty()) {
         if (error)
-            *error = configError;
+            *error = requestError;
 
         return {};
     }
 
-    if (configFound)
-        return configLanguage;
-
-    const QString systemLanguage =
-        canonicalLanguage(
-            manifest,
-            QLocale::system().name()
+    const QJsonValue result =
+        response.value(
+            QStringLiteral("result")
         );
 
-    if (!systemLanguage.isEmpty())
-        return systemLanguage;
+    if (!result.isString()) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "Boss ui.language result is not a String"
+                );
+        }
 
-    return manifestDefaultLanguage(
-        manifest,
-        error
-    );
+        return {};
+    }
+
+    const QString requested =
+        result.toString();
+
+    const QString canonical =
+        canonicalLanguage(
+            manifest,
+            requested
+        );
+
+    if (canonical.isEmpty()) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "Boss returned unsupported ui.language: "
+                ) + requested;
+        }
+
+        return {};
+    }
+
+    return canonical;
 }
 
 static QVariantMap loadBossStrings(
@@ -929,6 +1231,8 @@ int main(
     layerWindow->setCloseOnDismissed(
         false
     );
+
+    window->show();
 
     QTimer::singleShot(
         0,

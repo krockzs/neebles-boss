@@ -31,12 +31,20 @@ qt_add_executable(
     traysocketclient.h
 )
 
+set_source_files_properties(
+    ../assets/branding/neebles-boss-tray-icon.png
+    PROPERTIES
+        QT_RESOURCE_ALIAS neebles-boss-tray-icon.png
+)
+
 qt_add_qml_module(
     neebles-tray-host
     URI NEEBLES.TrayHost
     VERSION 1.0
     QML_FILES
         Main.qml
+    RESOURCES
+        ../assets/branding/neebles-boss-tray-icon.png
 )
 
 target_link_libraries(

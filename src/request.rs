@@ -46,6 +46,20 @@ pub struct ExecutionResponse {
     pub error: Option<ExecutionError>,
 }
 
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BossStreamMessage {
+    Subscribed {
+        topics: Vec<String>,
+    },
+    Event {
+        topic: String,
+        event: String,
+        payload: Value,
+    },
+}
+
 impl ExecutionResponse {
     pub fn ok(result: Option<Value>) -> Self {
         Self {

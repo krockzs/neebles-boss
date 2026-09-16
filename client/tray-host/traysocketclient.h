@@ -61,6 +61,10 @@ public:
         const QString &trayId
     ) const;
 
+    Q_INVOKABLE bool visibleForTray(
+        const QString &trayId
+    ) const;
+
     Q_INVOKABLE bool containsTray(
         const QString &trayId
     ) const;
@@ -130,6 +134,11 @@ public:
 
     Q_INVOKABLE void focusTray(
         const QString &trayId
+    );
+
+    Q_INVOKABLE void setTrayVisibility(
+        const QString &trayId,
+        bool visible
     );
 
 signals:

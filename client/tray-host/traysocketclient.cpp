@@ -110,6 +110,22 @@ bool TrayModel::openedForTray(
         .opened;
 }
 
+bool TrayModel::visibleForTray(
+    const QString &trayId
+) const
+{
+    const int trayIndex =
+        indexOf(trayId);
+
+    if (trayIndex < 0) {
+        return false;
+    }
+
+    return m_items
+        .at(trayIndex)
+        .visible;
+}
+
 bool TrayModel::containsTray(
     const QString &trayId
 ) const
@@ -446,6 +462,120 @@ void TraySocketClient::focusTray(
             trayId
         }
     });
+}
+
+void TraySocketClient::setTrayVisibility(
+    const QString &trayId,
+    bool visible
+)
+{
+    QLocalSocket controlSocket;
+
+    controlSocket.connectToServer(
+        socketPath()
+    );
+
+    if (!controlSocket.waitForConnected(1000)) {
+        setError(
+            QStringLiteral(
+                "Tray control connection failed: %1"
+            ).arg(
+                controlSocket.errorString()
+            )
+        );
+
+        return;
+    }
+
+    QByteArray payload =
+        QJsonDocument(
+            QJsonObject{
+                {
+                    QStringLiteral("type"),
+                    QStringLiteral("set_visibility")
+                },
+                {
+                    QStringLiteral("tray_id"),
+                    trayId
+                },
+                {
+                    QStringLiteral("visible"),
+                    visible
+                }
+            }
+        ).toJson(
+            QJsonDocument::Compact
+        );
+
+    payload.append('\n');
+
+    controlSocket.write(payload);
+
+    if (!controlSocket.waitForBytesWritten(1000)) {
+        setError(
+            QStringLiteral(
+                "Tray control write failed: %1"
+            ).arg(
+                controlSocket.errorString()
+            )
+        );
+
+        return;
+    }
+
+    if (!controlSocket.waitForReadyRead(1000)) {
+        setError(
+            QStringLiteral(
+                "Tray control response timeout"
+            )
+        );
+
+        return;
+    }
+
+    const QByteArray responseLine =
+        controlSocket.readLine().trimmed();
+
+    const QJsonDocument response =
+        QJsonDocument::fromJson(
+            responseLine
+        );
+
+    if (!response.isObject()) {
+        setError(
+            QStringLiteral(
+                "Invalid Tray control response"
+            )
+        );
+
+        return;
+    }
+
+    const QJsonObject object =
+        response.object();
+
+    if (
+        object.value(
+            QStringLiteral("type")
+        ).toString()
+        == QStringLiteral("error")
+    ) {
+        setError(
+            object.value(
+                QStringLiteral("message")
+            ).toString(
+                QStringLiteral(
+                    "Tray visibility change failed"
+                )
+            )
+        );
+
+        return;
+    }
+
+    setError(QString());
+
+    controlSocket.disconnectFromServer();
 }
 
 void TraySocketClient::sendSubscribe()
