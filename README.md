@@ -1,318 +1,912 @@
 # N.E.E.B.L.E.S. Boss
 
-Current stable release: 1.0.7.
+**Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-## Purpose
+N.E.E.B.L.E.S. Boss is the governance and orchestration layer of the N.E.E.B.L.E.S. ecosystem.
 
-N.E.E.B.L.E.S. Boss is the central executable responsible for coordinating the N.E.E.B.L.E.S. runtime and its modular architecture.
+It is not a monolithic application that knows how to do everything. Its job is to define stable boundaries, enforce contracts, coordinate lifecycle, recover dependencies, protect persistent state and give independent modules a predictable runtime in which to operate.
 
-Boss directs the ecosystem while modules remain independent components responsible for their own functionality.
+> **Boss governs. A module declares. A module executes.**
+
+The system is intentionally built around that separation.
+
+---
+
+## Status
+
+Current stable release: **1.0.7**.
+
+The `main` branch contains architecture that extends beyond the current stable release line. Stable release artifacts and development-state documentation must therefore be treated as related but distinct views of the project.
 
 The installed runtime lives under:
 
-    /opt/neebles/
+```text
+/opt/neebles/
+```
 
 The global command is:
 
-    neebles
+```text
+neebles
+```
 
-## Runtime layout
+The privileged backend is:
 
-    /opt/neebles/
-    ├── client/
-    │   ├── bin/
-    │   │   └── neebles
-    │   ├── backend/
-    │   │   └── neebles-backend
-    │   ├── ui/
-    │   │   └── neebles-ui
-    │   ├── auth/
-    │   │   └── neebles-auth-agent
-    │   ├── config/
-    │   ├── languages/
-    │   ├── assets/
-    │   └── systemd/
-    ├── modules/
-    └── shared/
-        ├── settings/
-        └── tmp/
+```text
+/opt/neebles/client/backend/neebles-backend
+```
 
-Boss and modules remain physically separated.
+---
+
+## Design principles
+
+N.E.E.B.L.E.S. Boss follows a small set of rules that shape the whole architecture.
+
+### 1. Governance belongs to Boss
+
+Boss owns cross-cutting concerns that must behave consistently across the ecosystem:
+
+- lifecycle
+- dependency integrity
+- runtime ordering
+- IPC boundaries
+- persistent state policy
+- module compatibility
+- recovery
+- desktop ownership
+- release/bootstrap contracts
+- external reporting boundaries
+- persistent-file migration mechanics
+
+### 2. Behavior belongs to modules
+
+Modules own their actual feature behavior, commands, settings, assets, translations and optional runtime providers.
+
+Boss should not need module-specific branches to understand how an independent module performs its work.
+
+### 3. Declarative knowledge is preferred over hardcoded knowledge
+
+Boss contains stable engines and contracts.
+
+Mutable ecosystem knowledge should live in registries, manifests, dictionaries or catalogs whenever possible.
+
+This allows the platform to learn new cases without turning the Boss binary into a growing collection of special cases.
+
+### 4. Local survival comes before remote convenience
+
+A healthy local system must remain usable without Internet access whenever the required state already exists locally.
+
+The general recovery principle is:
+
+```text
+usable local state
+        ↓
+validated cache / bundled recovery data
+        ↓
+remote data only when local state is insufficient
+```
+
+Remote access improves recovery and freshness. It must not become an unnecessary survival dependency.
+
+### 5. Persistent changes are convergent and transactional
+
+When Boss changes persistent state it should produce a complete intended result before publishing it.
+
+A failed intermediate operation should not leave half-written configuration behind.
+
+---
+
+# Architecture overview
+
+At a high level:
+
+```text
+                         N.E.E.B.L.E.S. OS
+                                │
+                                │ bootstrap / declarative data
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                         N.E.E.B.L.E.S. Boss                  │
+│                                                               │
+│  Stage0        Dependency integrity      Local Installer      │
+│     │                   │                       │              │
+│     ├───────────────────┼───────────────────────┤              │
+│     │                   │                       │              │
+│     ▼                   ▼                       ▼              │
+│  Runtime ─────────── Module governance ───────── Registry     │
+│     │                   │                                      │
+│     │                   ├── settings                           │
+│     │                   ├── lifecycle                          │
+│     │                   ├── language/runtime contracts         │
+│     │                   └── tray providers                     │
+│     │                                                          │
+│     ├── neebles.sock                                           │
+│     ├── modules.sock                                           │
+│     └── external.sock                                          │
+│                                                                │
+│                    Nightmare engine                            │
+│                         │                                      │
+│                         ▼                                      │
+│             persistent-file transformations                   │
+└───────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+                       Independent modules
+```
+
+Boss is the center of coordination, not the center of every implementation detail.
+
+---
+
+# Runtime layout
+
+The installed layout is organized so the Boss runtime, modules and shared state remain physically separate.
+
+```text
+/opt/neebles/
+├── client/
+│   ├── bin/
+│   │   └── neebles
+│   ├── backend/
+│   │   └── neebles-backend
+│   ├── ui/
+│   │   └── neebles-ui
+│   ├── auth/
+│   │   └── neebles-auth-agent
+│   ├── config/
+│   ├── languages/
+│   ├── assets/
+│   └── systemd/
+├── modules/
+│   └── <module>/
+└── shared/
+    ├── settings/
+    ├── cache/
+    └── tmp/
+```
 
 Modules are installed independently under:
 
-    /opt/neebles/modules/<module>/
+```text
+/opt/neebles/modules/<module>/
+```
 
-Shared user state is stored under:
+Shared local settings live under:
 
-    /opt/neebles/shared/settings/
+```text
+/opt/neebles/shared/settings/
+```
 
-## Runtime services
+Validated reusable recovery/cache data may live under:
 
-Boss uses a persistent privileged runtime for system-level coordination.
+```text
+/opt/neebles/shared/cache/
+```
 
-The system runtime is provided by:
+---
 
-    neebles-runtime.service
+# Boot and Stage0 convergence
 
-Its administrative socket is:
+N.E.E.B.L.E.S. does not treat service startup as equivalent to system readiness.
 
-    /run/neebles/neebles.sock
+Before the normal runtime is allowed to proceed, **Stage0** performs the convergence checks required to establish a usable local state.
 
-Module runtime IPC is exposed through:
+Logical contract:
 
-    /run/neebles/modules.sock
+```text
+service.stage0
+```
 
-Desktop tray integration is split into two user-session services:
+Systemd unit:
 
-    neebles-tray-manager.service
-    neebles-tray-host.service
+```text
+neebles-stage0.service
+```
 
-The Tray Manager owns the desktop tray runtime, module provider lifecycle and tray IPC.
+Backend entry point:
 
-The Tray Host subscribes to the Tray Manager and exposes visible tray items to KDE Plasma through the StatusNotifierItem D-Bus protocol.
+```text
+neebles-backend stage0 run
+```
 
-The privileged runtime itself remains owned by root.
+Stage0 writes its runtime state to:
 
-Resources that must be consumed by the graphical desktop session, including Boss runtime sockets and shared settings, are assigned to the real desktop user detected during installation.
+```text
+/run/neebles/stage0.json
+```
 
-This keeps privileged execution separated from normal desktop access without exposing Boss runtime resources globally.
+The runtime is ordered behind Stage0 rather than racing it.
 
-## Desktop ownership
+Stage0 is responsible for checking the critical dependency surface and module preflight state needed by the platform before reporting readiness.
 
-During installation, Boss resolves the UID and primary GID of the desktop user that authorized the installation.
+Its design follows a simple rule:
 
-The runtime identity is persisted in:
+> **Internet access may improve recovery, but a healthy local installation must not be blocked merely because the network is unavailable.**
 
-    /etc/neebles/runtime.env
+The systemd startup chain uses Stage0 as a real readiness barrier rather than a cosmetic boot step.
 
-Example:
+---
 
-    NEEBLES_DESKTOP_UID=1000
-    NEEBLES_DESKTOP_GID=1000
+# Dependency integrity and recovery
 
-Boss uses that identity when creating resources that must remain accessible from the desktop session.
+Boss models dependency state explicitly instead of reducing everything to “installed” or “missing”.
 
-The runtime sockets:
+The dependency layer preserves information such as:
 
-    /run/neebles/neebles.sock
-    /run/neebles/modules.sock
+- dependency name
+- detected version
+- required version
+- whether the requirement is satisfied
+- whether repair was attempted
+- state before repair
+- state after repair
 
-are private to the desktop user and use mode:
+This allows Boss to distinguish between:
 
-    0600
+- missing dependencies
+- installed but incompatible dependencies
+- healthy dependencies
+- repairable dependencies
+- failed repairs
 
-Shared settings are owned by the desktop user.
+Required dependencies may block the operation when their contract cannot be satisfied.
 
-The shared settings directory uses private permissions:
+Optional dependencies do not unnecessarily block an otherwise healthy system.
 
-    /opt/neebles/shared/settings    0700
+After repair, Boss re-verifies the dependency instead of assuming that an installer command succeeded semantically.
 
-Local settings files use:
+---
 
-    local_settings_*.json          0600
+# Local Installer
 
-Settings files preserve desktop-user ownership even when they are created or updated through a privileged Boss operation.
+Boss contains a generic local-installer engine used to resolve declarative installation and repair operations.
 
-Privileged writes use an atomic temporary-file-and-rename flow while explicitly preserving the intended owner and permissions.
+The engine does not hardcode every distribution-specific command into dependency-resolution logic.
 
-This prevents runtime and settings state from being unintentionally left owned by root.
+Instead, it consumes a validated installer dictionary supplied by the N.E.E.B.L.E.S. OS repository.
 
-## Desktop integration
+Current AMD64 dictionary path in the OS repository:
 
-Boss provides a native desktop identity for KDE Plasma.
+```text
+config/installers/instaladores_amd64.json
+```
 
-The installed desktop entry is:
+Installed/bundled and cached dictionary locations include:
 
-    /usr/share/applications/org.neebles.Boss.desktop
+```text
+/opt/neebles/client/config/installers/instaladores_amd64.json
+/opt/neebles/shared/cache/installers/instaladores_amd64.json
+```
 
-Its application identity is:
+The resolver validates schema and architecture before using dictionary content.
 
-    org.neebles.Boss
+Remote resolution is pinned to a concrete Git commit before raw content is downloaded. Boss does not intentionally execute installer knowledge from a floating `main` URL.
 
-The desktop integration defines:
+The cache publication path uses temporary-file creation, validation and atomic rename semantics.
 
-    Exec=/opt/neebles/client/ui/neebles-ui
-    Icon=neebles-boss-icon
-    StartupWMClass=org.neebles.Boss
+This keeps the installer mechanism stable while allowing declarative recovery knowledge to evolve separately.
 
-The Qt UI also declares the same desktop identity through:
+---
 
-    app.setDesktopFileName("org.neebles.Boss")
+# Module architecture
 
-The Boss icon is installed globally so Plasma can resolve the application icon consistently for the launcher, taskbar and application window.
+Modules remain independent repositories and independent runtime components.
 
-The installer treats the desktop entry and icon as managed Boss resources and includes them in install, reinstall and rollback handling.
+Boss owns the mechanics needed to:
 
-## Tray architecture
+- discover
+- install
+- update
+- enable
+- disable
+- uninstall
+- launch
+- reconcile
+- preflight
+- validate compatibility
 
-Boss provides generic tray infrastructure without embedding module-specific tray behavior into the core.
+A module owns its own feature behavior.
 
-The tray flow is:
+Installed state is discovered from:
 
-    module tray provider
-            ↓
-    Tray Manager
-            ↓
-    tray.sock
-            ↓
-    Subscribe / Snapshot / Event
-            ↓
-    Tray Host
-            ↓
-    org.kde.StatusNotifierItem
-            ↓
-    org.kde.StatusNotifierWatcher
-            ↓
-    KDE Plasma
+```text
+/opt/neebles/modules/
+```
 
-The user-session tray socket lives under:
+The effective module catalog is built from installed state plus the remote Boss registry.
 
-    /run/user/<uid>/neebles/tray.sock
+Boss does not need to know the internal implementation language of a module in order to govern it. The boundary is contract-driven; concrete module language/runtime support is declared through module manifests and Boss language/runtime adapters.
 
-The Tray Manager launches and reconciles module tray providers according to the module lifecycle.
+That makes the module architecture language-agnostic at the governance boundary without coupling Boss to one application language.
 
-Install, update, enable, disable and uninstall operations reconcile tray state after changing module state.
+---
 
-The tray protocol supports:
+## Module lifecycle
 
-    Subscribe
-    Snapshot
-    Event
+Lifecycle transitions are treated as observable platform events rather than isolated filesystem mutations.
 
-Tray events include:
+Install, update, enable, disable and uninstall operations reconcile the dependent runtime state after changing module state.
 
-    Registered
-    Updated
-    Unregistered
+This includes integration surfaces such as tray providers and settings state.
 
-The Tray Host maintains a persistent subscription to the Tray Manager.
+Uninstall operations can require confirmation and are designed not to silently destroy preserved user settings that may be needed during later reinstall.
 
-For each visible tray record, the host exports an `org.kde.StatusNotifierItem` object over D-Bus and registers it with:
+Reinstall behavior reconciles new defaults with compatible preserved local state rather than blindly restoring obsolete configuration.
 
-    org.kde.StatusNotifierWatcher
+---
 
-Tray item actions such as activation, secondary activation and context-menu requests are delegated back to Boss rather than implemented inside KDE-specific module code.
+## Module dependency contracts
 
-Module providers therefore remain independent from Plasma and D-Bus implementation details.
+Modules may declare minimum compatible module versions.
 
-The Tray Host uses the Rust `zbus` implementation for D-Bus integration.
+Boss performs centralized compatibility checks before treating the dependency as usable.
 
-## Settings contract
+A missing module and an incompatible installed module are different states and are handled differently.
 
-Boss treats module and Boss settings as sparse local overrides over declared defaults.
+The compatibility boundary is centralized so Stage0, install and update paths do not each invent their own interpretation of the same requirement.
+
+---
+
+# IPC architecture
+
+N.E.E.B.L.E.S. separates IPC surfaces by responsibility.
+
+The architecture intentionally avoids one giant socket carrying unrelated trust and lifecycle semantics.
+
+## `neebles.sock`
+
+Administrative/runtime IPC:
+
+```text
+/run/neebles/neebles.sock
+```
+
+Used for privileged Boss coordination.
+
+## `modules.sock`
+
+Module runtime IPC:
+
+```text
+/run/neebles/modules.sock
+```
+
+This is the governed module-facing boundary used for module requests, events and module-owned interactions.
+
+Nightmare is an internal Boss capability and does not require its own socket. A module that needs Nightmare reaches it through the normal governed module path:
+
+```text
+module
+  ↓
+modules.sock
+  ↓
+Boss
+  ↓
+Nightmare
+  ↓
+filesystem
+```
+
+A dedicated Nightmare socket would only be justified by a future real process/security boundary such as a separate daemon, sandbox or privilege domain.
+
+## `external.sock`
+
+Outward-reporting boundary:
+
+```text
+/run/neebles/external.sock
+```
+
+External reporting is intentionally separated from administrative and module IPC.
+
+The transport uses Unix `SOCK_SEQPACKET` semantics so one packet maps to one envelope.
+
+The receiver applies packet-size limits and validates the systemd-activated socket before accepting traffic.
+
+Peer authorization uses `SO_PEERCRED` and permits the expected root/desktop identities rather than trusting payload-declared identity.
+
+Socket mode and peer credentials are defense in depth; they are not presented as cryptographic module identity attestation.
+
+---
+
+# External Envelope
+
+Boss defines a generic outward-facing envelope:
+
+```json
+{
+  "type": "<String>",
+  "endpoint": "<String>",
+  "activate": false,
+  "package": {},
+  "message": {}
+}
+```
+
+`type` and `endpoint` are intentionally open strings.
+
+`package` and `message` must be JSON objects.
+
+The `activate` flag is a hard producer/receiver guard. When disabled, producers must return before performing expensive payload construction, serialization, socket work or network-oriented dispatch.
+
+Current generic message families include:
+
+- error
+- incompatibility
+- Stage0 state/reporting
+
+Producers exist at the Stage0, Boss and module boundaries.
+
+External reporting is best-effort and must not turn a healthy local runtime into a network-dependent runtime.
+
+The receiver currently validates and consumes the local envelope boundary; remote dispatch policy remains intentionally separate from the transport contract.
+
+---
+
+# Settings model
+
+Boss treats settings as persistent sparse local overrides over declared defaults.
 
 Settings leaves are represented as strings.
 
-Examples include:
+Examples:
 
-    "true"
-    "compact"
-    "[\"alpha\",\"beta\"]"
+```text
+"true"
+"compact"
+"[\"alpha\",\"beta\"]"
+```
 
 The effective value is the local override when present; otherwise the declared default is used.
 
-Writing the same raw string as the default removes the local override.
+Writing the same raw value as the default removes the local override.
 
-Updates reconcile local state against the current defaults while preserving valid user overrides and removing stale or default-equivalent values.
+During reconciliation Boss preserves compatible user state, removes stale/default-equivalent values and applies hardcoded platform values with higher precedence.
 
-Boss also supports a top-level `hardcoded` namespace whose string values may be referenced textually through placeholders such as:
+Boss supports a top-level `hardcoded` namespace whose string values may be referenced textually through placeholders such as:
 
-    ${key}
+```text
+${key}
+```
 
 Unknown placeholders remain literal.
 
-## Module contracts
+The persistent model is recursive and supports Object/String trees rather than a fixed flat schema.
 
-Modules remain independent repositories and declare their own behavior and contracts.
+---
 
-Boss owns the generic mechanisms used to install, enable, disable, update, launch and reconcile modules without hardcoding module-specific semantics.
+## Module-owned settings IPC
 
-Installed module state is discovered from:
+Modules may own their settings behavior while Boss retains the generic persistence and transport mechanics.
 
-    /opt/neebles/modules/
+Settings events are isolated by module ownership so one module does not become the implicit settings authority for another.
 
-Each installed module owns its own directory and manifest.
+The module IPC layer supports subscriptions so runtimes can observe settings changes without polling global files.
 
-Boss merges installed state with the remote module registry to present the effective module catalog.
+---
 
-Boss owns lifecycle mechanics.
+# Nightmare persistent-file migration engine
 
-Modules own their own commands, settings, translations, assets and tray provider behavior.
+Nightmare is Boss's generic persistent-file migration engine.
 
-## Release
+Its purpose is not to know JSON, INI, XML, `.env`, a proprietary application format or any other specific file language.
 
-Boss owns its own release composition.
+Its purpose is to know **how to apply a formula**.
 
-The current stable release publishes the Boss runtime and bootstrap assets required by the N.E.E.B.L.E.S. injector, including:
+> **Boss does not need to understand a file format. It needs to understand the formula that describes how that file is interpreted and reconstructed.**
 
-- neebles-backend
-- neebles-ui
-- neebles-installer
-- neebles-auth-agent
-- client-data.tar.gz
-- install.sh
-- bootstrap.json
-- SHA-256 verification data
+This moves format-specific knowledge out of the stable engine and into declarative catalog data.
 
-The release manifest defines the version, base URL, assets, SHA-256 values, executable flags and launch contract required by the N.E.E.B.L.E.S. injector.
+---
 
-A rebuilt asset may retain the same release version, but its SHA-256 must always match the exact published artifact.
+## PersistentDocument
 
-## 1.0.7 integration patch
+Nightmare begins with one abstract document contract containing four objects with four distinct responsibilities:
 
-The 1.0.7 stable line includes an integration patch that preserves the release version while rebuilding the published runtime assets.
+```json
+{
+  "descriptor": {},
+  "content": {},
+  "meta": {},
+  "formula": {}
+}
+```
 
-The patch consolidates three related desktop/runtime fixes.
+### `descriptor`
 
-### Desktop-user ownership
+Describes what kind/class/identity of persistent object is being treated.
 
-Boss runtime resources consumed by the graphical session no longer depend on root ownership.
+### `content`
 
-The installer records the real desktop UID/GID and uses that identity for runtime sockets and shared settings.
+Carries the raw material.
 
-This keeps privileged execution privileged while allowing the desktop session to safely consume the Boss resources it owns.
+The current base contract requires:
 
-### Boss UI identity and icon
+```json
+{
+  "content": {
+    "raw": "complete file contents as a String"
+  }
+}
+```
 
-Boss now installs a canonical desktop entry and global application icon.
+All supported persistent files enter Nightmare as a complete string rather than as a language-specific Rust type.
 
-Qt, the `.desktop` file and Plasma use the same application identity:
+### `meta`
 
-    org.neebles.Boss
+Reserved for treatment context such as version/preservation/rules and future migration metadata.
 
-This prevents Boss from falling back to a generic window/taskbar identity when Plasma resolves the application.
+The engine does not prematurely freeze an unnecessary internal schema for this object.
 
-### Tray Host and lifecycle reconciliation
+### `formula`
 
-The tray lifecycle now reconciles module state consistently after install, update, enable, disable and uninstall operations.
+Identifies the declarative formula used to interpret and reconstruct the raw content.
 
-Boss also includes the Tray Host implementation that bridges the existing Tray Manager protocol to KDE Plasma using StatusNotifierItem over D-Bus.
+Current base contract:
 
-This completes the intended separation:
+```json
+{
+  "formula": {
+    "id": "nightmare.example.v1"
+  }
+}
+```
 
-    module provider
+---
+
+## Nightmare formula catalog
+
+The external catalog is named:
+
+```text
+insert.nightmare.json
+```
+
+It belongs to the N.E.E.B.L.E.S. OS repository, not to the compiled Boss binary.
+
+Repository path:
+
+```text
+config/nightmare/insert.nightmare.json
+```
+
+Cached runtime path:
+
+```text
+/opt/neebles/shared/cache/nightmare/insert.nightmare.json
+```
+
+The catalog may validly begin empty:
+
+```json
+{
+  "formulas": {}
+}
+```
+
+Formulas are added when Boss or real modules need them. The engine does not need a synthetic catalog full of hypothetical formats.
+
+Each formula contains at least:
+
+```json
+{
+  "formulas": {
+    "nightmare.example.v1": {
+      "reader": {},
+      "writer": {}
+    }
+  }
+}
+```
+
+Formula data is declarative. Nightmare does not evaluate arbitrary shell code, `eval` strings or dynamically supplied executable snippets as a formula language.
+
+---
+
+## Catalog resolution
+
+Nightmare prefers a usable validated local cache.
+
+If no usable cache exists it resolves the N.E.E.B.L.E.S. OS `main` branch to a concrete Git SHA and only then constructs the raw catalog URL.
+
+Conceptually:
+
+```text
+validated cache
+      ↓ if unavailable
+resolve neebles-os main → commit SHA
+      ↓
+download insert.nightmare.json @ SHA
+      ↓
+validate
+      ↓
+publish cache atomically
+      ↓
+use catalog
+```
+
+Floating branch names are not accepted as the raw catalog revision contract.
+
+The cache is written through a temporary file created with private permissions and `O_NOFOLLOW`, then synchronized and atomically renamed into place.
+
+---
+
+## Reader
+
+A resolved formula exposes a reader object.
+
+The current minimal reader primitives are:
+
+- `record_separator`
+- `field_separator`
+- `trim`
+- `ignore_prefixes`
+
+The reader transforms the raw string into a logical ordered document.
+
+Nightmare deliberately uses an ordered field representation instead of a hash map so it can preserve:
+
+- field order
+- duplicate keys
+- deterministic occurrence behavior
+
+Logical representation:
+
+```text
+LogicalDocument
+└── fields[]
+    ├── key
+    └── value
+```
+
+Field splitting uses the declared separator once, allowing values to contain the same character without being destroyed by an uncontrolled split.
+
+Records that do not match the active formula are rejected rather than silently discarded.
+
+---
+
+## Writer
+
+The writer performs the reverse operation.
+
+Current minimal writer primitives include:
+
+- `record_separator`
+- `field_separator`
+- `final_record_separator`
+
+The writer converts a complete logical document into one complete final string.
+
+Nightmare does not partially patch the target file during logical transformation.
+
+---
+
+## Logical operations
+
+Nightmare currently supports deterministic logical operations:
+
+- `set`
+- `add`
+- `remove`
+- `rename`
+
+Current semantics:
+
+```text
+set    → update all matching occurrences
+add    → append a new occurrence
+remove → remove all matching occurrences
+rename → rename all matching occurrences
+```
+
+Operations are applied transactionally in memory to a cloned logical document.
+
+If a later operation fails, the original logical document remains unchanged.
+
+Removing a field that is already absent is convergent/idempotent.
+
+---
+
+## Preserve semantics
+
+Persistent migration often requires two different authorities:
+
+```text
+OLD
+→ user state
+
+TARGET
+→ current structure
+```
+
+Nightmare therefore provides explicit preservation semantics.
+
+The rule is:
+
+> **TARGET owns structure. OLD owns preserved values.**
+
+A field removed from the new target structure is not resurrected merely because it existed in the old file.
+
+For duplicate preserved keys, values are mapped by occurrence. If the target contains more occurrences than the old source, the final preserved source value is reused deterministically.
+
+This makes preservation predictable while still allowing the new version to define the authoritative shape of the configuration.
+
+---
+
+## Atomic publication
+
+After Nightmare has produced the complete intended string, publication happens atomically.
+
+Flow:
+
+```text
+existing target
+      ↓
+validate regular file / reject symlink
+      ↓
+create temporary file in same directory
+      ↓
+write complete final String
+      ↓
+preserve intended UID / GID / mode
+      ↓
+fsync temporary file
+      ↓
+rename over target
+      ↓
+fsync parent directory
+```
+
+The target is not incrementally edited in place.
+
+Nightmare refuses direct symlink targets and refuses publication through a symlink parent directory in the atomic replacement path.
+
+For replacement of an existing file, ownership and permissions are preserved rather than accidentally converting desktop-user configuration into root-owned state.
+
+---
+
+## Nightmare end-to-end flow
+
+The complete engine can be summarized as:
+
+```text
+insert.nightmare.json
         ↓
-    generic Boss tray runtime
+    formula.id
         ↓
-    desktop-specific Tray Host
+  reader contract
         ↓
-    Plasma
+OLD raw String ───────┐
+                      ├── logical documents
+TARGET raw String ────┘
+                      ↓
+             preserve / operations
+                      ↓
+               writer contract
+                      ↓
+              complete new String
+                      ↓
+               atomic replacement
+```
 
-The release remains version 1.0.7.
+The engine stays stable while the catalog can continue to grow with real formulas.
 
-Because the runtime artifacts are rebuilt, every published asset must use the SHA-256 generated from that exact rebuilt artifact.
+---
 
-## Registry
+# Desktop ownership and runtime identity
 
-Boss owns its own runtime registry under:
+The privileged runtime itself remains owned by root.
 
-    registry/
-    ├── checking.json
-    ├── critical-update.json
-    └── modules.json
+Resources that must be consumed by the graphical desktop session are assigned to the real desktop identity detected during installation.
 
-### checking.json
+Boss persists that identity in:
+
+```text
+/etc/neebles/runtime.env
+```
+
+Example:
+
+```text
+NEEBLES_DESKTOP_UID=1000
+NEEBLES_DESKTOP_GID=1000
+```
+
+Boss uses that identity when creating resources that must remain accessible from the desktop session.
+
+Runtime sockets such as:
+
+```text
+/run/neebles/neebles.sock
+/run/neebles/modules.sock
+```
+
+are private to the intended desktop user and use restrictive permissions.
+
+Shared settings directory:
+
+```text
+/opt/neebles/shared/settings
+```
+
+uses private ownership and permissions.
+
+Local settings files use restrictive file permissions and preserve the intended desktop-user ownership even when updated through privileged Boss operations.
+
+---
+
+# Desktop integration
+
+Boss provides a native KDE Plasma desktop identity.
+
+Installed desktop entry:
+
+```text
+/usr/share/applications/org.neebles.Boss.desktop
+```
+
+Application identity:
+
+```text
+org.neebles.Boss
+```
+
+Desktop integration defines the Boss executable, canonical icon and startup WM identity so launcher, taskbar and application window resolve consistently.
+
+The installer treats the desktop entry and icon as managed Boss resources and includes them in install, reinstall and rollback handling.
+
+---
+
+# Tray architecture
+
+Boss provides generic tray infrastructure without embedding module-specific tray behavior into the core.
+
+```text
+module tray provider
+        ↓
+Tray Manager
+        ↓
+tray.sock
+        ↓
+Subscribe / Snapshot / Event
+        ↓
+Tray Host
+        ↓
+org.kde.StatusNotifierItem
+        ↓
+org.kde.StatusNotifierWatcher
+        ↓
+KDE Plasma
+```
+
+User-session tray socket:
+
+```text
+/run/user/<uid>/neebles/tray.sock
+```
+
+The Tray Manager owns module tray-provider lifecycle and reconciles provider state after module lifecycle changes.
+
+The Tray Host maintains a persistent subscription and exposes visible tray records to KDE Plasma through StatusNotifierItem over D-Bus.
+
+Module providers remain independent of Plasma and D-Bus implementation details.
+
+The Tray Host uses Rust `zbus` for the desktop D-Bus bridge.
+
+---
+
+# Registry and declarative knowledge
+
+Boss owns its runtime registry under:
+
+```text
+registry/
+├── checking.json
+├── critical-update.json
+└── modules.json
+```
+
+## `checking.json`
 
 Defines the expected structural state of the current stable Boss runtime.
 
@@ -326,38 +920,149 @@ Checks may describe:
 - symlink target
 - restoration information
 
-The checking contract belongs to Boss and does not describe the internal health of independent modules.
+The checking contract belongs to Boss and does not pretend to describe every internal health rule of independent modules.
 
-### critical-update.json
+## `critical-update.json`
 
 Describes critical structural migrations of Boss.
 
-When no critical migration is pending, update is null.
+When no critical migration is pending, the update value is null.
 
-### modules.json
+## `modules.json`
 
-Contains the catalog of N.E.E.B.L.E.S. modules visible to Boss.
+Contains the module catalog visible to Boss.
 
 Modules remain separate repositories and are installed independently from Boss.
 
-Boss is responsible for deciding which compatible stable module release should be used.
+Boss is responsible for deciding which compatible stable module release should be selected.
 
-## Ownership
+---
 
-N.E.E.B.L.E.S. Boss owns:
+# Release architecture
+
+Boss owns its release composition and bootstrap contract.
+
+The stable release line publishes runtime/bootstrap assets such as:
+
+- `neebles-backend`
+- `neebles-ui`
+- `neebles-installer`
+- `neebles-auth-agent`
+- `client-data.tar.gz`
+- `install.sh`
+- `bootstrap.json`
+- SHA-256 verification data
+
+The release manifest defines the version, base URL, assets, SHA-256 values, executable flags and launch contract required by the N.E.E.B.L.E.S. injector.
+
+A rebuilt asset may retain a release version only when the release process intentionally does so; its SHA-256 must always describe the exact published artifact.
+
+The stable 1.0.7 line includes the desktop/runtime integration work for desktop ownership, canonical Boss application identity and Tray Host lifecycle reconciliation.
+
+Development `main` now contains additional architecture beyond that stable line, including Stage0/dependency hardening, the External boundary and Nightmare.
+
+---
+
+# Security model
+
+Boss uses multiple narrow controls rather than assuming one mechanism is sufficient.
+
+Examples include:
+
+- restrictive Unix socket permissions
+- explicit desktop runtime identity
+- `SO_PEERCRED` checks for the external boundary
+- packet-size limits
+- systemd socket validation
+- no trust in payload-declared peer identity
+- regular-file checks before persistent replacement
+- symlink rejection in sensitive write paths
+- `O_NOFOLLOW` for temporary/cache creation
+- complete-file publication through atomic rename
+- preserving intended ownership and permissions
+- avoiding arbitrary executable formula content in Nightmare
+- validating remote declarative data before caching or consuming it
+- pinning remote raw catalog/dictionary reads to concrete Git commits
+
+No single item is presented as absolute security. They are layered controls intended to reduce accidental privilege leakage and narrow the useful attack surface.
+
+---
+
+# Ownership boundaries
+
+## Boss owns
 
 - Boss runtime
-- Boss releases
-- Boss release manifest
+- Boss releases and release manifest
 - Boss checking contract
 - critical Boss migrations
-- module catalog
-- module compatibility and selection logic
+- module catalog and module selection logic
+- module lifecycle mechanics
+- module compatibility enforcement
+- Stage0 convergence
+- dependency integrity and repair orchestration
+- Local Installer engine
 - runtime IPC mechanics
+- `neebles.sock`
+- `modules.sock`
+- `external.sock`
+- External Envelope contract
 - shared settings persistence and reconciliation
-- desktop ownership policy for Boss-managed runtime resources
-- Boss desktop identity and application integration
+- module settings IPC/subscriptions
+- runtime identity policy
+- desktop ownership policy for Boss-managed resources
+- Boss desktop identity/application integration
 - Tray Manager lifecycle mechanics
-- Tray Host and desktop tray integration
+- Tray Host desktop integration
+- Nightmare persistent-file migration engine
 
-OS-specific bootstrap, Calamares resources and OS assets belong to neebles-os.
+## Modules own
+
+- module feature behavior
+- module commands
+- module-specific settings declarations
+- module translations
+- module assets
+- module tray-provider behavior
+- module-specific persistent-file intent/formula selection when applicable
+
+## `neebles-os` owns
+
+- OS bootstrap
+- Calamares resources
+- OS assets
+- OS-specific installation composition
+- installer dictionary data
+- Nightmare formula catalog (`config/nightmare/insert.nightmare.json`)
+
+This boundary is intentional: stable engines live in Boss; ecosystem knowledge that can evolve independently lives in declarative repositories.
+
+---
+
+# Current architectural contract
+
+The shortest useful description of Boss today is:
+
+```text
+Boss governs
+    ↓
+contracts define boundaries
+    ↓
+modules remain independent
+    ↓
+Stage0 establishes readiness
+    ↓
+dependency engines converge the local system
+    ↓
+IPC surfaces separate responsibilities
+    ↓
+settings preserve user state
+    ↓
+Nightmare transforms persistent files from declarative formulas
+    ↓
+remote knowledge can evolve without turning Boss into a monolith
+```
+
+The project is deliberately designed so adding a new module, dependency recipe or persistent-file formula does not require teaching the core a new special case every time.
+
+That is the central architectural goal of N.E.E.B.L.E.S. Boss.
