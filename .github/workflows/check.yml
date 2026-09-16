@@ -45,15 +45,26 @@ jobs:
             build-essential \
             cmake \
             pkg-config \
-            rustc \
-            cargo \
-            rustfmt \
             python3 \
             qt6-base-dev \
             qt6-declarative-dev \
             libgl1-mesa-dev \
             liblayershellqtinterface-dev \
             libpolkit-qt6-1-dev
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain 1.98.1 --component rustfmt
+
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+          "$HOME/.cargo/bin/rustc" --version
+          "$HOME/.cargo/bin/cargo" --version
+          "$HOME/.cargo/bin/rustfmt" --version
 
       - uses: actions/checkout@v4
 
