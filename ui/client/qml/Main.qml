@@ -1674,6 +1674,9 @@ ApplicationWindow {
         closePolicy:
             Popup.CloseOnEscape
 
+        onOpened:
+            uninstallRemoveLocalState.checked = false
+
         background: Rectangle {
             radius: 14
 
@@ -1706,7 +1709,7 @@ ApplicationWindow {
 
                 text:
                     root.t(
-                        "modules.uninstall_keep_settings_title"
+                        "modules.uninstall_title"
                     )
 
                 color: "#E9D5FF"
@@ -1729,22 +1732,25 @@ ApplicationWindow {
                 Layout.fillWidth: true
 
                 text:
-                    root.t(
-                        "modules.uninstall_keep_settings_message"
-                    ).replace(
-                        "%1",
-                        root.pendingUninstallModule
-                    )
+                    root.pendingUninstallModule
 
-                color: "#D4D4D8"
+                color: "#A1A1AA"
 
-                font.pixelSize: 14
-
-                wrapMode:
-                    Text.WordWrap
+                font.pixelSize: 13
 
                 horizontalAlignment:
                     Text.AlignHCenter
+            }
+
+            CheckBox {
+                id: uninstallRemoveLocalState
+
+                Layout.fillWidth: true
+
+                text:
+                    root.t(
+                        "modules.uninstall_remove_local_state"
+                    )
             }
 
             RowLayout {
@@ -1752,9 +1758,6 @@ ApplicationWindow {
 
                 spacing: 10
 
-                /*
-                 * CANCELAR
-                 */
                 Button {
                     id: uninstallCancelButton
 
@@ -1799,11 +1802,8 @@ ApplicationWindow {
                         uninstallSettingsDialog.close()
                 }
 
-                /*
-                 * CONSERVAR CONFIGURACIÓN
-                 */
                 Button {
-                    id: uninstallKeepButton
+                    id: uninstallConfirmButton
 
                     Layout.fillWidth: true
                     Layout.preferredHeight: 42
@@ -1812,79 +1812,16 @@ ApplicationWindow {
 
                     text:
                         root.t(
-                            "modules.uninstall_keep_settings_keep"
+                            "modules.uninstall_confirm"
                         )
 
                     background: Rectangle {
                         radius: 8
 
                         color:
-                            uninstallKeepButton.down
-                            ? "#164E63"
-                            : uninstallKeepButton.hovered
-                              ? "#123846"
-                              : "#101A1E"
-
-                        border.width: 2
-                        border.color: "#22D3EE"
-                    }
-
-                    contentItem: Text {
-                        text:
-                            uninstallKeepButton.text
-
-                        color: "#67E8F9"
-
-                        font.bold: true
-
-                        horizontalAlignment:
-                            Text.AlignHCenter
-
-                        verticalAlignment:
-                            Text.AlignVCenter
-                    }
-
-                    onClicked: {
-                        const name =
-                            root.pendingUninstallModule
-
-                        uninstallSettingsDialog.close()
-
-                        if (
-                            typeof boss !== "undefined"
-                            && name.length > 0
-                        ) {
-                            boss.uninstallModule(
-                                name,
-                                false
-                            )
-                        }
-                    }
-                }
-
-                /*
-                 * ELIMINAR CONFIGURACIÓN
-                 */
-                Button {
-                    id: uninstallRemoveButton
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 42
-
-                    hoverEnabled: true
-
-                    text:
-                        root.t(
-                            "modules.uninstall_keep_settings_remove"
-                        )
-
-                    background: Rectangle {
-                        radius: 8
-
-                        color:
-                            uninstallRemoveButton.down
+                            uninstallConfirmButton.down
                             ? "#6D28D9"
-                            : uninstallRemoveButton.hovered
+                            : uninstallConfirmButton.hovered
                               ? "#4C1D95"
                               : "#1B1027"
 
@@ -1894,7 +1831,7 @@ ApplicationWindow {
 
                     contentItem: Text {
                         text:
-                            uninstallRemoveButton.text
+                            uninstallConfirmButton.text
 
                         color: "#E9D5FF"
 
@@ -1911,6 +1848,9 @@ ApplicationWindow {
                         const name =
                             root.pendingUninstallModule
 
+                        const removeLocalState =
+                            uninstallRemoveLocalState.checked
+
                         uninstallSettingsDialog.close()
 
                         if (
@@ -1919,7 +1859,7 @@ ApplicationWindow {
                         ) {
                             boss.uninstallModule(
                                 name,
-                                true
+                                removeLocalState
                             )
                         }
                     }
@@ -1927,8 +1867,10 @@ ApplicationWindow {
             }
         }
 
-        onClosed:
+        onClosed: {
+            uninstallRemoveLocalState.checked = false
             root.pendingUninstallModule = ""
+        }
     }
 
 }

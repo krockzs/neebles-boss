@@ -112,8 +112,7 @@
   "installer.progress.verifying_backend": "Verificando backend instalado...",
   "installer.progress.completed": "N.E.E.B.L.E.S. Boss instalado correctamente.",
   "common.copy": "Copiar",
-  "modules.uninstall_keep_settings_title": "Conservar configuración",
-  "modules.uninstall_keep_settings_message": "¿Deseas conservar la configuración local de %1?",
-  "modules.uninstall_keep_settings_keep": "Conservar",
-  "modules.uninstall_keep_settings_remove": "Eliminar"
+  "modules.uninstall_title": "Desinstalar módulo",
+  "modules.uninstall_remove_local_state": "Eliminar también configuración/estado local",
+  "modules.uninstall_confirm": "Desinstalar"
 }
