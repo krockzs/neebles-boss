@@ -11,6 +11,7 @@ mod modules;
 mod notifications;
 mod privileges;
 mod request;
+mod runtime_identity;
 mod settings;
 mod surface_state;
 mod tray;

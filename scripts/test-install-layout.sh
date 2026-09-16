@@ -104,6 +104,9 @@ assert_file "$CLIENT/config/defaults.json"
 
 assert_file "$ROOT/usr/lib/systemd/user/neebles-tray-manager.service"
 
+assert_dir "$ROOT/opt/neebles/shared/settings"
+assert_mode 700 "$ROOT/opt/neebles/shared/settings"
+
 assert_dir "$ROOT/usr/share/plasma/plasmoids/org.neebles.launcher"
 assert_dir "$ROOT/usr/share/plasma/plasmoids/org.neebles.spacer"
 
@@ -173,7 +176,13 @@ touch "$ROOT/usr/share/plasma/plasmoids/org.neebles.spacer/obsolete-from-old-rel
 touch "$ROOT/opt/neebles/modules/must-survive-reinstall"
 touch "$ROOT/opt/neebles/shared/must-survive-reinstall"
 
+# Regression: reinstall must repair a settings directory that
+# was left with permissions that are too broad.
+chmod 0755 "$ROOT/opt/neebles/shared/settings"
+
 run_install_directory
+
+assert_mode 700 "$ROOT/opt/neebles/shared/settings"
 
 [[ ! -e "$CLIENT/assets/obsolete-from-old-release.txt" ]] || {
     echo "PACKAGING TEST INVALID: stale client-data survived reinstall" >&2

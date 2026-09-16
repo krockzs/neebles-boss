@@ -15,6 +15,38 @@ fn ensure_object(value: &Value, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_settings_directory_policy(path: &Path) -> Result<(), String> {
+    fs::create_dir_all(path)
+        .map_err(|error| format!("could not create {}: {error}", path.display()))?;
+
+    let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+
+    let raw_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        format!(
+            "settings directory path contains an invalid NUL byte: {}",
+            path.display()
+        )
+    })?;
+
+    let result = unsafe { libc::chown(raw_path.as_ptr(), uid, gid) };
+
+    if result != 0 {
+        return Err(format!(
+            "could not assign settings directory {} to desktop user {uid}:{gid}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
+        format!(
+            "could not secure settings directory {}: {error}",
+            path.display()
+        )
+    })
+}
+
+
 fn apply_settings_file_policy(path: &Path, parent: &Path) -> Result<(), String> {
     let parent_metadata = fs::metadata(parent)
         .map_err(|error| format!("could not inspect {}: {error}", parent.display()))?;
@@ -48,8 +80,7 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
         .parent()
         .ok_or_else(|| format!("settings path has no parent: {}", path.display()))?;
 
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    ensure_settings_directory_policy(parent)?;
 
     let data = serde_json::to_string_pretty(value)
         .map_err(|error| format!("could not serialize settings: {error}"))?;
