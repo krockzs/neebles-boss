@@ -28,7 +28,22 @@ jobs:
             pkg-config \
             libgl1-mesa-dev \
             liblayershellqtinterface-dev \
-            libpolkit-qt6-1-dev
+            libpolkit-qt6-1-dev \
+            gpg
+
+          mkdir -p /etc/apt/keyrings
+
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg
+
+          chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            > /etc/apt/sources.list.d/github-cli.list
+
+          apt-get update
+
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gh
 
       - name: Install Rust toolchain
         shell: bash
