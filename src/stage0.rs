@@ -203,6 +203,8 @@ fn critical_dependencies() -> Vec<SystemDependency> {
         system_package_dependency("git", false),
         system_package_dependency("curl", false),
         system_package_dependency("libnotify-bin", true),
+        system_package_dependency("util-linux", true),
+        system_package_dependency("systemd", true),
         system_package_dependency_with_debian_version("libqt6quick6", ">=6.5,<7.0", true),
         system_package_dependency_with_debian_version(
             "liblayershellqtinterface6",
@@ -253,6 +255,20 @@ mod tests {
     #[test]
     fn certification_stage0_dependency_contracts_match_debian_trixie() {
         let dependencies = critical_dependencies();
+
+        assert!(
+            dependencies
+                .iter()
+                .any(|dependency| dependency.name == "util-linux" && dependency.required),
+            "util-linux must be a required dependency for setpriv"
+        );
+
+        assert!(
+            dependencies
+                .iter()
+                .any(|dependency| dependency.name == "systemd" && dependency.required),
+            "systemd must be a required dependency for systemd-run"
+        );
 
         let qt_quick = dependencies
             .iter()

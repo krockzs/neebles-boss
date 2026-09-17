@@ -388,6 +388,8 @@ if [[ -z "$DESTDIR" ]] && command -v apt >/dev/null 2>&1; then
         git
         curl
         libnotify-bin
+        util-linux
+        systemd
         libqt6quick6
         liblayershellqtinterface6
     )
@@ -396,6 +398,8 @@ if [[ -z "$DESTDIR" ]] && command -v apt >/dev/null 2>&1; then
 
     command -v git >/dev/null 2>&1 || MISSING+=(git)
     command -v curl >/dev/null 2>&1 || MISSING+=(curl)
+    command -v setpriv >/dev/null 2>&1 || MISSING+=(util-linux)
+    command -v systemd-run >/dev/null 2>&1 || MISSING+=(systemd)
     command -v notify-send >/dev/null 2>&1 || MISSING+=(libnotify-bin)
 
     dpkg-query -W -f='${Status}' libqt6quick6 2>/dev/null \

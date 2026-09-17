@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
     neebles-tray-host
-    VERSION 1.0.5
+    VERSION 1.0.11
     LANGUAGES CXX
 )
 
