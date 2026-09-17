@@ -318,6 +318,13 @@ jobs:
             --dist dist \
             --cargo-toml Cargo.toml
 
+      - name: Check GitHub CLI in container
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v gh
+          gh --version
+
       - name: Publish v1.0.9 release
         uses: softprops/action-gh-release@v2
 
