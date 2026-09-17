@@ -63,3 +63,12 @@ target_link_libraries(
         Qt6::Network
         LayerShellQt::Interface
 )
+
+include(GNUInstallDirs)
+
+install(
+    TARGETS neebles-tray-host
+
+    RUNTIME DESTINATION
+        "${CMAKE_INSTALL_BINDIR}"
+)

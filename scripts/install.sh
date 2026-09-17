@@ -20,6 +20,7 @@ BIN_DIR="$CLIENT_ROOT/bin"
 BACKEND_DIR="$CLIENT_ROOT/backend"
 UI_DIR="$CLIENT_ROOT/ui"
 AUTH_DIR="$CLIENT_ROOT/auth"
+TRAY_HOST_DIR="$CLIENT_ROOT/tray-host"
 LAUNCHER_DIR="$CLIENT_ROOT/launcher"
 SPACER_DIR="$CLIENT_ROOT/spacer"
 NOTIFICATIONS_DIR="$CLIENT_ROOT/notifications"
@@ -38,7 +39,6 @@ GLOBAL_BOSS_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-boss-i
 GLOBAL_DESKTOP="${DESTDIR}/usr/share/applications/org.neebles.Boss.desktop"
 SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 TRAY_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-host.service"
-SYSTEMD_WANTS="${DESTDIR}/etc/systemd/user/default.target.wants"
 STAGE0_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-stage0.service"
 RUNTIME_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-runtime.service"
 EXTERNAL_SOCKET="${DESTDIR}/usr/lib/systemd/system/neebles-external.socket"
@@ -50,6 +50,7 @@ EXTERNAL_SOCKET_DROPIN_DIR="${DESTDIR}/etc/systemd/system/neebles-external.socke
 EXTERNAL_SOCKET_DROPIN="$EXTERNAL_SOCKET_DROPIN_DIR/owner.conf"
 PLASMA_LAUNCHER="${DESTDIR}/usr/share/plasma/plasmoids/org.neebles.launcher"
 PLASMA_SPACER="${DESTDIR}/usr/share/plasma/plasmoids/org.neebles.spacer"
+BOSS_EVENTS_QML="${DESTDIR}/usr/lib/x86_64-linux-gnu/qt6/qml/NEEBLES/BossEvents"
 
 progress() {
     echo "NEEBLES_PROGRESS=$1"
@@ -322,7 +323,9 @@ REQUIRED_ROOTS=(
     launcher
     spacer
     notifications
+    applications
     systemd
+    runtime
 )
 
 for root in "${REQUIRED_ROOTS[@]}"; do
@@ -356,6 +359,11 @@ REQUIRED_FILES=(
     systemd/neebles-tray-manager.service
     systemd/neebles-stage0.service
     systemd/neebles-runtime.service
+    runtime/tray-host/neebles-tray-host
+    runtime/qml/NEEBLES/BossEvents/libneebles-launcher-events.so
+    runtime/qml/NEEBLES/BossEvents/libneebles-launcher-eventsplugin.so
+    runtime/qml/NEEBLES/BossEvents/neebles-launcher-events.qmltypes
+    runtime/qml/NEEBLES/BossEvents/qmldir
 )
 
 for item in "${REQUIRED_FILES[@]}"; do
@@ -431,7 +439,8 @@ install -d -m 0755 \
     "$CLIENT_STAGE/bin" \
     "$CLIENT_STAGE/backend" \
     "$CLIENT_STAGE/ui" \
-    "$CLIENT_STAGE/auth"
+    "$CLIENT_STAGE/auth" \
+    "$CLIENT_STAGE/tray-host"
 
 copy_data_tree() {
     local source="$1"
@@ -469,6 +478,10 @@ status_key "installer.progress.installing_ui"
 install -m 0755 \
     "$UI_SOURCE" \
     "$CLIENT_STAGE/ui/neebles-ui"
+
+install -m 0755 \
+    "$CLIENT_DATA_SOURCE/runtime/tray-host/neebles-tray-host" \
+    "$CLIENT_STAGE/tray-host/neebles-tray-host"
 
 progress 66
 status_key "installer.progress.installing_client_data"
@@ -513,8 +526,6 @@ backup_global_path "$GLOBAL_BOSS_ICON" "global-boss-icon"
 backup_global_path "$GLOBAL_DESKTOP" "global-desktop"
 backup_global_path "$SYSTEMD_SERVICE" "systemd-service"
 backup_global_path "$TRAY_HOST_SERVICE" "tray-host-service"
-backup_global_path "$SYSTEMD_WANTS/neebles-tray-manager.service" "systemd-wants"
-backup_global_path "$SYSTEMD_WANTS/neebles-tray-host.service" "tray-host-wants"
 backup_global_path "$STAGE0_SERVICE" "stage0-service"
 backup_global_path "$RUNTIME_SERVICE" "runtime-service"
 backup_global_path "$EXTERNAL_SOCKET" "external-socket"
@@ -526,6 +537,7 @@ backup_global_path "$EXTERNAL_SOCKET_DROPIN_DIR" "external-socket-dropin"
 backup_global_path "$RUNTIME_ENV" "runtime-env"
 backup_global_path "$PLASMA_LAUNCHER" "plasma-launcher"
 backup_global_path "$PLASMA_SPACER" "plasma-spacer"
+backup_global_path "$BOSS_EVENTS_QML" "boss-events-qml"
 
 install -d -m 0755 "$(dirname "$GLOBAL_BIN")"
 
@@ -622,16 +634,6 @@ install -m 0644 \
     "$CLIENT_DATA_SOURCE/systemd/neebles-tray-host.service" \
     "$TRAY_HOST_SERVICE"
 
-install -d -m 0755 "$SYSTEMD_WANTS"
-
-ln -sfnT \
-    /usr/lib/systemd/user/neebles-tray-manager.service \
-    "$SYSTEMD_WANTS/neebles-tray-manager.service"
-
-ln -sfnT \
-    /usr/lib/systemd/user/neebles-tray-host.service \
-    "$SYSTEMD_WANTS/neebles-tray-host.service"
-
 
 progress 88
 status_key "installer.progress.installing_launcher"
@@ -655,6 +657,17 @@ cp -R --no-preserve=ownership,mode,timestamps \
 
 find "$PLASMA_SPACER" -type d -exec chmod 0755 {} +
 find "$PLASMA_SPACER" -type f -exec chmod 0644 {} +
+
+rm -rf "$BOSS_EVENTS_QML"
+install -d -m 0755 "$BOSS_EVENTS_QML"
+
+install -m 0644     "$CLIENT_DATA_SOURCE/runtime/qml/NEEBLES/BossEvents/libneebles-launcher-events.so"     "$BOSS_EVENTS_QML/libneebles-launcher-events.so"
+
+install -m 0644     "$CLIENT_DATA_SOURCE/runtime/qml/NEEBLES/BossEvents/libneebles-launcher-eventsplugin.so"     "$BOSS_EVENTS_QML/libneebles-launcher-eventsplugin.so"
+
+install -m 0644     "$CLIENT_DATA_SOURCE/runtime/qml/NEEBLES/BossEvents/neebles-launcher-events.qmltypes"     "$BOSS_EVENTS_QML/neebles-launcher-events.qmltypes"
+
+install -m 0644     "$CLIENT_DATA_SOURCE/runtime/qml/NEEBLES/BossEvents/qmldir"     "$BOSS_EVENTS_QML/qmldir"
 
 if [[ -n "${NEEBLES_INSTALL_TEST_FAIL_AFTER_GLOBALS:-}" ]]; then
     if [[ -z "$DESTDIR" ]]; then
@@ -696,6 +709,19 @@ cmp -s \
         echo "Installed Tray Host service does not match payload." >&2
         exit 1
     }
+
+cmp -s     "$CLIENT_DATA_SOURCE/runtime/tray-host/neebles-tray-host"     "$TRAY_HOST_DIR/neebles-tray-host"     || {
+        echo "Installed Qt Tray Host does not match payload." >&2
+        exit 1
+    }
+
+for item in     libneebles-launcher-events.so     libneebles-launcher-eventsplugin.so     neebles-launcher-events.qmltypes     qmldir
+do
+    cmp -s         "$CLIENT_DATA_SOURCE/runtime/qml/NEEBLES/BossEvents/$item"         "$BOSS_EVENTS_QML/$item"         || {
+            echo "Installed BossEvents QML runtime differs from payload: $item" >&2
+            exit 1
+        }
+done
 
 cmp -s \
     "$CLIENT_DATA_SOURCE/systemd/neebles-stage0.service" \

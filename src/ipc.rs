@@ -199,9 +199,11 @@ pub fn serve() -> Result<(), String> {
     let _module_ipc = crate::module_ipc::start_background()
         .map_err(|error| format!("could not start module IPC: {error}"))?;
 
-    let _surface_state = crate::surface_state::start_background()
-        .map_err(|error| format!("could not start Boss surface state watcher: {error}"))?;
-
+    /*
+     * Boss UI presence is reported by a user-session lease through
+     * neebles.sock. The system runtime must never depend on Session D-Bus
+     * in order to expose its administrative IPC surface.
+     */
     let path = socket_path();
 
     if let Some(parent) = path.parent() {
@@ -289,8 +291,18 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         format!("invalid ExecutionRequest received through Unix socket: {error}")
     })?;
 
-    if request.target == "events" && request.action.as_deref() == Some("subscribe") {
-        return handle_subscription(stream, reader, request);
+    if request.target == "events" {
+        match request.action.as_deref() {
+            Some("subscribe") => {
+                return handle_subscription(stream, reader, request);
+            }
+
+            Some("lease") => {
+                return handle_surface_lease(stream, reader, request);
+            }
+
+            _ => {}
+        }
     }
 
     let response = dispatcher::dispatch(request);
@@ -302,6 +314,67 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
     stream
         .write_all(&payload)
         .map_err(|error| format!("could not write ExecutionResponse to Unix socket: {error}"))?;
+
+    Ok(())
+}
+
+fn handle_surface_lease(
+    mut stream: UnixStream,
+    mut reader: BufReader<UnixStream>,
+    request: ExecutionRequest,
+) -> Result<(), String> {
+    if request.args.len() != 1 || request.args[0].trim() != "boss-ui" {
+        return Err("events lease requires exactly one supported surface: boss-ui".to_string());
+    }
+
+    /*
+     * caller is semantic metadata, not authentication.
+     * neebles.sock itself is restricted to the desktop identity.
+     */
+    if request.context.caller.trim() != "boss-ui" {
+        return Err("boss-ui lease requires caller boss-ui".to_string());
+    }
+
+    crate::surface_state::acquire_boss_ui_lease()?;
+
+    let acknowledged = BossStreamMessage::Subscribed {
+        topics: vec!["boss-ui".to_string()],
+    };
+
+    let mut payload = serde_json::to_vec(&acknowledged)
+        .map_err(|error| format!("could not serialize Boss UI lease response: {error}"))?;
+
+    payload.push(b'\n');
+
+    if let Err(error) = stream.write_all(&payload) {
+        let _ = crate::surface_state::release_boss_ui_lease();
+
+        return Err(format!("could not acknowledge Boss UI lease: {error}"));
+    }
+
+    if let Err(error) = stream.flush() {
+        let _ = crate::surface_state::release_boss_ui_lease();
+
+        return Err(format!("could not flush Boss UI lease response: {error}"));
+    }
+
+    /*
+     * The connection itself is the lease.
+     *
+     * Normal close, crash, SIGKILL or session loss all eventually produce
+     * EOF/error here, so Boss cannot remain permanently stuck in Open.
+     */
+    loop {
+        let mut line = String::new();
+
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+
+    crate::surface_state::release_boss_ui_lease()?;
 
     Ok(())
 }

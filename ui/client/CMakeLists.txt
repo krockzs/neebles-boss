@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NeeblesQt.cmake")
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 ${NEEBLES_QT_VERSION_RANGE} REQUIRED COMPONENTS Core DBus Quick QuickControls2)
+find_package(Qt6 ${NEEBLES_QT_VERSION_RANGE} REQUIRED COMPONENTS Core DBus Network Quick QuickControls2)
 
 qt_standard_project_setup(REQUIRES ${NEEBLES_QT_MIN_VERSION})
 
@@ -28,6 +28,7 @@ target_link_libraries(neebles-ui
     PRIVATE
         Qt6::Core
         Qt6::DBus
+        Qt6::Network
         Qt6::Quick
         Qt6::QuickControls2
 )

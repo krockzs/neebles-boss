@@ -3,6 +3,8 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLocale>
 #include <QRegularExpression>
 
@@ -383,12 +385,69 @@ void InstallerController::processError(QProcess::ProcessError error)
 void InstallerController::integrateDesktop()
 {
     /*
-     * install.sh runs with elevated privileges and starts the
-     * system Boss Runtime first.
+     * install.sh has completed in the elevated process.
+     * We are now back in the real desktop user's session.
      *
-     * We are back in the real desktop user's process here, so
-     * this is the correct place to reload and start the user
-     * Tray Manager immediately instead of waiting for next login.
+     * Boss config is the authority for whether desktop surfaces
+     * must be active. Do not duplicate its configuration parser here.
+     */
+    QProcess configProcess;
+
+    configProcess.start(
+        QStringLiteral("/usr/local/bin/neebles"),
+        {
+            QStringLiteral("config"),
+            QStringLiteral("show")
+        }
+    );
+
+    bool configAvailable =
+        configProcess.waitForStarted(3000)
+        && configProcess.waitForFinished(5000)
+        && configProcess.exitStatus()
+            == QProcess::NormalExit
+        && configProcess.exitCode() == 0;
+
+    bool trayEnabled = true;
+    bool launcherEnabled = true;
+
+    if (configAvailable) {
+        const QJsonDocument document =
+            QJsonDocument::fromJson(
+                configProcess.readAllStandardOutput()
+            );
+
+        if (
+            document.isObject()
+            && document.object()
+                .value(
+                    QStringLiteral("tray_enabled")
+                ).isBool()
+            && document.object()
+                .value(
+                    QStringLiteral("launcher_enabled")
+                ).isBool()
+        ) {
+            trayEnabled =
+                document.object()
+                    .value(
+                        QStringLiteral("tray_enabled")
+                    ).toBool();
+
+            launcherEnabled =
+                document.object()
+                    .value(
+                        QStringLiteral("launcher_enabled")
+                    ).toBool();
+        } else {
+            configAvailable = false;
+        }
+    }
+
+    /*
+     * A fresh installation defaults both surfaces to enabled.
+     * If an existing valid Boss config is present, its persisted
+     * user intent wins.
      */
     QProcess::execute(
         QStringLiteral("/usr/bin/systemctl"),
@@ -398,19 +457,61 @@ void InstallerController::integrateDesktop()
         }
     );
 
-    QProcess::execute(
-        QStringLiteral("/usr/bin/systemctl"),
-        {
-            QStringLiteral("--user"),
-            QStringLiteral("restart"),
-            QStringLiteral("neebles-tray-manager.service")
-        }
-    );
+    if (trayEnabled) {
+        QProcess::execute(
+            QStringLiteral("/usr/bin/systemctl"),
+            {
+                QStringLiteral("--user"),
+                QStringLiteral("enable"),
+                QStringLiteral("--now"),
+                QStringLiteral(
+                    "neebles-tray-manager.service"
+                )
+            }
+        );
 
-    installLauncherIntoPanel();
+        QProcess::execute(
+            QStringLiteral("/usr/bin/systemctl"),
+            {
+                QStringLiteral("--user"),
+                QStringLiteral("enable"),
+                QStringLiteral("--now"),
+                QStringLiteral(
+                    "neebles-tray-host.service"
+                )
+            }
+        );
+    } else {
+        QProcess::execute(
+            QStringLiteral("/usr/bin/systemctl"),
+            {
+                QStringLiteral("--user"),
+                QStringLiteral("disable"),
+                QStringLiteral("--now"),
+                QStringLiteral(
+                    "neebles-tray-host.service"
+                )
+            }
+        );
+
+        QProcess::execute(
+            QStringLiteral("/usr/bin/systemctl"),
+            {
+                QStringLiteral("--user"),
+                QStringLiteral("disable"),
+                QStringLiteral("--now"),
+                QStringLiteral(
+                    "neebles-tray-manager.service"
+                )
+            }
+        );
+    }
+
+    installLauncherIntoPanel(launcherEnabled);
+
 }
 
-void InstallerController::installLauncherIntoPanel()
+void InstallerController::installLauncherIntoPanel(bool enabled)
 {
     const QString packagePath =
         QStringLiteral(
@@ -458,6 +559,7 @@ void InstallerController::installLauncherIntoPanel()
 
     const QString script =
         QStringLiteral(R"JS(
+var enabled = %1;
 var ps = panels();
 
 /*
@@ -503,7 +605,7 @@ for (var p = 0; p < ps.length; ++p) {
         break;
 }
 
-if (targetPanel) {
+if (enabled && targetPanel) {
     /*
      * Physical positioning is intentional:
      *
@@ -527,7 +629,11 @@ if (targetPanel) {
         38
     );
 }
-)JS");
+)JS").arg(
+        enabled
+            ? QStringLiteral("true")
+            : QStringLiteral("false")
+    );
 
     QProcess process;
 

@@ -20,19 +20,45 @@ pub fn launch_ui() -> Result<(), String> {
         BossUiState::Closed => {}
     }
 
-    surface_state::set_boss_ui_state(BossUiState::Opening);
+    let (desktop_uid, desktop_gid) = crate::runtime_identity::desktop_identity()?;
+    let runtime_dir = format!("/run/user/{desktop_uid}");
+    let session_bus = format!("unix:path={runtime_dir}/bus");
+    let ui_path = "/opt/neebles/client/ui/neebles-ui";
 
-    let path = std::path::Path::new("/usr/lib/neebles/neebles-launcher");
+    let opening_generation = surface_state::begin_boss_ui_opening()?;
 
-    match Command::new(path).spawn() {
-        Ok(_) => Ok(()),
+    let result = Command::new("/usr/bin/setpriv")
+        .arg(format!("--reuid={desktop_uid}"))
+        .arg(format!("--regid={desktop_gid}"))
+        .arg("--init-groups")
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .env("DBUS_SESSION_BUS_ADDRESS", &session_bus)
+        .arg("/usr/bin/systemd-run")
+        .arg("--user")
+        .arg("--collect")
+        .arg("--quiet")
+        .arg(ui_path)
+        .status();
 
-        Err(error) => {
-            surface_state::set_boss_ui_state(BossUiState::Closed);
+    match result {
+        Ok(status) if status.success() => {
+            surface_state::watch_boss_ui_opening(opening_generation);
+            Ok(())
+        }
+
+        Ok(status) => {
+            surface_state::cancel_boss_ui_opening(opening_generation);
 
             Err(format!(
-                "could not launch Boss through {}: {error}",
-                path.display()
+                "desktop user manager rejected Boss UI launch with status {status}"
+            ))
+        }
+
+        Err(error) => {
+            surface_state::cancel_boss_ui_opening(opening_generation);
+
+            Err(format!(
+                "could not launch Boss UI through the desktop user manager: {error}"
             ))
         }
     }

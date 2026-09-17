@@ -50,3 +50,28 @@ target_link_libraries(
         Qt6::Qml
         Qt6::Network
 )
+
+include(GNUInstallDirs)
+
+set(
+    NEEBLES_BOSS_EVENTS_QML_DIR
+    "${CMAKE_INSTALL_LIBDIR}/qt6/qml/NEEBLES/BossEvents"
+)
+
+install(
+    TARGETS
+        neebles-launcher-events
+        neebles-launcher-eventsplugin
+
+    LIBRARY DESTINATION
+        "${NEEBLES_BOSS_EVENTS_QML_DIR}"
+)
+
+install(
+    FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/qmldir"
+        "${CMAKE_CURRENT_BINARY_DIR}/neebles-launcher-events.qmltypes"
+
+    DESTINATION
+        "${NEEBLES_BOSS_EVENTS_QML_DIR}"
+)

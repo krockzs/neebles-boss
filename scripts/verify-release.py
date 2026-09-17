@@ -34,6 +34,7 @@ REQUIRED_CLIENT_DATA_ROOTS = {
     "notifications",
     "applications",
     "systemd",
+    "runtime",
 }
 
 REQUIRED_CLIENT_DATA_FILES = {
@@ -48,6 +49,15 @@ REQUIRED_CLIENT_DATA_FILES = {
     "spacer/contents/ui/main.qml",
     "systemd/neebles-tray-manager.service",
     "systemd/neebles-tray-host.service",
+    "runtime/tray-host/neebles-tray-host",
+    "runtime/qml/NEEBLES/BossEvents/libneebles-launcher-events.so",
+    "runtime/qml/NEEBLES/BossEvents/libneebles-launcher-eventsplugin.so",
+    "runtime/qml/NEEBLES/BossEvents/neebles-launcher-events.qmltypes",
+    "runtime/qml/NEEBLES/BossEvents/qmldir",
+}
+
+EXECUTABLE_CLIENT_DATA_FILES = {
+    "runtime/tray-host/neebles-tray-host",
 }
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -194,10 +204,17 @@ def validate_tar(path: Path) -> None:
                         f"{member.name!r}; got {mode:04o}"
                     )
             else:
-                if mode != 0o644:
+                expected_mode = (
+                    0o755
+                    if normalized in EXECUTABLE_CLIENT_DATA_FILES
+                    else 0o644
+                )
+
+                if mode != expected_mode:
                     fail(
-                        "client-data file mode must be 0644 for "
-                        f"{member.name!r}; got {mode:04o}"
+                        "client-data file mode mismatch for "
+                        f"{member.name!r}; expected {expected_mode:04o}, "
+                        f"got {mode:04o}"
                     )
 
                 files.add(normalized)

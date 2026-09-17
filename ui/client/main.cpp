@@ -7,10 +7,110 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocalSocket>
+#include <QProcessEnvironment>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 
 static constexpr auto BOSS_DBUS_SERVICE = "org.neebles.Boss";
+
+static QString bossSocketPath()
+{
+    const QString overridePath =
+        QProcessEnvironment::systemEnvironment()
+            .value(
+                QStringLiteral(
+                    "NEEBLES_SOCKET"
+                )
+            )
+            .trimmed();
+
+    if (!overridePath.isEmpty())
+        return overridePath;
+
+    return QStringLiteral(
+        "/run/neebles/neebles.sock"
+    );
+}
+
+static bool acquireBossUiLease(
+    QLocalSocket &socket
+)
+{
+    socket.connectToServer(
+        bossSocketPath()
+    );
+
+    if (!socket.waitForConnected(3000))
+        return false;
+
+    const QJsonObject request{
+        {
+            QStringLiteral("target"),
+            QStringLiteral("events")
+        },
+        {
+            QStringLiteral("action"),
+            QStringLiteral("lease")
+        },
+        {
+            QStringLiteral("args"),
+            QJsonArray{
+                QStringLiteral("boss-ui")
+            }
+        },
+        {
+            QStringLiteral("context"),
+            QJsonObject{
+                {
+                    QStringLiteral("caller"),
+                    QStringLiteral("boss-ui")
+                }
+            }
+        }
+    };
+
+    QByteArray payload =
+        QJsonDocument(request)
+            .toJson(
+                QJsonDocument::Compact
+            );
+
+    payload.append('\n');
+
+    if (socket.write(payload) != payload.size())
+        return false;
+
+    if (!socket.waitForBytesWritten(3000))
+        return false;
+
+    if (!socket.waitForReadyRead(3000))
+        return false;
+
+    const QByteArray response =
+        socket.readLine().trimmed();
+
+    if (response.isEmpty())
+        return false;
+
+    const QJsonDocument document =
+        QJsonDocument::fromJson(response);
+
+    if (!document.isObject())
+        return false;
+
+    const QJsonObject object =
+        document.object();
+
+    return
+        object.value(
+            QStringLiteral("type")
+        ).toString()
+        == QStringLiteral("subscribed");
+}
 
 static QString findBrandingAsset(const QString &name)
 {
@@ -100,6 +200,18 @@ int main(int argc, char *argv[])
             QString::fromLatin1(BOSS_DBUS_SERVICE)
         )) {
         return 0;
+    }
+
+    QLocalSocket bossUiLease;
+
+    if (!acquireBossUiLease(bossUiLease)) {
+        bus.unregisterService(
+            QString::fromLatin1(
+                BOSS_DBUS_SERVICE
+            )
+        );
+
+        return 1;
     }
 
     const QString iconPath =

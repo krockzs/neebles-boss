@@ -159,30 +159,12 @@ if (enabled) {
         && process.exitCode() == 0;
 }
 
-static bool applyTrayManagerState(
+static bool applyTrayServiceState(
+    const QString &systemctl,
+    const QString &service,
     bool enabled
 )
 {
-    QString systemctl;
-
-    if (
-        QFileInfo::exists(
-            QStringLiteral(
-                "/usr/bin/systemctl"
-            )
-        )
-    ) {
-        systemctl =
-            QStringLiteral(
-                "/usr/bin/systemctl"
-            );
-    } else {
-        systemctl =
-            QStringLiteral(
-                "systemctl"
-            );
-    }
-
     QProcess process;
 
     process.start(
@@ -196,9 +178,7 @@ static bool applyTrayManagerState(
 
             QStringLiteral("--now"),
 
-            QStringLiteral(
-                "neebles-tray-manager.service"
-            )
+            service
         }
     );
 
@@ -225,6 +205,102 @@ static bool applyTrayManagerState(
         process.exitStatus()
             == QProcess::NormalExit
         && process.exitCode() == 0;
+}
+
+static bool applyTrayState(
+    bool enabled
+)
+{
+    QString systemctl;
+
+    if (
+        QFileInfo::exists(
+            QStringLiteral(
+                "/usr/bin/systemctl"
+            )
+        )
+    ) {
+        systemctl =
+            QStringLiteral(
+                "/usr/bin/systemctl"
+            );
+    } else {
+        systemctl =
+            QStringLiteral(
+                "systemctl"
+            );
+    }
+
+    const QString manager =
+        QStringLiteral(
+            "neebles-tray-manager.service"
+        );
+
+    const QString host =
+        QStringLiteral(
+            "neebles-tray-host.service"
+        );
+
+    /*
+     * The Tray is one user-facing surface composed of two services.
+     *
+     * ON:
+     *   Manager first, because it owns tray.sock.
+     *   Qt Host second, because it consumes tray.sock.
+     *
+     * OFF:
+     *   Qt Host first, so the visual consumer disappears cleanly.
+     *   Manager second.
+     */
+    if (enabled) {
+        if (
+            !applyTrayServiceState(
+                systemctl,
+                manager,
+                true
+            )
+        ) {
+            return false;
+        }
+
+        if (
+            !applyTrayServiceState(
+                systemctl,
+                host,
+                true
+            )
+        ) {
+            /*
+             * Do not leave a half-enabled Tray if the visual Host
+             * could not be activated.
+             */
+            applyTrayServiceState(
+                systemctl,
+                manager,
+                false
+            );
+
+            return false;
+        }
+
+        return true;
+    }
+
+    const bool hostOk =
+        applyTrayServiceState(
+            systemctl,
+            host,
+            false
+        );
+
+    const bool managerOk =
+        applyTrayServiceState(
+            systemctl,
+            manager,
+            false
+        );
+
+    return hostOk && managerOk;
 }
 
 
@@ -2120,7 +2196,7 @@ void BossController::saveConfigValue(
             != trayWasEnabled
         ) {
             if (
-                !applyTrayManagerState(
+                !applyTrayState(
                     enabled
                 )
             ) {

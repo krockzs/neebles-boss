@@ -11,8 +11,9 @@ cd "$REPO_ROOT"
 BACKEND="$REPO_ROOT/target/debug/neebles-backend"
 UI="$REPO_ROOT/ui/client/build/neebles-ui"
 AUTH="$REPO_ROOT/ui/auth-agent/build/neebles-auth-agent"
+TRAY_HOST="$REPO_ROOT/client/tray-host/build/neebles-tray-host"
 
-for binary in "$BACKEND" "$UI" "$AUTH"; do
+for binary in "$BACKEND" "$UI" "$AUTH" "$TRAY_HOST"; do
     [[ -f "$binary" ]] || {
         echo "PACKAGING TEST INVALID: missing built binary: $binary" >&2
         echo "Run ./scripts/build-all.sh first." >&2
@@ -55,11 +56,18 @@ run_install_archive() {
 }
 
 run_install_directory() {
+    local extracted="$ROOT/client-data-directory"
+
+    rm -rf "$extracted"
+    install -d -m 0755 "$extracted"
+
+    tar -xzf "$ARCHIVE" -C "$extracted"
+
     DESTDIR="$ROOT" \
         "$REPO_ROOT/scripts/install.sh" \
         "$BACKEND" \
         "$UI" \
-        "$REPO_ROOT/client" \
+        "$extracted" \
         "$AUTH"
 }
 
@@ -99,10 +107,18 @@ CLIENT="$ROOT/opt/neebles/client"
 assert_file "$CLIENT/backend/neebles-backend"
 assert_file "$CLIENT/ui/neebles-ui"
 assert_file "$CLIENT/auth/neebles-auth-agent"
+assert_file "$CLIENT/tray-host/neebles-tray-host"
 assert_file "$CLIENT/languages/manifest.json"
 assert_file "$CLIENT/config/defaults.json"
 
 assert_file "$ROOT/usr/lib/systemd/user/neebles-tray-manager.service"
+assert_file "$ROOT/usr/lib/systemd/user/neebles-tray-host.service"
+
+BOSS_EVENTS="$ROOT/usr/lib/x86_64-linux-gnu/qt6/qml/NEEBLES/BossEvents"
+assert_file "$BOSS_EVENTS/libneebles-launcher-events.so"
+assert_file "$BOSS_EVENTS/libneebles-launcher-eventsplugin.so"
+assert_file "$BOSS_EVENTS/neebles-launcher-events.qmltypes"
+assert_file "$BOSS_EVENTS/qmldir"
 
 assert_dir "$ROOT/opt/neebles/shared/settings"
 assert_mode 700 "$ROOT/opt/neebles/shared/settings"
@@ -133,19 +149,24 @@ assert_dir "$ROOT/usr/share/plasma/plasmoids/org.neebles.spacer"
     exit 1
 }
 
-[[ -L "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-manager.service" ]] || {
-    echo "PACKAGING TEST INVALID: Tray Manager enable symlink missing" >&2
+[[ ! -e "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-manager.service" ]] || {
+    echo "PACKAGING TEST INVALID: installer globally enabled Tray Manager" >&2
     exit 1
 }
 
-[[ "$(readlink "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-manager.service")" == "/usr/lib/systemd/user/neebles-tray-manager.service" ]] || {
-    echo "PACKAGING TEST INVALID: Tray Manager enable symlink target is wrong" >&2
+[[ ! -e "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-host.service" ]] || {
+    echo "PACKAGING TEST INVALID: installer globally enabled Tray Host" >&2
     exit 1
 }
 
 assert_mode 755 "$CLIENT/backend/neebles-backend"
 assert_mode 755 "$CLIENT/ui/neebles-ui"
 assert_mode 755 "$CLIENT/auth/neebles-auth-agent"
+assert_mode 755 "$CLIENT/tray-host/neebles-tray-host"
+assert_mode 644 "$BOSS_EVENTS/libneebles-launcher-events.so"
+assert_mode 644 "$BOSS_EVENTS/libneebles-launcher-eventsplugin.so"
+assert_mode 644 "$BOSS_EVENTS/neebles-launcher-events.qmltypes"
+assert_mode 644 "$BOSS_EVENTS/qmldir"
 
 for tree in \
     "$CLIENT/assets" \
@@ -153,7 +174,8 @@ for tree in \
     "$CLIENT/config" \
     "$CLIENT/launcher" \
     "$CLIENT/spacer" \
-    "$CLIENT/notifications"
+    "$CLIENT/notifications" \
+    "$CLIENT/applications"
 do
     BAD_DIR="$(find "$tree" -type d ! -perm 0755 -print -quit)"
 
@@ -220,6 +242,16 @@ cmp -s \
         exit 1
     }
 
+cmp -s     client/systemd/neebles-tray-host.service     "$ROOT/usr/lib/systemd/user/neebles-tray-host.service"     || {
+        echo "PACKAGING TEST INVALID: installed Tray Host unit differs from source" >&2
+        exit 1
+    }
+
+grep -Fxq     'ExecStart=/opt/neebles/client/tray-host/neebles-tray-host'     "$ROOT/usr/lib/systemd/user/neebles-tray-host.service"     || {
+        echo "PACKAGING TEST INVALID: Tray Host does not execute Qt visual host" >&2
+        exit 1
+    }
+
 
 echo "=== ROLLBACK AFTER GLOBAL MUTATION ==="
 
@@ -232,10 +264,6 @@ printf '\n# rollback-systemd\n' >> "$ROOT/usr/lib/systemd/user/neebles-tray-mana
 
 rm -f "$ROOT/usr/local/bin/neebles"
 ln -s /baseline/neebles "$ROOT/usr/local/bin/neebles"
-
-rm -f "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-manager.service"
-ln -s /baseline/neebles-tray-manager.service \
-    "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-manager.service"
 
 set +e
 NEEBLES_INSTALL_TEST_FAIL_AFTER_GLOBALS=1 \
@@ -288,11 +316,6 @@ grep -q '^# rollback-systemd$' \
     exit 1
 }
 
-[[ "$(readlink "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-manager.service")" == "/baseline/neebles-tray-manager.service" ]] || {
-    echo "PACKAGING TEST INVALID: systemd wants symlink was not restored" >&2
-    exit 1
-}
-
 [[ -f "$ROOT/opt/neebles/modules/must-survive-reinstall" ]] || {
     echo "PACKAGING TEST INVALID: modules tree changed during failed reinstall" >&2
     exit 1
@@ -336,8 +359,13 @@ cmp -s \
     exit 1
 }
 
-[[ "$(readlink "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-manager.service")" == "/usr/lib/systemd/user/neebles-tray-manager.service" ]] || {
-    echo "PACKAGING TEST INVALID: final Tray Manager enable symlink is wrong" >&2
+[[ ! -e "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-manager.service" ]] || {
+    echo "PACKAGING TEST INVALID: final install globally enabled Tray Manager" >&2
+    exit 1
+}
+
+[[ ! -e "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-host.service" ]] || {
+    echo "PACKAGING TEST INVALID: final install globally enabled Tray Host" >&2
     exit 1
 }
 
