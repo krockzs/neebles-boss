@@ -206,7 +206,7 @@ fn critical_dependencies() -> Vec<SystemDependency> {
         system_package_dependency_with_debian_version("libqt6quick6", ">=6.5,<7.0", true),
         system_package_dependency_with_debian_version(
             "liblayershellqtinterface6",
-            ">=6.5,<7.0",
+            ">=6.3,<7.0",
             true,
         ),
     ]
@@ -248,6 +248,28 @@ mod tests {
         };
 
         fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn certification_stage0_dependency_contracts_match_debian_trixie() {
+        let dependencies = critical_dependencies();
+
+        let qt_quick = dependencies
+            .iter()
+            .find(|dependency| dependency.name == "libqt6quick6")
+            .expect("Qt Quick dependency must exist");
+
+        let layer_shell = dependencies
+            .iter()
+            .find(|dependency| dependency.name == "liblayershellqtinterface6")
+            .expect("LayerShellQt dependency must exist");
+
+        assert_eq!(qt_quick.version.as_ref().unwrap().requirement, ">=6.5,<7.0");
+
+        assert_eq!(
+            layer_shell.version.as_ref().unwrap().requirement,
+            ">=6.3,<7.0"
+        );
     }
 
     #[test]
