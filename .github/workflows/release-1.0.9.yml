@@ -408,8 +408,26 @@ jobs:
             dist/bootstrap.json \
             dist/SHA256SUMS
           do
-            echo "Uploading $asset"
-            gh release upload v1.0.9 "$asset"
+            uploaded=false
+
+            for attempt in 1 2 3 4 5; do
+              echo "Uploading $asset - attempt $attempt/5"
+
+              if gh release upload v1.0.9 "$asset"; then
+                uploaded=true
+                break
+              fi
+
+              if [ "$attempt" -lt 5 ]; then
+                echo "Upload failed; waiting 15 seconds before retry."
+                sleep 15
+              fi
+            done
+
+            if [ "$uploaded" != true ]; then
+              echo "ERROR: failed to upload $asset after 5 attempts."
+              exit 1
+            fi
           done
 
           echo "=== VERIFY REMOTE ASSET SET ==="
