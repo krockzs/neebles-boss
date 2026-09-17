@@ -1,0 +1,449 @@
+name: Build and release NEEBLES Boss 1.0.10
+
+on:
+  push:
+    paths:
+      - "release/trigger-v1.0.10"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    container:
+      image: debian:trixie-slim
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            ca-certificates \
+            git \
+            curl \
+            build-essential \
+            cmake \
+            pkg-config \
+            libgl1-mesa-dev \
+            liblayershellqtinterface-dev \
+            libpolkit-qt6-1-dev \
+            gpg
+
+          mkdir -p /etc/apt/keyrings
+
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg
+
+          chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            > /etc/apt/sources.list.d/github-cli.list
+
+          apt-get update
+
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gh
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain 1.98.1
+
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+          "$HOME/.cargo/bin/rustc" --version
+          "$HOME/.cargo/bin/cargo" --version
+
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      - name: Checkout Qt dependency snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: krockzs/neebles-calamares
+          ref: neebles-v3.3.14
+          path: neebles-calamares
+
+
+      - name: Verify Qt dependency snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d neebles-calamares/qt_6.8.2
+          test -f neebles-calamares/qt_6.8.2/SHA256SUMS
+
+          COUNT="$(find neebles-calamares/qt_6.8.2 -maxdepth 1 -type f -name '*.deb' | wc -l)"
+
+          test "$COUNT" -eq 115
+
+          echo "Qt 6.8.2 snapshot: $COUNT packages"
+
+
+      - name: Verify Qt package checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd neebles-calamares/qt_6.8.2
+          sha256sum -c SHA256SUMS
+
+
+      - name: Install controlled Qt 6.8.2
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd neebles-calamares/qt_6.8.2
+
+          apt-get install -y ./*.deb
+
+
+      - name: Verify installed Qt 6.8.2
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== QT PACKAGES INSTALLED ==="
+          dpkg-query -W -f='${Package}\t${Version}\n'             'libqt6core6*'             'libqt6gui6'             'libqt6qml6'             'libqt6quick6'             'qt6-base-dev'             'qt6-declarative-dev'             'qmake6'             'qmake6-bin'
+
+          echo
+          echo "=== QMAKE ==="
+          qmake6 --version
+
+          echo
+          echo "=== QT6 CMAKE PREFIX ==="
+          find /usr -type d -path '*/cmake/Qt6' -print 2>/dev/null | sort
+
+          echo
+          echo "=== QT CORE LIBRARY ==="
+          ls -l /lib/x86_64-linux-gnu/libQt6Core.so.6*
+
+
+
+
+
+
+      - name: Build Rust backend
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export PATH="$HOME/.cargo/bin:$PATH"
+
+          rustc --version
+          cargo --version
+          cargo build --release --locked
+
+      - name: Confirm Qt 6.8.2 installation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== QT CORE ==="
+          dpkg-query -W -f='${Package}\t${Version}\n'             libqt6core6t64
+
+          echo
+          echo "=== QMAKE ==="
+          qmake6 --version
+
+          echo
+          echo "=== QT CMAKE CONFIG ==="
+          find /usr /lib             -type f             \(               -name 'Qt6Config.cmake'               -o               -name 'Qt6ConfigVersion.cmake'             \)             -print 2>/dev/null | sort
+
+          echo
+          echo "=== QT CORE LIBRARY ==="
+          ls -l /lib/x86_64-linux-gnu/libQt6Core.so.6*
+
+      - name: Configure Qt 6.8.2 CMake directory
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          QT_CONFIG="$(find /usr -type f -path '*/cmake/Qt6/Qt6Config.cmake' -print -quit 2>/dev/null)"
+
+          test -n "$QT_CONFIG"
+
+          QT_DIR="${QT_CONFIG%/Qt6Config.cmake}"
+
+          echo "Qt 6.8.2 CMake directory: $QT_DIR"
+          echo "Qt6_DIR=$QT_DIR" >> "$GITHUB_ENV"
+
+      - name: Build client UI
+        run: |
+          cmake \
+            -S ui/client \
+            -B ui/client/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQt6_DIR="$Qt6_DIR" \
+            --log-level=VERBOSE
+
+          cmake \
+            --build ui/client/build \
+            --parallel
+
+      - name: Build installer UI
+        run: |
+          cmake \
+            -S ui/installer \
+            -B ui/installer/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQt6_DIR="$Qt6_DIR"
+
+          cmake \
+            --build ui/installer/build \
+            --parallel
+
+      - name: Build authorization agent
+        run: |
+          cmake \
+            -S ui/auth-agent \
+            -B ui/auth-agent/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQt6_DIR="$Qt6_DIR"
+
+          cmake \
+            --build ui/auth-agent/build \
+            --parallel
+
+      - name: Stage release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+
+          cp \
+            target/release/neebles-backend \
+            dist/neebles-backend
+
+          cp \
+            ui/client/build/neebles-ui \
+            dist/neebles-ui
+
+          cp \
+            ui/installer/build/neebles-installer \
+            dist/neebles-installer
+
+          cp \
+            ui/auth-agent/build/neebles-auth-agent \
+            dist/neebles-auth-agent
+
+          cp \
+            scripts/install.sh \
+            dist/install.sh
+
+          ./scripts/build-client-data.sh \
+            dist/client-data.tar.gz \
+            client
+
+          chmod +x \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-auth-agent \
+            dist/install.sh
+
+          BACKEND_SHA="$(
+            sha256sum dist/neebles-backend |
+            awk '{print $1}'
+          )"
+
+          UI_SHA="$(
+            sha256sum dist/neebles-ui |
+            awk '{print $1}'
+          )"
+
+          INSTALLER_SHA="$(
+            sha256sum dist/neebles-installer |
+            awk '{print $1}'
+          )"
+
+          AUTH_AGENT_SHA="$(
+            sha256sum dist/neebles-auth-agent |
+            awk '{print $1}'
+          )"
+
+          CLIENT_DATA_SHA="$(
+            sha256sum dist/client-data.tar.gz |
+            awk '{print $1}'
+          )"
+
+          INSTALL_SHA="$(
+            sha256sum dist/install.sh |
+            awk '{print $1}'
+          )"
+
+          cat > dist/bootstrap.json <<EOF_BOOTSTRAP
+          {
+            "schema": 2,
+            "channel": "stable",
+            "stable": {
+              "version": "1.0.10",
+              "base_url": "https://github.com/krockzs/neebles-boss/releases/download/v1.0.10",
+              "assets": {
+                "backend": {
+                  "file": "neebles-backend",
+                  "sha256": "${BACKEND_SHA}"
+                },
+                "ui": {
+                  "file": "neebles-ui",
+                  "sha256": "${UI_SHA}"
+                },
+                "installer": {
+                  "file": "neebles-installer",
+                  "sha256": "${INSTALLER_SHA}"
+                },
+                "auth_agent": {
+                  "file": "neebles-auth-agent",
+                  "sha256": "${AUTH_AGENT_SHA}"
+                },
+                "client_data": {
+                  "file": "client-data.tar.gz",
+                  "sha256": "${CLIENT_DATA_SHA}"
+                },
+                "install": {
+                  "file": "install.sh",
+                  "sha256": "${INSTALL_SHA}"
+                }
+              }
+            }
+          }
+          EOF_BOOTSTRAP
+
+          sha256sum \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-auth-agent \
+            dist/client-data.tar.gz \
+            dist/install.sh \
+            dist/bootstrap.json \
+            | sed 's#  dist/#  #' \
+            | tee dist/SHA256SUMS
+
+      - name: Verify release payload
+        run: |
+          ./scripts/verify-release.py \
+            --dist dist \
+            --cargo-toml Cargo.toml
+
+      - name: Check GitHub CLI in container
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v gh
+          gh --version
+
+      - name: Publish v1.0.10 release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          cat > /tmp/neebles-release-notes.md <<'EOF_RELEASE_NOTES'
+          N.E.E.B.L.E.S. Boss 1.0.10 stable release.
+
+          Boss installation and runtime startup ordering update.
+
+          Changes:
+          - Permanent authorization agent is installed early in the Boss payload.
+          - Added persistent N.E.E.B.L.E.S. Boss Runtime system service.
+          - Boss Runtime starts immediately after a successful installation.
+          - neebles.sock and modules.sock are owned by the persistent Boss runtime.
+          - Tray Manager is started immediately in the active desktop session.
+          - Fresh installations no longer wait for the next login to start the tray.
+          - Client data payload now includes neebles-runtime.service.
+          - Installation ordering prepares Boss runtime before module operations.
+          - Boss UI, installer, runtime, tray and authorization agent aligned to 1.0.10.
+
+          Publishes the Rust Boss backend, Qt client UI, graphical installer,
+          N.E.E.B.L.E.S. authorization agent, complete client
+          data payload, privileged install script and Bootstrap Schema 2
+          manifest.
+          EOF_RELEASE_NOTES
+
+          if gh release view v1.0.10 >/dev/null 2>&1; then
+            echo "Existing v1.0.10 release found; reusing it as draft."
+
+            gh release edit v1.0.10 \
+              --draft \
+              --title "N.E.E.B.L.E.S. Boss v1.0.10" \
+              --notes-file /tmp/neebles-release-notes.md \
+              --target "${GITHUB_SHA}"
+
+            while IFS= read -r asset; do
+              [ -n "$asset" ] || continue
+              echo "Deleting existing asset: $asset"
+              gh release delete-asset v1.0.10 "$asset" --yes
+            done < <(
+              gh release view v1.0.10 \
+                --json assets \
+                --jq '.assets[].name'
+            )
+          else
+            echo "Creating v1.0.10 as draft."
+
+            gh release create v1.0.10 \
+              --draft \
+              --target "${GITHUB_SHA}" \
+              --title "N.E.E.B.L.E.S. Boss v1.0.10" \
+              --notes-file /tmp/neebles-release-notes.md
+          fi
+
+          for asset in \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-auth-agent \
+            dist/client-data.tar.gz \
+            dist/install.sh \
+            dist/bootstrap.json \
+            dist/SHA256SUMS
+          do
+            uploaded=false
+
+            for attempt in 1 2 3 4 5; do
+              echo "Uploading $asset - attempt $attempt/5"
+
+              if gh release upload v1.0.10 "$asset"; then
+                uploaded=true
+                break
+              fi
+
+              if [ "$attempt" -lt 5 ]; then
+                echo "Upload failed; waiting 15 seconds before retry."
+                sleep 15
+              fi
+            done
+
+            if [ "$uploaded" != true ]; then
+              echo "ERROR: failed to upload $asset after 5 attempts."
+              exit 1
+            fi
+          done
+
+          echo "=== VERIFY REMOTE ASSET SET ==="
+
+          REMOTE_COUNT="$(
+            gh release view v1.0.10 \
+              --json assets \
+              --jq '.assets | length'
+          )"
+
+          test "$REMOTE_COUNT" -eq 8
+
+          gh release view v1.0.10 \
+            --json assets \
+            --jq '.assets[].name' \
+            | sort
+
+          echo "Publishing v1.0.10."
+          gh release edit v1.0.10 --draft=false
