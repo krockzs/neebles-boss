@@ -2,7 +2,7 @@
   "schema": 1,
   "target": "neebles-boss",
   "channel": "stable",
-  "stable_version": "1.0.8",
+  "stable_version": "1.0.14",
   "checks": [
     {
       "id": "client-root",
@@ -24,7 +24,7 @@
       "path": "/opt/neebles/client/backend/neebles-backend",
       "required": true,
       "mode": "0755",
-      "sha256": "dc006f88e4efd4fd6df9db0f5a196a8f044ae2d3808f992e01d6eed361d74e67",
+      "sha256": "7678043b6248f1e622aafecad51f85d7ee983c1cc56486cee2faf1d5c3d9f7b5",
       "restore": {
         "source": "bootstrap",
         "asset": "backend"
@@ -43,7 +43,7 @@
       "path": "/opt/neebles/client/ui/neebles-ui",
       "required": true,
       "mode": "0755",
-      "sha256": "8cc228f22dfe42836a19ee3406b20c7c7b6560b8af95cfc1f2ea2879442beac3",
+      "sha256": "45695307367fd62a4431aa665e5710feaa6f147c487894b78d5a6c9b5f398a65",
       "restore": {
         "source": "bootstrap",
         "asset": "ui"
