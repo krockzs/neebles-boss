@@ -13,7 +13,7 @@ PlasmoidItem {
     property var installedModules: []
     property var strings: ({})
     property var callbacks: ({})
-    property string bossVersion: "1.0.14"
+    property string bossVersion: "1.0.15"
 
     LauncherBossEvents {
         id: bossEvents
@@ -24,6 +24,19 @@ PlasmoidItem {
         onHiddenLauncherModulesChanged:
             root.applyModuleFilter()
     }
+
+    /*
+     * Keep the applet physically provisioned at all times.
+     * Global Launcher OFF collapses only its visual panel footprint.
+     */
+    Layout.minimumWidth:
+        bossEvents.launcherEnabled ? 38 : 0
+
+    Layout.preferredWidth:
+        bossEvents.launcherEnabled ? 38 : 0
+
+    Layout.maximumWidth:
+        bossEvents.launcherEnabled ? 38 : 0
 
     function safeModuleId(value) {
         return /^[A-Za-z0-9._-]+$/.test(value)

@@ -166,6 +166,24 @@ checks = [
         "Installer always provisions Launcher and Spacer",
     ),
 
+    forbid(
+        "ui/installer/installercontroller.h",
+        "installLauncherIntoPanel(bool",
+        "Installer Launcher provisioning is independent of visual state",
+    ),
+
+    forbid(
+        "ui/installer/installercontroller.cpp",
+        "var enabled = %1;",
+        "Installer Launcher integration has no unresolved visibility placeholder",
+    ),
+
+    forbid(
+        "ui/installer/installercontroller.cpp",
+        'QStringLiteral("launcher_enabled")',
+        "Installer does not duplicate Launcher visibility configuration",
+    ),
+
     require(
         "ui/installer/installercontroller.cpp",
         "Tray infrastructure is permanent desktop runtime.",

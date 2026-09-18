@@ -440,6 +440,22 @@ if [[ -z "$DESTDIR" ]]; then
     find "$SETTINGS_DIR" -type f -exec chmod 0600 {} +
 fi
 
+DEACTIVATE_FILE="$SHARED_DIR/deactivate.json"
+
+if [[ -L "$DEACTIVATE_FILE" ]]; then
+    echo "Refusing symlinked deactivate registry: $DEACTIVATE_FILE" >&2
+    exit 1
+fi
+
+if [[ ! -e "$DEACTIVATE_FILE" ]]; then
+    printf '{}\n' > "$DEACTIVATE_FILE"
+elif [[ ! -f "$DEACTIVATE_FILE" ]]; then
+    echo "Deactivate registry is not a regular file: $DEACTIVATE_FILE" >&2
+    exit 1
+fi
+
+chmod 0600 "$DEACTIVATE_FILE"
+
 CLIENT_STAGE="$(mktemp -d "$TMP_DIR/client-install.XXXXXX")"
 chmod 0755 "$CLIENT_STAGE"
 

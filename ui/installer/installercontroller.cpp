@@ -391,63 +391,14 @@ void InstallerController::integrateDesktop()
      * Boss config is the authority for whether desktop surfaces
      * must be active. Do not duplicate its configuration parser here.
      */
-    QProcess configProcess;
-
-    configProcess.start(
-        QStringLiteral("/usr/local/bin/neebles"),
-        {
-            QStringLiteral("config"),
-            QStringLiteral("show")
-        }
-    );
-
-    bool configAvailable =
-        configProcess.waitForStarted(3000)
-        && configProcess.waitForFinished(5000)
-        && configProcess.exitStatus()
-            == QProcess::NormalExit
-        && configProcess.exitCode() == 0;
-
-    bool trayEnabled = true;
-    bool launcherEnabled = true;
-
-    if (configAvailable) {
-        const QJsonDocument document =
-            QJsonDocument::fromJson(
-                configProcess.readAllStandardOutput()
-            );
-
-        if (
-            document.isObject()
-            && document.object()
-                .value(
-                    QStringLiteral("tray_enabled")
-                ).isBool()
-            && document.object()
-                .value(
-                    QStringLiteral("launcher_enabled")
-                ).isBool()
-        ) {
-            trayEnabled =
-                document.object()
-                    .value(
-                        QStringLiteral("tray_enabled")
-                    ).toBool();
-
-            launcherEnabled =
-                document.object()
-                    .value(
-                        QStringLiteral("launcher_enabled")
-                    ).toBool();
-        } else {
-            configAvailable = false;
-        }
-    }
-
     /*
-     * A fresh installation defaults both surfaces to enabled.
-     * If an existing valid Boss config is present, its persisted
-     * user intent wins.
+     * Desktop surface visibility is runtime state owned by Boss.
+     *
+     * The installer provisions the permanent desktop infrastructure.
+     * Launcher, Spacer and Tray services then consume live settings.boss
+     * events and honor persisted user intent themselves.
+     *
+     * Do not duplicate Boss configuration parsing here.
      */
     QProcess::execute(
         QStringLiteral("/usr/bin/systemctl"),
@@ -500,11 +451,11 @@ void InstallerController::integrateDesktop()
         }
     );
 
-    installLauncherIntoPanel(launcherEnabled);
+    installLauncherIntoPanel();
 
 }
 
-void InstallerController::installLauncherIntoPanel(bool enabled)
+void InstallerController::installLauncherIntoPanel()
 {
     const QString packagePath =
         QStringLiteral(
@@ -552,7 +503,6 @@ void InstallerController::installLauncherIntoPanel(bool enabled)
 
     const QString script =
         QStringLiteral(R"JS(
-var enabled = %1;
 var ps = panels();
 
 /*

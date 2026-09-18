@@ -124,6 +124,13 @@ assert_file "$BOSS_EVENTS/qmldir"
 assert_dir "$ROOT/opt/neebles/shared/settings"
 assert_mode 700 "$ROOT/opt/neebles/shared/settings"
 
+assert_file "$ROOT/opt/neebles/shared/deactivate.json"
+assert_mode 600 "$ROOT/opt/neebles/shared/deactivate.json"
+grep -Fxq '{}' "$ROOT/opt/neebles/shared/deactivate.json" || {
+    echo "PACKAGING TEST INVALID: fresh deactivate registry is not empty" >&2
+    exit 1
+}
+
 assert_dir "$ROOT/opt/neebles/shared/cache/installers"
 assert_mode 755 "$ROOT/opt/neebles/shared/cache/installers"
 
@@ -207,6 +214,8 @@ touch "$ROOT/usr/share/plasma/plasmoids/org.neebles.spacer/obsolete-from-old-rel
 touch "$ROOT/opt/neebles/modules/must-survive-reinstall"
 touch "$ROOT/opt/neebles/shared/must-survive-reinstall"
 
+printf '{"test-module":{"resources":["runtime","tray"]}}\n' > "$ROOT/opt/neebles/shared/deactivate.json"
+
 # Regression: reinstall must repair a settings directory that
 # was left with permissions that are too broad.
 chmod 0755 "$ROOT/opt/neebles/shared/settings"
@@ -214,6 +223,12 @@ chmod 0755 "$ROOT/opt/neebles/shared/settings"
 run_install_directory
 
 assert_mode 700 "$ROOT/opt/neebles/shared/settings"
+
+grep -Fxq '{"test-module":{"resources":["runtime","tray"]}}' "$ROOT/opt/neebles/shared/deactivate.json" || {
+    echo "PACKAGING TEST INVALID: reinstall overwrote deactivate registry" >&2
+    exit 1
+}
+assert_mode 600 "$ROOT/opt/neebles/shared/deactivate.json"
 
 [[ ! -e "$CLIENT/assets/obsolete-from-old-release.txt" ]] || {
     echo "PACKAGING TEST INVALID: stale client-data survived reinstall" >&2

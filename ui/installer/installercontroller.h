@@ -47,7 +47,7 @@ private:
     void setStatus(const QString &value);
     void appendLog(const QString &line);
     void integrateDesktop();
-    void installLauncherIntoPanel(bool enabled);
+    void installLauncherIntoPanel();
     void consumeLine(const QString &line);
     QString authorizationPath() const;
     QString text(const QString &key) const;

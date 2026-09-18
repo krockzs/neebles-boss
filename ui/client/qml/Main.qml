@@ -88,6 +88,7 @@ ApplicationWindow {
      * Única instancia global del diálogo de desinstalación.
      */
     property string pendingUninstallModule: ""
+    property bool pendingUninstallHasLocalState: false
 
     function asset(name) {
         if (typeof boss !== "undefined" && boss.assetUrl)
@@ -1267,17 +1268,13 @@ ApplicationWindow {
                                                         if (state < 0)
                                                             return
 
-                                                        if (state === 0) {
-                                                            boss.uninstallModule(
-                                                                modelData.name,
-                                                                false
-                                                            )
-                                                        } else {
-                                                            root.pendingUninstallModule =
-                                                                modelData.name
+                                                        root.pendingUninstallModule =
+                                                            modelData.name
 
-                                                            uninstallSettingsDialog.open()
-                                                        }
+                                                        root.pendingUninstallHasLocalState =
+                                                            state === 1
+
+                                                        uninstallSettingsDialog.open()
                                                     } else {
                                                         boss.installModule(
                                                             modelData.name
@@ -2014,6 +2011,9 @@ ApplicationWindow {
 
                 Layout.fillWidth: true
 
+                visible:
+                    root.pendingUninstallHasLocalState
+
                 text:
                     root.t(
                         "modules.uninstall_remove_local_state"
@@ -2137,6 +2137,7 @@ ApplicationWindow {
         onClosed: {
             uninstallRemoveLocalState.checked = false
             root.pendingUninstallModule = ""
+            root.pendingUninstallHasLocalState = false
         }
     }
 
