@@ -1256,7 +1256,12 @@ int main(
         &trayClient,
         &TraySocketClient::hostShowRequested,
         window,
-        [window]() {
+        [window, &bossEvents]() {
+            if (!bossEvents.trayEnabled()) {
+                window->hide();
+                return;
+            }
+
             window->show();
             window->raise();
             window->requestActivate();
@@ -1276,7 +1281,12 @@ int main(
         &trayClient,
         &TraySocketClient::hostToggleRequested,
         window,
-        [window]() {
+        [window, &bossEvents]() {
+            if (!bossEvents.trayEnabled()) {
+                window->hide();
+                return;
+            }
+
             if (window->isVisible()) {
                 window->hide();
                 return;
@@ -1285,6 +1295,17 @@ int main(
             window->show();
             window->raise();
             window->requestActivate();
+        }
+    );
+
+    QObject::connect(
+        &bossEvents,
+        &BossEventClient::trayEnabledChanged,
+        window,
+        [window, &bossEvents]() {
+            if (!bossEvents.trayEnabled()) {
+                window->hide();
+            }
         }
     );
 

@@ -1,11 +1,26 @@
 import QtQuick
 import QtQuick.Layouts
 import org.kde.plasma.plasmoid
+import NEEBLES.BossEvents 1.0
 
 PlasmoidItem {
-    Layout.minimumWidth: 20
-    Layout.preferredWidth: 20
-    Layout.maximumWidth: 20
+    id: root
+
+    LauncherBossEvents {
+        id: bossEvents
+
+        Component.onCompleted:
+            connectToBoss()
+    }
+
+    Layout.minimumWidth:
+        bossEvents.launcherEnabled ? 20 : 0
+
+    Layout.preferredWidth:
+        bossEvents.launcherEnabled ? 20 : 0
+
+    Layout.maximumWidth:
+        bossEvents.launcherEnabled ? 20 : 0
 
     Layout.minimumHeight: 1
     Layout.preferredHeight: 38
@@ -13,7 +28,12 @@ PlasmoidItem {
     preferredRepresentation: fullRepresentation
 
     fullRepresentation: Item {
-        implicitWidth: 20
+        implicitWidth:
+            bossEvents.launcherEnabled ? 20 : 0
+
         implicitHeight: 38
+
+        visible:
+            bossEvents.launcherEnabled
     }
 }

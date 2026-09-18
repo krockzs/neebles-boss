@@ -81,6 +81,38 @@ fn start_boss() -> Result<(), String> {
         .unwrap_or_else(|| "Boss rejected start request".to_string()))
 }
 
+fn notify_boss_config_changed() {
+    let request = ExecutionRequest {
+        target: "boss".to_string(),
+        action: Some("config-changed".to_string()),
+        args: Vec::new(),
+        context: ExecutionContext {
+            caller: "config".to_string(),
+        },
+    };
+
+    match ipc::request(&request) {
+        Ok(response) => {
+            if !response.ok {
+                let message = response
+                    .error
+                    .map(|error| error.message)
+                    .unwrap_or_else(|| "Boss rejected config-changed request".to_string());
+
+                eprintln!(
+                    "N.E.E.B.L.E.S.: config persisted; live Boss notification rejected: {message}"
+                );
+            }
+        }
+
+        Err(error) => {
+            eprintln!(
+                "N.E.E.B.L.E.S.: config persisted; live Boss notification unavailable: {error}"
+            );
+        }
+    }
+}
+
 fn request_json(args: &[String]) -> i32 {
     let Some(raw) = args.get(1) else {
         eprintln!("N.E.E.B.L.E.S.: --request-json requires a JSON request");
@@ -133,7 +165,11 @@ fn config_command(args: &[String]) -> i32 {
                 _ => return fail(format!("unknown Boss config key: {key}")),
             };
             match response {
-                Ok(config) => print_json(&config),
+                Ok(config) => {
+                    notify_boss_config_changed();
+                    print_json(&config)
+                }
+
                 Err(error) => fail(error),
             }
         }
@@ -185,7 +221,11 @@ fn config_command(args: &[String]) -> i32 {
                 match tray::client::request(&request) {
                     Ok(tray::protocol::TrayMessage::Ack { .. }) => {
                         match config::load_or_initialize() {
-                            Ok(config) => print_json(&config),
+                            Ok(config) => {
+                                notify_boss_config_changed();
+                                print_json(&config)
+                            }
+
                             Err(error) => fail(error),
                         }
                     }
@@ -214,7 +254,11 @@ fn config_command(args: &[String]) -> i32 {
                 }
 
                 match config::set_module_visibility(surface, name, visible) {
-                    Ok(config) => print_json(&config),
+                    Ok(config) => {
+                        notify_boss_config_changed();
+                        print_json(&config)
+                    }
+
                     Err(error) => fail(error),
                 }
             } else {

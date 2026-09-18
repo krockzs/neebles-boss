@@ -9,18 +9,20 @@ import NEEBLES.BossEvents 1.0
 PlasmoidItem {
     id: root
 
-    property bool launcherEnabled: true
     property var modules: []
+    property var installedModules: []
     property var strings: ({})
     property var callbacks: ({})
-    property string bossVersion: "1.0.7"
-    property var hiddenLauncherModules: []
+    property string bossVersion: "1.0.14"
 
     LauncherBossEvents {
         id: bossEvents
 
         Component.onCompleted:
             connectToBoss()
+
+        onHiddenLauncherModulesChanged:
+            root.applyModuleFilter()
     }
 
     function safeModuleId(value) {
@@ -32,25 +34,25 @@ PlasmoidItem {
         runner.connectSource(command)
     }
 
-    function refreshRuntimeState() {
-        exec("neebles config show", function(output) {
-            try {
-                const cfg = JSON.parse(output)
-                launcherEnabled = cfg.launcher_enabled !== false
-                hiddenLauncherModules =
-                    Array.isArray(cfg.hidden_launcher_modules)
-                    ? cfg.hidden_launcher_modules
-                    : []
-            } catch (e) {
-                launcherEnabled = true
-                hiddenLauncherModules = []
+    function applyModuleFilter() {
+        modules = installedModules.filter(
+            function(module) {
+                return (
+                    typeof module.launcher_action === "string"
+                    && module.launcher_action.length > 0
+                    && root.safeModuleId(module.name)
+                    && root.safeModuleId(
+                        module.launcher_action
+                    )
+                    && bossEvents.hiddenLauncherModules.indexOf(
+                        module.name
+                    ) === -1
+                )
             }
-        })
+        )
     }
 
     function refresh() {
-        refreshRuntimeState()
-
         exec("neebles --version", function(output) {
             const value = output.trim()
             const match = value.match(/([0-9]+\.[0-9]+\.[0-9]+)/)
@@ -71,18 +73,14 @@ PlasmoidItem {
             try {
                 const installed = JSON.parse(output)
 
-                modules = installed.filter(function(module) {
-                    return (
-                        typeof module.launcher_action === "string"
-                        && module.launcher_action.length > 0
-                        && root.safeModuleId(module.name)
-                        && root.safeModuleId(module.launcher_action)
-                        && root.hiddenLauncherModules.indexOf(
-                            module.name
-                        ) === -1
-                    )
-                })
+                installedModules =
+                    Array.isArray(installed)
+                    ? installed
+                    : []
+
+                applyModuleFilter()
             } catch (e) {
+                installedModules = []
                 modules = []
             }
         })
@@ -99,13 +97,6 @@ PlasmoidItem {
     }
 
     Component.onCompleted: refresh()
-
-    Timer {
-        interval: 1500
-        running: true
-        repeat: true
-        onTriggered: root.refreshRuntimeState()
-    }
 
     Plasma5Support.DataSource {
         id: runner
@@ -125,9 +116,9 @@ PlasmoidItem {
     preferredRepresentation: compactRepresentation
 
     compactRepresentation: Item {
-        implicitWidth: root.launcherEnabled ? 38 : 0
+        implicitWidth: bossEvents.launcherEnabled ? 38 : 0
         implicitHeight: 38
-        visible: root.launcherEnabled
+        visible: bossEvents.launcherEnabled
 
         Image {
             anchors.fill: parent

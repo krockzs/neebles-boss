@@ -448,6 +448,50 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
             Ok(()) => ExecutionResponse::ok(None),
             Err(error) => ExecutionResponse::fail(1, "ui_launch", error),
         },
+
+        Some("config-changed") => match config::load_or_initialize() {
+            Ok(config) => {
+                let tray_visible = config.tray_enabled;
+
+                let payload = match serde_json::to_value(config) {
+                    Ok(payload) => payload,
+
+                    Err(error) => {
+                        return ExecutionResponse::fail(
+                            1,
+                            "config_event_serialization",
+                            format!("could not serialize Boss config event: {error}"),
+                        );
+                    }
+                };
+
+                crate::ipc::broadcast_event("settings.boss", "state_changed", payload);
+
+                match crate::tray::client::request(
+                    &crate::tray::protocol::TrayMessage::SetRootVisibility {
+                        visible: tray_visible,
+                    },
+                ) {
+                    Ok(crate::tray::protocol::TrayMessage::Ack { .. }) => {}
+
+                    Ok(response) => {
+                        eprintln!(
+                            "N.E.E.B.L.E.S.: unexpected root tray visibility response: {response:?}"
+                        );
+                    }
+
+                    Err(error) => {
+                        eprintln!(
+                            "N.E.E.B.L.E.S.: Boss settings updated; live root tray sync unavailable: {error}"
+                        );
+                    }
+                }
+
+                ExecutionResponse::ok(None)
+            }
+
+            Err(error) => ExecutionResponse::fail(1, "config_event", error),
+        },
         Some("local-installer-audit") => match local_installer::audit_dictionary() {
             Ok(result) => match serde_json::to_value(result) {
                 Ok(value) => ExecutionResponse::ok(Some(value)),

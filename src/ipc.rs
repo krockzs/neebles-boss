@@ -457,6 +457,31 @@ fn handle_subscription(
             .map_err(|error| format!("could not flush Boss UI state snapshot: {error}"))?;
     }
 
+    if topic_matches(&topics, "settings.boss") {
+        let config = config::load_or_initialize()?;
+
+        let snapshot = BossStreamMessage::Event {
+            topic: "settings.boss".to_string(),
+            event: "state_snapshot".to_string(),
+            payload: serde_json::to_value(config)
+                .map_err(|error| format!("could not serialize Boss settings snapshot: {error}"))?,
+        };
+
+        let mut snapshot_payload = serde_json::to_vec(&snapshot).map_err(|error| {
+            format!("could not serialize Boss settings stream snapshot: {error}")
+        })?;
+
+        snapshot_payload.push(b'\n');
+
+        stream
+            .write_all(&snapshot_payload)
+            .map_err(|error| format!("could not write Boss settings snapshot: {error}"))?;
+
+        stream
+            .flush()
+            .map_err(|error| format!("could not flush Boss settings snapshot: {error}"))?;
+    }
+
     /*
      * Keep this worker alive until the subscriber disconnects.
      *

@@ -457,79 +457,48 @@ void InstallerController::integrateDesktop()
         }
     );
 
-    if (trayEnabled) {
-        QProcess::execute(
-            QStringLiteral("/usr/bin/systemctl"),
-            {
-                QStringLiteral("--user"),
-                QStringLiteral("enable"),
-                QStringLiteral("--now"),
-                QStringLiteral(
-                    "neebles-tray-manager.service"
-                )
-            }
-        );
+    /*
+     * Tray infrastructure is permanent desktop runtime.
+     *
+     * tray_enabled controls only the root visual surface.
+     * Manager, Qt Host and SNI Host must remain available
+     * regardless of the persisted visual state.
+     */
+    QProcess::execute(
+        QStringLiteral("/usr/bin/systemctl"),
+        {
+            QStringLiteral("--user"),
+            QStringLiteral("enable"),
+            QStringLiteral("--now"),
+            QStringLiteral(
+                "neebles-tray-manager.service"
+            )
+        }
+    );
 
-        QProcess::execute(
-            QStringLiteral("/usr/bin/systemctl"),
-            {
-                QStringLiteral("--user"),
-                QStringLiteral("enable"),
-                QStringLiteral("--now"),
-                QStringLiteral(
-                    "neebles-tray-host.service"
-                )
-            }
-        );
+    QProcess::execute(
+        QStringLiteral("/usr/bin/systemctl"),
+        {
+            QStringLiteral("--user"),
+            QStringLiteral("enable"),
+            QStringLiteral("--now"),
+            QStringLiteral(
+                "neebles-tray-host.service"
+            )
+        }
+    );
 
-        QProcess::execute(
-            QStringLiteral("/usr/bin/systemctl"),
-            {
-                QStringLiteral("--user"),
-                QStringLiteral("enable"),
-                QStringLiteral("--now"),
-                QStringLiteral(
-                    "neebles-tray-sni-host.service"
-                )
-            }
-        );
-    } else {
-        QProcess::execute(
-            QStringLiteral("/usr/bin/systemctl"),
-            {
-                QStringLiteral("--user"),
-                QStringLiteral("disable"),
-                QStringLiteral("--now"),
-                QStringLiteral(
-                    "neebles-tray-sni-host.service"
-                )
-            }
-        );
-
-        QProcess::execute(
-            QStringLiteral("/usr/bin/systemctl"),
-            {
-                QStringLiteral("--user"),
-                QStringLiteral("disable"),
-                QStringLiteral("--now"),
-                QStringLiteral(
-                    "neebles-tray-host.service"
-                )
-            }
-        );
-
-        QProcess::execute(
-            QStringLiteral("/usr/bin/systemctl"),
-            {
-                QStringLiteral("--user"),
-                QStringLiteral("disable"),
-                QStringLiteral("--now"),
-                QStringLiteral(
-                    "neebles-tray-manager.service"
-                )
-            }
-        );
-    }
+    QProcess::execute(
+        QStringLiteral("/usr/bin/systemctl"),
+        {
+            QStringLiteral("--user"),
+            QStringLiteral("enable"),
+            QStringLiteral("--now"),
+            QStringLiteral(
+                "neebles-tray-sni-host.service"
+            )
+        }
+    );
 
     installLauncherIntoPanel(launcherEnabled);
 
@@ -629,11 +598,14 @@ for (var p = 0; p < ps.length; ++p) {
         break;
 }
 
-if (enabled && targetPanel) {
+if (targetPanel) {
     /*
      * Physical positioning is intentional:
      *
      * [ Kickoff ][ N.E.E.B.L.E.S. ][ 20 px spacer ][ rest ]
+     *
+     * Launcher and spacer are always installed in Plasma.
+     * Their visible state is controlled live by settings.boss.
      */
     var launcherX = kickoffX + kickoffWidth + 4;
 
@@ -653,11 +625,7 @@ if (enabled && targetPanel) {
         38
     );
 }
-)JS").arg(
-        enabled
-            ? QStringLiteral("true")
-            : QStringLiteral("false")
-    );
+)JS");
 
     QProcess process;
 

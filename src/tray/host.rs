@@ -244,12 +244,32 @@ fn reconcile_item(
     Ok(())
 }
 
+fn reconcile_root_item(root_item: &mut Option<HostedItem>, visible: bool) -> Result<(), String> {
+    if visible {
+        if root_item.is_none() {
+            *root_item = Some(create_root_item()?);
+        }
+
+        return Ok(());
+    }
+
+    root_item.take();
+
+    Ok(())
+}
+
 fn process_message(
     message: TrayMessage,
+    root_item: &mut Option<HostedItem>,
     items: &mut BTreeMap<String, HostedItem>,
 ) -> Result<(), String> {
     match message {
-        TrayMessage::Snapshot { trays } => {
+        TrayMessage::Snapshot {
+            trays,
+            root_visible,
+        } => {
+            reconcile_root_item(root_item, root_visible)?;
+
             items.clear();
 
             for tray in trays {
@@ -258,6 +278,8 @@ fn process_message(
 
             Ok(())
         }
+
+        TrayMessage::RootVisibility { visible } => reconcile_root_item(root_item, visible),
 
         TrayMessage::Event { event } => match event {
             TrayEvent::Registered { tray } | TrayEvent::Updated { tray } => {
@@ -298,10 +320,12 @@ pub fn run() -> Result<(), String> {
     let mut reader = BufReader::new(stream);
 
     /*
-     * The root N.E.E.B.L.E.S. SNI is infrastructure, not a module.
-     * Keep its D-Bus connection alive independently from module items.
+     * Root SNI lifetime is visual state, not process lifetime.
+     *
+     * The subscription snapshot decides whether the root item
+     * must exist. Module items remain independent.
      */
-    let _root_item = create_root_item()?;
+    let mut root_item: Option<HostedItem> = None;
 
     let mut items = BTreeMap::<String, HostedItem>::new();
 
@@ -325,6 +349,6 @@ pub fn run() -> Result<(), String> {
         let message: TrayMessage = serde_json::from_str(line.trim())
             .map_err(|error| format!("invalid Tray Host message: {error}"))?;
 
-        process_message(message, &mut items)?;
+        process_message(message, &mut root_item, &mut items)?;
     }
 }

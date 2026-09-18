@@ -57,285 +57,6 @@ BossController::BossController(QObject *parent)
 }
 
 
-static bool applyLauncherPanelState(bool enabled)
-{
-    QString qdbus;
-
-    if (QFileInfo::exists(QStringLiteral("/usr/bin/qdbus6")))
-        qdbus = QStringLiteral("/usr/bin/qdbus6");
-    else if (QFileInfo::exists(QStringLiteral("/usr/bin/qdbus")))
-        qdbus = QStringLiteral("/usr/bin/qdbus");
-    else
-        return false;
-
-    QString script = QStringLiteral(R"JS(
-var enabled = %1;
-var ps = panels();
-
-/*
- * Always remove current N.E.E.B.L.E.S. panel instances first.
- */
-for (var p = 0; p < ps.length; ++p) {
-    var ws = ps[p].widgets();
-
-    for (var i = ws.length - 1; i >= 0; --i) {
-        if (
-            ws[i].type == "org.neebles.launcher"
-            || ws[i].type == "org.neebles.spacer"
-        ) {
-            ws[i].remove();
-        }
-    }
-}
-
-if (enabled) {
-    var targetPanel = null;
-    var kickoffX = 0;
-    var kickoffWidth = 0;
-
-    for (var p = 0; p < ps.length; ++p) {
-        var ws = ps[p].widgets();
-
-        for (var i = 0; i < ws.length; ++i) {
-            if (
-                ws[i].type == "org.kde.plasma.kickoff"
-                || ws[i].type == "org.kde.plasma.kicker"
-            ) {
-                targetPanel = ps[p];
-                kickoffX = ws[i].geometry.x;
-                kickoffWidth = ws[i].geometry.width;
-                break;
-            }
-        }
-
-        if (targetPanel)
-            break;
-    }
-
-    if (targetPanel) {
-        var launcherX = kickoffX + kickoffWidth + 4;
-
-        targetPanel.addWidget(
-            "org.neebles.launcher",
-            launcherX,
-            16,
-            38,
-            38
-        );
-
-        targetPanel.addWidget(
-            "org.neebles.spacer",
-            launcherX + 38,
-            16,
-            20,
-            38
-        );
-    }
-}
-)JS").arg(enabled ? QStringLiteral("true")
-                  : QStringLiteral("false"));
-
-    QProcess process;
-
-    process.start(
-        qdbus,
-        {
-            QStringLiteral("org.kde.plasmashell"),
-            QStringLiteral("/PlasmaShell"),
-            QStringLiteral(
-                "org.kde.PlasmaShell.evaluateScript"
-            ),
-            script
-        }
-    );
-
-    if (!process.waitForStarted(3000))
-        return false;
-
-    if (!process.waitForFinished(10000))
-        return false;
-
-    return process.exitStatus() == QProcess::NormalExit
-        && process.exitCode() == 0;
-}
-
-static bool applyTrayServiceState(
-    const QString &systemctl,
-    const QString &service,
-    bool enabled
-)
-{
-    QProcess process;
-
-    process.start(
-        systemctl,
-        {
-            QStringLiteral("--user"),
-
-            enabled
-                ? QStringLiteral("enable")
-                : QStringLiteral("disable"),
-
-            QStringLiteral("--now"),
-
-            service
-        }
-    );
-
-    if (
-        !process.waitForStarted(
-            3000
-        )
-    ) {
-        return false;
-    }
-
-    if (
-        !process.waitForFinished(
-            10000
-        )
-    ) {
-        process.kill();
-        process.waitForFinished();
-
-        return false;
-    }
-
-    return
-        process.exitStatus()
-            == QProcess::NormalExit
-        && process.exitCode() == 0;
-}
-
-static bool applyTrayState(
-    bool enabled
-)
-{
-    QString systemctl;
-
-    if (
-        QFileInfo::exists(
-            QStringLiteral(
-                "/usr/bin/systemctl"
-            )
-        )
-    ) {
-        systemctl =
-            QStringLiteral(
-                "/usr/bin/systemctl"
-            );
-    } else {
-        systemctl =
-            QStringLiteral(
-                "systemctl"
-            );
-    }
-
-    const QString manager =
-        QStringLiteral(
-            "neebles-tray-manager.service"
-        );
-
-    const QString host =
-        QStringLiteral(
-            "neebles-tray-host.service"
-        );
-
-    const QString sniHost =
-        QStringLiteral(
-            "neebles-tray-sni-host.service"
-        );
-
-    /*
-     * The Tray is one user-facing surface composed of three services.
-     *
-     * ON:
-     *   Manager first, because it owns tray.sock.
-     *   Qt Host second, because it consumes tray.sock.
-     *   SNI Host third, because it integrates with Plasma's
-     *   StatusNotifier infrastructure.
-     *
-     * OFF:
-     *   SNI Host first.
-     *   Qt Host second.
-     *   Manager last.
-     */
-    if (enabled) {
-        if (
-            !applyTrayServiceState(
-                systemctl,
-                manager,
-                true
-            )
-        ) {
-            return false;
-        }
-
-        if (
-            !applyTrayServiceState(
-                systemctl,
-                host,
-                true
-            )
-        ) {
-            applyTrayServiceState(
-                systemctl,
-                manager,
-                false
-            );
-
-            return false;
-        }
-
-        if (
-            !applyTrayServiceState(
-                systemctl,
-                sniHost,
-                true
-            )
-        ) {
-            applyTrayServiceState(
-                systemctl,
-                host,
-                false
-            );
-
-            applyTrayServiceState(
-                systemctl,
-                manager,
-                false
-            );
-
-            return false;
-        }
-
-        return true;
-    }
-
-    const bool sniHostOk =
-        applyTrayServiceState(
-            systemctl,
-            sniHost,
-            false
-        );
-
-    const bool hostOk =
-        applyTrayServiceState(
-            systemctl,
-            host,
-            false
-        );
-
-    const bool managerOk =
-        applyTrayServiceState(
-            systemctl,
-            manager,
-            false
-        );
-
-    return sniHostOk && hostOk && managerOk;
-}
-
 QString BossController::commandPath() const
 {
     if (
@@ -1377,7 +1098,6 @@ void BossController::saveConfig(const QString &language,
                                 bool launcherEnabled,
                                 bool normalNotifications)
 {
-    const bool launcherWasEnabled = m_launcherEnabled;
     const bool notificationsWereEnabled = m_normalNotifications;
 
     setBusy(true);
@@ -1461,21 +1181,11 @@ void BossController::saveConfig(const QString &language,
 
     if (ok) {
         /*
-         * Launcher is a real Plasma panel integration:
-         * OFF removes launcher + spacer.
-         * ON recreates both beside Kickoff.
+         * Launcher visibility is driven live by settings.boss.
+         *
+         * The Plasma launcher and spacer remain installed and alive.
+         * ON/OFF must never destroy or recreate panel widgets.
          */
-        if (launcherEnabled != launcherWasEnabled) {
-            if (!applyLauncherPanelState(launcherEnabled))
-                setStatusText(
-                    text(
-                        QStringLiteral(
-                            "launcher.update_failed"
-                        )
-                    )
-                );
-        }
-
         reload();
 
         if (statusText().isEmpty()
@@ -2123,12 +1833,6 @@ void BossController::saveConfigValue(
     const QString normalized =
         value.trimmed();
 
-    const bool trayWasEnabled =
-        m_trayEnabled;
-
-    const bool launcherWasEnabled =
-        m_launcherEnabled;
-
     const bool notificationsWereEnabled =
         m_normalNotifications;
 
@@ -2201,82 +1905,11 @@ void BossController::saveConfigValue(
     }
 
     /*
-     * Tray Manager:
+     * Tray visibility is driven live by settings.boss.
      *
-     * El setting persistido es la intención del usuario.
-     * El servicio real debe reflejar inmediatamente
-     * ese mismo estado.
-     *
-     * ON:
-     *   enable + start
-     *
-     * OFF:
-     *   disable + stop
+     * Manager, Qt Host and SNI Host remain installed and running.
+     * tray_enabled controls only the user-facing root surface.
      */
-    if (
-        key
-            == QStringLiteral(
-                "tray_enabled"
-            )
-    ) {
-        const bool enabled =
-            normalized
-                == QStringLiteral("true");
-
-        if (
-            enabled
-            != trayWasEnabled
-        ) {
-            if (
-                !applyTrayState(
-                    enabled
-                )
-            ) {
-                setStatusText(
-                    text(
-                        QStringLiteral(
-                            "common.error"
-                        )
-                    )
-                );
-            }
-        }
-    }
-
-
-    /*
-     * Launcher:
-     * mantener sincronizado estado lógico y panel Plasma.
-     */
-    if (
-        key
-            == QStringLiteral(
-                "launcher_enabled"
-            )
-    ) {
-        const bool enabled =
-            normalized
-                == QStringLiteral("true");
-
-        if (
-            enabled
-            != launcherWasEnabled
-        ) {
-            if (
-                !applyLauncherPanelState(
-                    enabled
-                )
-            ) {
-                setStatusText(
-                    text(
-                        QStringLiteral(
-                            "launcher.update_failed"
-                        )
-                    )
-                );
-            }
-        }
-    }
 
     /*
      * ON:

@@ -15,15 +15,22 @@ fn ensure_object(value: &Value, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_settings_directory_policy(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path)
-        .map_err(|error| format!("could not create {}: {error}", path.display()))?;
+fn apply_owner_policy(
+    path: &Path,
+    uid: libc::uid_t,
+    gid: libc::gid_t,
+    label: &str,
+) -> Result<(), String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
 
-    let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+    if metadata.uid() == uid && metadata.gid() == gid {
+        return Ok(());
+    }
 
     let raw_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
         format!(
-            "settings directory path contains an invalid NUL byte: {}",
+            "{label} path contains an invalid NUL byte: {}",
             path.display()
         )
     })?;
@@ -32,11 +39,22 @@ fn ensure_settings_directory_policy(path: &Path) -> Result<(), String> {
 
     if result != 0 {
         return Err(format!(
-            "could not assign settings directory {} to desktop user {uid}:{gid}: {}",
+            "could not assign {label} {} to {uid}:{gid}: {}",
             path.display(),
             std::io::Error::last_os_error()
         ));
     }
+
+    Ok(())
+}
+
+fn ensure_settings_directory_policy(path: &Path) -> Result<(), String> {
+    fs::create_dir_all(path)
+        .map_err(|error| format!("could not create {}: {error}", path.display()))?;
+
+    let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+
+    apply_owner_policy(path, uid, gid, "settings directory")?;
 
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
         format!(
@@ -50,25 +68,12 @@ fn apply_settings_file_policy(path: &Path, parent: &Path) -> Result<(), String> 
     let parent_metadata = fs::metadata(parent)
         .map_err(|error| format!("could not inspect {}: {error}", parent.display()))?;
 
-    let uid = parent_metadata.uid();
-    let gid = parent_metadata.gid();
-
-    let raw_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
-        format!(
-            "settings path contains an invalid NUL byte: {}",
-            path.display()
-        )
-    })?;
-
-    let result = unsafe { libc::chown(raw_path.as_ptr(), uid as libc::uid_t, gid as libc::gid_t) };
-
-    if result != 0 {
-        return Err(format!(
-            "could not assign settings file {} to {uid}:{gid}: {}",
-            path.display(),
-            std::io::Error::last_os_error()
-        ));
-    }
+    apply_owner_policy(
+        path,
+        parent_metadata.uid(),
+        parent_metadata.gid(),
+        "settings file",
+    )?;
 
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
         .map_err(|error| format!("could not secure settings file {}: {error}", path.display()))

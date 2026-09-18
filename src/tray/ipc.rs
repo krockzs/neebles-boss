@@ -808,6 +808,28 @@ fn process_message(
             ack(writer, "set_visibility", Some(tray_id))
         }
 
+        TrayMessage::SetRootVisibility { visible } => {
+            assert_session_peer(peer)?;
+
+            if registered_tray.is_some() {
+                return Err("tray providers cannot change root tray visibility".to_string());
+            }
+
+            if *subscribed {
+                return Err(
+                    "tray subscriber connections cannot change root tray visibility".to_string(),
+                );
+            }
+
+            broadcast_host_command(&TrayMessage::RootVisibility { visible });
+
+            if !visible {
+                broadcast_host_command(&TrayMessage::HostHide);
+            }
+
+            ack(writer, "set_root_visibility", None)
+        }
+
         TrayMessage::StopProvider { tray_id } => {
             assert_lifecycle_peer(peer)?;
 
@@ -866,7 +888,15 @@ fn process_message(
                 .map_err(|_| "tray manager lock poisoned".to_string())?
                 .list();
 
-            write_message(writer, &TrayMessage::Snapshot { trays })
+            let root_visible = config::load_or_initialize()?.tray_enabled;
+
+            write_message(
+                writer,
+                &TrayMessage::Snapshot {
+                    trays,
+                    root_visible,
+                },
+            )
         }
 
         command @ TrayMessage::HostShow
@@ -907,7 +937,15 @@ fn process_message(
                 .map_err(|_| "tray manager lock poisoned".to_string())?
                 .list();
 
-            write_message(writer, &TrayMessage::Snapshot { trays })
+            let root_visible = config::load_or_initialize()?.tray_enabled;
+
+            write_message(
+                writer,
+                &TrayMessage::Snapshot {
+                    trays,
+                    root_visible,
+                },
+            )
         }
 
         TrayMessage::Get { tray_id } => {
@@ -951,6 +989,7 @@ fn process_message(
 
         TrayMessage::Ack { .. }
         | TrayMessage::Snapshot { .. }
+        | TrayMessage::RootVisibility { .. }
         | TrayMessage::Event { .. }
         | TrayMessage::Record { .. }
         | TrayMessage::SettingsValue { .. }

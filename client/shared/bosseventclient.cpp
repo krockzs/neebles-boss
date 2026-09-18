@@ -66,6 +66,21 @@ QString BossEventClient::bossUiState() const
     return m_bossUiState;
 }
 
+bool BossEventClient::launcherEnabled() const
+{
+    return m_launcherEnabled;
+}
+
+bool BossEventClient::trayEnabled() const
+{
+    return m_trayEnabled;
+}
+
+QStringList BossEventClient::hiddenLauncherModules() const
+{
+    return m_hiddenLauncherModules;
+}
+
 QString BossEventClient::socketPath() const
 {
     const QString overridePath =
@@ -132,7 +147,8 @@ void BossEventClient::sendSubscribe()
         {
             QStringLiteral("args"),
             QJsonArray{
-                QStringLiteral("boss-ui")
+                QStringLiteral("boss-ui"),
+                QStringLiteral("settings.boss")
             }
         },
         {
@@ -179,6 +195,48 @@ void BossEventClient::setBossUiState(
     emit bossUiStateChanged();
 }
 
+void BossEventClient::setLauncherEnabled(
+    bool enabled
+)
+{
+    if (m_launcherEnabled == enabled) {
+        return;
+    }
+
+    m_launcherEnabled = enabled;
+
+    emit launcherEnabledChanged();
+}
+
+void BossEventClient::setTrayEnabled(
+    bool enabled
+)
+{
+    if (m_trayEnabled == enabled) {
+        return;
+    }
+
+    m_trayEnabled = enabled;
+
+    emit trayEnabledChanged();
+}
+
+void BossEventClient::setHiddenLauncherModules(
+    const QStringList &modules
+)
+{
+    if (
+        m_hiddenLauncherModules
+        == modules
+    ) {
+        return;
+    }
+
+    m_hiddenLauncherModules = modules;
+
+    emit hiddenLauncherModulesChanged();
+}
+
 void BossEventClient::processLine(
     const QByteArray &line
 )
@@ -219,13 +277,6 @@ void BossEventClient::processLine(
             QStringLiteral("topic")
         ).toString();
 
-    if (
-        topic
-        != QStringLiteral("boss-ui")
-    ) {
-        return;
-    }
-
     const QString event =
         message.value(
             QStringLiteral("event")
@@ -244,17 +295,84 @@ void BossEventClient::processLine(
         return;
     }
 
-    const QString state =
+    const QJsonObject payload =
         message.value(
             QStringLiteral("payload")
-        )
-        .toObject()
-        .value(
-            QStringLiteral("state")
-        )
-        .toString();
+        ).toObject();
 
-    setBossUiState(state);
+    if (
+        topic
+            == QStringLiteral("boss-ui")
+    ) {
+        setBossUiState(
+            payload.value(
+                QStringLiteral("state")
+            ).toString()
+        );
+
+        return;
+    }
+
+    if (
+        topic
+            == QStringLiteral("settings.boss")
+    ) {
+        if (
+            payload.contains(
+                QStringLiteral("launcher_enabled")
+            )
+        ) {
+            setLauncherEnabled(
+                payload.value(
+                    QStringLiteral("launcher_enabled")
+                ).toBool(true)
+            );
+        }
+
+        if (
+            payload.contains(
+                QStringLiteral("tray_enabled")
+            )
+        ) {
+            setTrayEnabled(
+                payload.value(
+                    QStringLiteral("tray_enabled")
+                ).toBool(true)
+            );
+        }
+
+        if (
+            payload.contains(
+                QStringLiteral(
+                    "hidden_launcher_modules"
+                )
+            )
+        ) {
+            QStringList hiddenModules;
+
+            const QJsonArray values =
+                payload.value(
+                    QStringLiteral(
+                        "hidden_launcher_modules"
+                    )
+                ).toArray();
+
+            for (
+                const QJsonValue &value
+                : values
+            ) {
+                if (value.isString()) {
+                    hiddenModules.append(
+                        value.toString()
+                    );
+                }
+            }
+
+            setHiddenLauncherModules(
+                hiddenModules
+            );
+        }
+    }
 }
 
 void BossEventClient::onReadyRead()

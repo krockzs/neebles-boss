@@ -780,6 +780,15 @@ void TraySocketClient::processLine(
         return;
     }
 
+    if (
+        type
+        == QStringLiteral(
+            "root_visibility"
+        )
+    ) {
+        return;
+    }
+
     if (type == QStringLiteral("host_show")) {
         emit hostShowRequested();
         return;

@@ -130,6 +130,14 @@ pub enum TrayMessage {
     },
 
     /*
+     * Root surface visibility is independent from module
+     * TrayRecord visibility and from process lifecycle.
+     */
+    SetRootVisibility {
+        visible: bool,
+    },
+
+    /*
      * Controls the N.E.E.B.L.E.S. root tray surface.
      *
      * These messages are intentionally separate from Open/Close:
@@ -183,6 +191,11 @@ pub enum TrayMessage {
 
     Snapshot {
         trays: Vec<TrayRecord>,
+        root_visible: bool,
+    },
+
+    RootVisibility {
+        visible: bool,
     },
 
     Event {

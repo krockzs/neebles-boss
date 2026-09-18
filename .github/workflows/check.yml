@@ -80,6 +80,9 @@ jobs:
       - name: Validate Boss language contract
         run: ./scripts/validate-languages.py
 
+      - name: Validate Boss surface contracts
+        run: python3 scripts/test-surface-contracts.py
+
       - name: Build all Boss components
         run: ./scripts/build-all.sh
 
