@@ -113,6 +113,7 @@ assert_file "$CLIENT/config/defaults.json"
 
 assert_file "$ROOT/usr/lib/systemd/user/neebles-tray-manager.service"
 assert_file "$ROOT/usr/lib/systemd/user/neebles-tray-host.service"
+assert_file "$ROOT/usr/lib/systemd/user/neebles-tray-sni-host.service"
 
 BOSS_EVENTS="$ROOT/usr/lib/x86_64-linux-gnu/qt6/qml/NEEBLES/BossEvents"
 assert_file "$BOSS_EVENTS/libneebles-launcher-events.so"
@@ -156,6 +157,11 @@ assert_dir "$ROOT/usr/share/plasma/plasmoids/org.neebles.spacer"
 
 [[ ! -e "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-host.service" ]] || {
     echo "PACKAGING TEST INVALID: installer globally enabled Tray Host" >&2
+    exit 1
+}
+
+[[ ! -e "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-sni-host.service" ]] || {
+    echo "PACKAGING TEST INVALID: installer globally enabled Tray SNI Host" >&2
     exit 1
 }
 
@@ -249,6 +255,16 @@ cmp -s     client/systemd/neebles-tray-host.service     "$ROOT/usr/lib/systemd/u
 
 grep -Fxq     'ExecStart=/opt/neebles/client/tray-host/neebles-tray-host'     "$ROOT/usr/lib/systemd/user/neebles-tray-host.service"     || {
         echo "PACKAGING TEST INVALID: Tray Host does not execute Qt visual host" >&2
+        exit 1
+    }
+
+cmp -s     client/systemd/neebles-tray-sni-host.service     "$ROOT/usr/lib/systemd/user/neebles-tray-sni-host.service"     || {
+        echo "PACKAGING TEST INVALID: installed Tray SNI Host unit differs from source" >&2
+        exit 1
+    }
+
+grep -Fxq     'ExecStart=/opt/neebles/client/backend/neebles-backend tray host'     "$ROOT/usr/lib/systemd/user/neebles-tray-sni-host.service"     || {
+        echo "PACKAGING TEST INVALID: Tray SNI Host does not execute Boss StatusNotifier host" >&2
         exit 1
     }
 
@@ -366,6 +382,11 @@ cmp -s \
 
 [[ ! -e "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-host.service" ]] || {
     echo "PACKAGING TEST INVALID: final install globally enabled Tray Host" >&2
+    exit 1
+}
+
+[[ ! -e "$ROOT/etc/systemd/user/default.target.wants/neebles-tray-sni-host.service" ]] || {
+    echo "PACKAGING TEST INVALID: final install globally enabled Tray SNI Host" >&2
     exit 1
 }
 

@@ -481,7 +481,31 @@ void InstallerController::integrateDesktop()
                 )
             }
         );
+
+        QProcess::execute(
+            QStringLiteral("/usr/bin/systemctl"),
+            {
+                QStringLiteral("--user"),
+                QStringLiteral("enable"),
+                QStringLiteral("--now"),
+                QStringLiteral(
+                    "neebles-tray-sni-host.service"
+                )
+            }
+        );
     } else {
+        QProcess::execute(
+            QStringLiteral("/usr/bin/systemctl"),
+            {
+                QStringLiteral("--user"),
+                QStringLiteral("disable"),
+                QStringLiteral("--now"),
+                QStringLiteral(
+                    "neebles-tray-sni-host.service"
+                )
+            }
+        );
+
         QProcess::execute(
             QStringLiteral("/usr/bin/systemctl"),
             {

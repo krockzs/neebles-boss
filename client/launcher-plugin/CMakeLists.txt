@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
     neebles-launcher-events
-    VERSION 1.0.11
+    VERSION 1.0.12
     LANGUAGES CXX
 )
 
@@ -56,6 +56,13 @@ include(GNUInstallDirs)
 set(
     NEEBLES_BOSS_EVENTS_QML_DIR
     "${CMAKE_INSTALL_LIBDIR}/qt6/qml/NEEBLES/BossEvents"
+)
+
+set_target_properties(
+    neebles-launcher-events
+    neebles-launcher-eventsplugin
+    PROPERTIES
+        INSTALL_RPATH "$ORIGIN"
 )
 
 install(

@@ -39,6 +39,7 @@ GLOBAL_BOSS_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-boss-i
 GLOBAL_DESKTOP="${DESTDIR}/usr/share/applications/org.neebles.Boss.desktop"
 SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 TRAY_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-host.service"
+TRAY_SNI_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-sni-host.service"
 STAGE0_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-stage0.service"
 RUNTIME_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-runtime.service"
 EXTERNAL_SOCKET="${DESTDIR}/usr/lib/systemd/system/neebles-external.socket"
@@ -530,6 +531,7 @@ backup_global_path "$GLOBAL_BOSS_ICON" "global-boss-icon"
 backup_global_path "$GLOBAL_DESKTOP" "global-desktop"
 backup_global_path "$SYSTEMD_SERVICE" "systemd-service"
 backup_global_path "$TRAY_HOST_SERVICE" "tray-host-service"
+backup_global_path "$TRAY_SNI_HOST_SERVICE" "tray-sni-host-service"
 backup_global_path "$STAGE0_SERVICE" "stage0-service"
 backup_global_path "$RUNTIME_SERVICE" "runtime-service"
 backup_global_path "$EXTERNAL_SOCKET" "external-socket"
@@ -638,6 +640,10 @@ install -m 0644 \
     "$CLIENT_DATA_SOURCE/systemd/neebles-tray-host.service" \
     "$TRAY_HOST_SERVICE"
 
+install -m 0644 \
+    "$CLIENT_DATA_SOURCE/systemd/neebles-tray-sni-host.service" \
+    "$TRAY_SNI_HOST_SERVICE"
+
 
 progress 88
 status_key "installer.progress.installing_launcher"
@@ -711,6 +717,14 @@ cmp -s \
     "$TRAY_HOST_SERVICE" \
     || {
         echo "Installed Tray Host service does not match payload." >&2
+        exit 1
+    }
+
+cmp -s \
+    "$CLIENT_DATA_SOURCE/systemd/neebles-tray-sni-host.service" \
+    "$TRAY_SNI_HOST_SERVICE" \
+    || {
+        echo "Installed Tray SNI Host service does not match payload." >&2
         exit 1
     }
 

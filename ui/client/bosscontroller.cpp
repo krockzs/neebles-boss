@@ -241,16 +241,24 @@ static bool applyTrayState(
             "neebles-tray-host.service"
         );
 
+    const QString sniHost =
+        QStringLiteral(
+            "neebles-tray-sni-host.service"
+        );
+
     /*
-     * The Tray is one user-facing surface composed of two services.
+     * The Tray is one user-facing surface composed of three services.
      *
      * ON:
      *   Manager first, because it owns tray.sock.
      *   Qt Host second, because it consumes tray.sock.
+     *   SNI Host third, because it integrates with Plasma's
+     *   StatusNotifier infrastructure.
      *
      * OFF:
-     *   Qt Host first, so the visual consumer disappears cleanly.
-     *   Manager second.
+     *   SNI Host first.
+     *   Qt Host second.
+     *   Manager last.
      */
     if (enabled) {
         if (
@@ -270,10 +278,28 @@ static bool applyTrayState(
                 true
             )
         ) {
-            /*
-             * Do not leave a half-enabled Tray if the visual Host
-             * could not be activated.
-             */
+            applyTrayServiceState(
+                systemctl,
+                manager,
+                false
+            );
+
+            return false;
+        }
+
+        if (
+            !applyTrayServiceState(
+                systemctl,
+                sniHost,
+                true
+            )
+        ) {
+            applyTrayServiceState(
+                systemctl,
+                host,
+                false
+            );
+
             applyTrayServiceState(
                 systemctl,
                 manager,
@@ -285,6 +311,13 @@ static bool applyTrayState(
 
         return true;
     }
+
+    const bool sniHostOk =
+        applyTrayServiceState(
+            systemctl,
+            sniHost,
+            false
+        );
 
     const bool hostOk =
         applyTrayServiceState(
@@ -300,9 +333,8 @@ static bool applyTrayState(
             false
         );
 
-    return hostOk && managerOk;
+    return sniHostOk && hostOk && managerOk;
 }
-
 
 QString BossController::commandPath() const
 {
