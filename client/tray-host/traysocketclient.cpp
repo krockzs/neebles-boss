@@ -780,6 +780,21 @@ void TraySocketClient::processLine(
         return;
     }
 
+    if (type == QStringLiteral("host_show")) {
+        emit hostShowRequested();
+        return;
+    }
+
+    if (type == QStringLiteral("host_hide")) {
+        emit hostHideRequested();
+        return;
+    }
+
+    if (type == QStringLiteral("host_toggle")) {
+        emit hostToggleRequested();
+        return;
+    }
+
     if (type == QStringLiteral("ack")) {
         return;
     }

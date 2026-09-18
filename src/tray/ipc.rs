@@ -527,6 +527,33 @@ fn broadcast_event(event: TrayEvent) {
     }
 }
 
+fn broadcast_host_command(message: &TrayMessage) {
+    let listeners = match subscribers().lock() {
+        Ok(registry) => registry.clone(),
+
+        Err(_) => {
+            eprintln!("N.E.E.B.L.E.S.: tray subscriber registry lock poisoned");
+            return;
+        }
+    };
+
+    let mut dead = Vec::new();
+
+    for listener in listeners {
+        if write_message(&listener, message).is_err() {
+            dead.push(listener);
+        }
+    }
+
+    if dead.is_empty() {
+        return;
+    }
+
+    if let Ok(mut registry) = subscribers().lock() {
+        registry.retain(|current| !dead.iter().any(|item| Arc::ptr_eq(current, item)));
+    }
+}
+
 fn forward_to_provider(tray_id: &str, message: &TrayMessage) -> Result<(), String> {
     let provider = {
         let registry = providers()
@@ -840,6 +867,34 @@ fn process_message(
                 .list();
 
             write_message(writer, &TrayMessage::Snapshot { trays })
+        }
+
+        command @ TrayMessage::HostShow
+        | command @ TrayMessage::HostHide
+        | command @ TrayMessage::HostToggle => {
+            assert_session_peer(peer)?;
+
+            if registered_tray.is_some() {
+                return Err("tray providers cannot control the root tray surface".to_string());
+            }
+
+            if *subscribed {
+                return Err(
+                    "tray subscriber connections cannot control the root tray surface".to_string(),
+                );
+            }
+
+            broadcast_host_command(&command);
+
+            let event = match command {
+                TrayMessage::HostShow => "host_show",
+                TrayMessage::HostHide => "host_hide",
+                TrayMessage::HostToggle => "host_toggle",
+
+                _ => unreachable!(),
+            };
+
+            ack(writer, event, None)
         }
 
         TrayMessage::List => {

@@ -14,25 +14,50 @@ const WATCHER_SERVICE: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
 const WATCHER_INTERFACE: &str = "org.kde.StatusNotifierWatcher";
 
+#[derive(Debug, Clone)]
+enum StatusNotifierAction {
+    RootToggle,
+    ModuleOpen { tray_id: String },
+}
+
 struct StatusNotifierItem {
-    tray_id: String,
+    id: String,
     title: String,
     icon: String,
+    action: StatusNotifierAction,
 }
 
 impl StatusNotifierItem {
-    fn new(tray: &TrayRecord) -> Self {
+    fn root(icon: String) -> Self {
         Self {
-            tray_id: tray.tray_id.clone(),
-            title: tray.owner_module.clone(),
-            icon: tray.icon.clone(),
+            id: "neebles".to_string(),
+            title: "N.E.E.B.L.E.S.".to_string(),
+            icon,
+            action: StatusNotifierAction::RootToggle,
         }
     }
 
-    fn open(&self) {
-        let _ = send_manager_command(&TrayMessage::Open {
-            tray_id: self.tray_id.clone(),
-        });
+    fn module(tray: &TrayRecord) -> Self {
+        Self {
+            id: tray.tray_id.clone(),
+            title: tray.owner_module.clone(),
+            icon: tray.icon.clone(),
+            action: StatusNotifierAction::ModuleOpen {
+                tray_id: tray.tray_id.clone(),
+            },
+        }
+    }
+
+    fn activate_item(&self) {
+        let message = match &self.action {
+            StatusNotifierAction::RootToggle => TrayMessage::HostToggle,
+
+            StatusNotifierAction::ModuleOpen { tray_id } => TrayMessage::Open {
+                tray_id: tray_id.clone(),
+            },
+        };
+
+        let _ = send_manager_command(&message);
     }
 }
 
@@ -45,7 +70,7 @@ impl StatusNotifierItem {
 
     #[zbus(property)]
     fn id(&self) -> &str {
-        &self.tray_id
+        &self.id
     }
 
     #[zbus(property)]
@@ -74,15 +99,15 @@ impl StatusNotifierItem {
     }
 
     fn activate(&self, _x: i32, _y: i32) {
-        self.open();
+        self.activate_item();
     }
 
     fn secondary_activate(&self, _x: i32, _y: i32) {
-        self.open();
+        self.activate_item();
     }
 
     fn context_menu(&self, _x: i32, _y: i32) {
-        self.open();
+        self.activate_item();
     }
 
     fn scroll(&self, _delta: i32, _orientation: &str) {}
@@ -122,6 +147,39 @@ fn register_with_watcher(connection: &Connection, service: &str) -> Result<(), S
     Ok(())
 }
 
+fn create_root_item() -> Result<HostedItem, String> {
+    const ROOT_ID: &str = "neebles";
+    const ROOT_ICON: &str = "neebles-boss-tray-icon";
+
+    let service = service_name(ROOT_ID);
+
+    let connection = Connection::session()
+        .map_err(|error| format!("could not connect root tray to session D-Bus: {error}"))?;
+
+    connection.request_name(service.as_str()).map_err(|error| {
+        format!(
+            "could not acquire D-Bus service '{}' for root tray: {error}",
+            service
+        )
+    })?;
+
+    connection
+        .object_server()
+        .at(SNI_PATH, StatusNotifierItem::root(ROOT_ICON.to_string()))
+        .map_err(|error| format!("could not export root StatusNotifierItem: {error}"))?;
+
+    register_with_watcher(&connection, &service)?;
+
+    println!(
+        "N.E.E.B.L.E.S. Tray Host registered root tray as {}",
+        service
+    );
+
+    Ok(HostedItem {
+        _connection: connection,
+    })
+}
+
 fn create_item(tray: &TrayRecord) -> Result<HostedItem, String> {
     let service = service_name(&tray.tray_id);
 
@@ -141,7 +199,7 @@ fn create_item(tray: &TrayRecord) -> Result<HostedItem, String> {
 
     connection
         .object_server()
-        .at(SNI_PATH, StatusNotifierItem::new(tray))
+        .at(SNI_PATH, StatusNotifierItem::module(tray))
         .map_err(|error| {
             format!(
                 "could not export StatusNotifierItem for tray '{}': {error}",
@@ -238,6 +296,12 @@ pub fn run() -> Result<(), String> {
         .map_err(|error| format!("could not flush Tray Host subscription: {error}"))?;
 
     let mut reader = BufReader::new(stream);
+
+    /*
+     * The root N.E.E.B.L.E.S. SNI is infrastructure, not a module.
+     * Keep its D-Bus connection alive independently from module items.
+     */
+    let _root_item = create_root_item()?;
 
     let mut items = BTreeMap::<String, HostedItem>::new();
 

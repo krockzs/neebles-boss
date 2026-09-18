@@ -145,6 +145,10 @@ signals:
     void connectedChanged();
     void errorChanged();
 
+    void hostShowRequested();
+    void hostHideRequested();
+    void hostToggleRequested();
+
 private slots:
     void onConnected();
     void onDisconnected();

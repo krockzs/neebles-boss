@@ -129,6 +129,19 @@ pub enum TrayMessage {
         visible: bool,
     },
 
+    /*
+     * Controls the N.E.E.B.L.E.S. root tray surface.
+     *
+     * These messages are intentionally separate from Open/Close:
+     * Open/Close belong to module TrayRecords, while HostShow,
+     * HostHide and HostToggle control the custom Qt LayerShell host.
+     */
+    HostShow,
+
+    HostHide,
+
+    HostToggle,
+
     SettingsGet {
         owner_module: String,
         path: String,

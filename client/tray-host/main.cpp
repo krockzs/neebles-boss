@@ -1252,7 +1252,41 @@ int main(
         false
     );
 
-    window->show();
+    QObject::connect(
+        &trayClient,
+        &TraySocketClient::hostShowRequested,
+        window,
+        [window]() {
+            window->show();
+            window->raise();
+            window->requestActivate();
+        }
+    );
+
+    QObject::connect(
+        &trayClient,
+        &TraySocketClient::hostHideRequested,
+        window,
+        [window]() {
+            window->hide();
+        }
+    );
+
+    QObject::connect(
+        &trayClient,
+        &TraySocketClient::hostToggleRequested,
+        window,
+        [window]() {
+            if (window->isVisible()) {
+                window->hide();
+                return;
+            }
+
+            window->show();
+            window->raise();
+            window->requestActivate();
+        }
+    );
 
     QTimer::singleShot(
         0,

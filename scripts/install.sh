@@ -36,7 +36,10 @@ SETTINGS_DIR="$SHARED_DIR/settings"
 GLOBAL_BIN="${DESTDIR}/usr/local/bin/neebles"
 GLOBAL_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-boss-launcher-icon.png"
 GLOBAL_BOSS_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-boss-icon.png"
+GLOBAL_TRAY_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-boss-tray-icon.png"
+GLOBAL_INSTALLER_ICON="${DESTDIR}/usr/share/icons/hicolor/256x256/apps/neebles-installer-icon.png"
 GLOBAL_DESKTOP="${DESTDIR}/usr/share/applications/org.neebles.Boss.desktop"
+GLOBAL_INSTALLER_DESKTOP="${DESTDIR}/usr/share/applications/org.neebles.Installer.desktop"
 SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 TRAY_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-host.service"
 TRAY_SNI_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-sni-host.service"
@@ -528,7 +531,10 @@ chmod 0700 "$GLOBAL_BACKUP_ROOT"
 backup_global_path "$GLOBAL_BIN" "global-bin"
 backup_global_path "$GLOBAL_ICON" "global-icon"
 backup_global_path "$GLOBAL_BOSS_ICON" "global-boss-icon"
+backup_global_path "$GLOBAL_TRAY_ICON" "global-tray-icon"
+backup_global_path "$GLOBAL_INSTALLER_ICON" "global-installer-icon"
 backup_global_path "$GLOBAL_DESKTOP" "global-desktop"
+backup_global_path "$GLOBAL_INSTALLER_DESKTOP" "global-installer-desktop"
 backup_global_path "$SYSTEMD_SERVICE" "systemd-service"
 backup_global_path "$TRAY_HOST_SERVICE" "tray-host-service"
 backup_global_path "$TRAY_SNI_HOST_SERVICE" "tray-sni-host-service"
@@ -561,11 +567,23 @@ install -m 0644 \
     "$ASSETS_DIR/branding/neebles-boss-icon.png" \
     "$GLOBAL_BOSS_ICON"
 
+install -m 0644 \
+    "$ASSETS_DIR/branding/neebles-boss-tray-icon.png" \
+    "$GLOBAL_TRAY_ICON"
+
+install -m 0644 \
+    "$ASSETS_DIR/branding/neebles-installer-icon.png" \
+    "$GLOBAL_INSTALLER_ICON"
+
 install -d -m 0755 "$(dirname "$GLOBAL_DESKTOP")"
 
 install -m 0644 \
     "$APPLICATIONS_DIR/org.neebles.Boss.desktop" \
     "$GLOBAL_DESKTOP"
+
+install -m 0644 \
+    "$APPLICATIONS_DIR/org.neebles.Installer.desktop" \
+    "$GLOBAL_INSTALLER_DESKTOP"
 
 progress 80
 status_key "installer.progress.installing_tray_manager"

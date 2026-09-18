@@ -109,6 +109,133 @@ static QString findBrandingAsset(
     return {};
 }
 
+static bool publishInstallerDesktopIdentity(
+    const QString &payloadRoot,
+    const QString &preferredIconPath,
+    QString *error
+)
+{
+    const QString dataHome =
+        qEnvironmentVariable(
+            "XDG_DATA_HOME",
+            QDir::home().filePath(
+                QStringLiteral(".local/share")
+            )
+        );
+
+    const QString applicationsDir =
+        QDir(dataHome).filePath(
+            QStringLiteral("applications")
+        );
+
+    const QString iconsDir =
+        QDir(dataHome).filePath(
+            QStringLiteral(
+                "icons/hicolor/256x256/apps"
+            )
+        );
+
+    if (
+        !QDir().mkpath(applicationsDir)
+        || !QDir().mkpath(iconsDir)
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "Could not create Installer desktop identity directories"
+                );
+        }
+
+        return false;
+    }
+
+    const QString installedIcon =
+        QDir(iconsDir).filePath(
+            QStringLiteral(
+                "neebles-installer-icon.png"
+            )
+        );
+
+    QFile::remove(installedIcon);
+
+    bool iconReady = false;
+
+    if (
+        !preferredIconPath.isEmpty()
+        && QFileInfo::exists(preferredIconPath)
+    ) {
+        iconReady =
+            QFile::copy(
+                preferredIconPath,
+                installedIcon
+            );
+    } else {
+        iconReady =
+            QFile::copy(
+                QStringLiteral(
+                    ":/neebles/installer/neebles-installer-icon.png"
+                ),
+                installedIcon
+            );
+    }
+
+    if (!iconReady) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "Could not publish Installer desktop icon"
+                );
+        }
+
+        return false;
+    }
+
+    const QString sourceDesktop =
+        QDir(payloadRoot).filePath(
+            QStringLiteral(
+                "applications/org.neebles.Installer.desktop"
+            )
+        );
+
+    if (!QFileInfo::exists(sourceDesktop)) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "Installer desktop identity is missing from client-data"
+                );
+        }
+
+        return false;
+    }
+
+    const QString installedDesktop =
+        QDir(applicationsDir).filePath(
+            QStringLiteral(
+                "org.neebles.Installer.desktop"
+            )
+        );
+
+    QFile::remove(installedDesktop);
+
+    if (
+        !QFile::copy(
+            sourceDesktop,
+            installedDesktop
+        )
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "Could not publish Installer desktop file"
+                );
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
 static QString extractClientData(
     const QStringList &arguments,
     QTemporaryDir &temporary,
@@ -754,7 +881,7 @@ int main(int argc, char *argv[])
     );
 
     app.setApplicationVersion(
-        QStringLiteral("1.0.12")
+        QStringLiteral("1.0.13")
     );
 
     app.setOrganizationName(
@@ -800,6 +927,19 @@ int main(int argc, char *argv[])
                 )
             )
         );
+    }
+
+    QString desktopIdentityError;
+
+    if (
+        !publishInstallerDesktopIdentity(
+            payloadRoot,
+            iconPath,
+            &desktopIdentityError
+        )
+    ) {
+        qWarning().noquote()
+            << desktopIdentityError;
     }
 
     QString installerLanguage;
