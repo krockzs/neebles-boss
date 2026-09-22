@@ -1,5 +1,4 @@
 use crate::config;
-use crate::dependencies;
 use crate::modules;
 use std::process::Command;
 
@@ -51,13 +50,6 @@ fn emit_transport(
      */
     if !severity.mandatory() && !config.normal_notifications {
         return Ok(());
-    }
-
-    if !dependencies::command_exists("notify-send") {
-        return Err(
-            "notify-send is not available; install libnotify-bin for Plasma notifications"
-                .to_string(),
-        );
     }
 
     let icon =

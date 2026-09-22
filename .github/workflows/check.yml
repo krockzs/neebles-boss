@@ -88,12 +88,3 @@ jobs:
 
       - name: Validate packaging install contract
         run: ./scripts/test-install-layout.sh
-
-      - name: Audit remote AMD64 installer dictionary
-        run: |
-          cargo run --locked -- --request-json '{
-            "target":"boss",
-            "action":"local-installer-audit",
-            "args":[],
-            "context":{"caller":"ci"}
-          }'

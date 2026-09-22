@@ -429,7 +429,6 @@ install -d -m 0755 \
     "$TMP_DIR"
 
 install -d -m 0700 "$SETTINGS_DIR"
-install -d -m 0755 "$SHARED_DIR/cache/installers"
 
 if [[ -z "$DESTDIR" ]]; then
     chown -R "$DESKTOP_UID:$DESKTOP_GID" "$SETTINGS_DIR"

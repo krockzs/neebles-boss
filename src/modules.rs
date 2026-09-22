@@ -2,7 +2,6 @@ use crate::config;
 use crate::contracts::{
     load_module_contracts, ContractDefinition, ContractEndpoint, ContractReference, ModuleContracts,
 };
-use crate::dependencies::{self, DependencySet};
 use crate::languages;
 use crate::privileges;
 use crate::settings;
@@ -100,9 +99,6 @@ pub struct ModuleManifest {
      */
     #[serde(default)]
     pub commands: BTreeMap<String, CommandContract>,
-
-    #[serde(default)]
-    pub dependencies: DependencySet,
 
     #[serde(default)]
     pub tray: Option<TrayContract>,
@@ -503,10 +499,6 @@ fn checkout_registry_commit(
     entry: &RegistryModule,
     destination: &Path,
 ) -> Result<(), String> {
-    if !dependencies::command_exists("git") {
-        return Err("git is required by Boss to retrieve modules".to_string());
-    }
-
     let expected = entry.commit.trim().to_ascii_lowercase();
 
     if !valid_git_commit(&expected) {
@@ -1917,12 +1909,6 @@ fn registry_url() -> Result<String, String> {
      * Boss first resolves the exact main commit and then reads
      * registry/modules.json from that immutable commit SHA.
      */
-    if !dependencies::command_exists("git") {
-        return Err(
-            "git is required by Boss to resolve the current module registry revision".to_string(),
-        );
-    }
-
     let output = Command::new("git")
         .args([
             "ls-remote",
@@ -1963,10 +1949,6 @@ fn registry_url() -> Result<String, String> {
 }
 
 pub fn fetch_registry() -> Result<Registry, String> {
-    if !dependencies::command_exists("curl") {
-        return Err("curl is required by Boss to read the remote module registry".to_string());
-    }
-
     let url = registry_url()?;
     let output = Command::new("curl")
         .args(["-fsSL", url.as_str()])
@@ -2088,107 +2070,12 @@ fn installed_names() -> Result<HashSet<String>, String> {
 
 pub fn install(name: &str) -> Result<(), String> {
     let registry = fetch_registry()?;
-    let mut visiting = HashSet::new();
-    install_internal(name, &registry, &mut visiting)
+    install_internal(name, &registry)
 }
 
-fn emit_module_incompatibility_external(name: &str, current: &Version, required: &Version) {
-    let Some(envelope) = crate::external::build_external_envelope(
-        "incompatibility",
-        "",
-        serde_json::Map::new,
-        || {
-            crate::external::incompatibility_message(
-                name,
-                current.to_string(),
-                required.to_string(),
-                "Installed module version does not satisfy the required dependency contract",
-            )
-        },
-    ) else {
-        return;
-    };
-
-    if let Err(error) = crate::external::send(&envelope) {
-        eprintln!(
-            "N.E.E.B.L.E.S.: external module incompatibility delivery unavailable; continuing: {error}"
-        );
-    }
-}
-
-fn ensure_minimum_module_version(name: &str, minimum_version: Option<&str>) -> Result<(), String> {
-    let Some(minimum_version) = minimum_version else {
-        return Ok(());
-    };
-
-    let minimum_version = Version::parse(minimum_version.trim()).map_err(|error| {
-        format!(
-            "invalid minimum version '{}' requested for module '{}': {error}",
-            minimum_version, name
-        )
-    })?;
-
-    let manifest = installed_module_manifest(name)?;
-
-    let installed_version = Version::parse(manifest.version.trim()).map_err(|error| {
-        format!(
-            "installed module '{}' has invalid semantic version '{}': {error}",
-            name, manifest.version
-        )
-    })?;
-
-    if installed_version < minimum_version {
-        emit_module_incompatibility_external(name, &installed_version, &minimum_version);
-
-        return Err(format!(
-            "module '{}' version {} is installed but version {} or newer is required",
-            name, installed_version, minimum_version
-        ));
-    }
-
-    Ok(())
-}
-
-fn resolve_module_dependency(
-    dependency: &dependencies::ModuleDependency,
-    registry: &Registry,
-    visiting: &mut HashSet<String>,
-) -> Result<(), String> {
-    /*
-     * Installed dependencies are not blindly accepted:
-     * their declared version must still satisfy the contract.
-     */
-    if find_module_dir(&dependency.name).is_err() {
-        if let Err(error) = install_internal(&dependency.name, registry, visiting) {
-            /*
-             * install_internal removes itself on success.
-             * On failure the caller must release the
-             * traversal marker as well, especially for an
-             * optional dependency whose failure does not
-             * abort the whole parent installation.
-             */
-            visiting.remove(&dependency.name);
-
-            return Err(error);
-        }
-    }
-
-    ensure_minimum_module_version(&dependency.name, dependency.minimum_version.as_deref())
-}
-
-fn install_internal(
-    name: &str,
-    registry: &Registry,
-    visiting: &mut HashSet<String>,
-) -> Result<(), String> {
+fn install_internal(name: &str, registry: &Registry) -> Result<(), String> {
     if find_module_dir(name).is_ok() {
         return Ok(());
-    }
-
-    if !visiting.insert(name.to_string()) {
-        return Err(format!(
-            "circular N.E.E.B.L.E.S. module dependency detected at '{name}'"
-        ));
     }
 
     let entry = registry
@@ -2198,10 +2085,6 @@ fn install_internal(
 
     if !valid_module_id(name) {
         return Err(format!("invalid module id in registry: {name}"));
-    }
-
-    if !dependencies::command_exists("git") {
-        return Err("git is required by Boss to install modules from repositories".to_string());
     }
 
     let temp_root = neebles_root().join("shared/tmp");
@@ -2235,26 +2118,6 @@ fn install_internal(
 
     let settings_default = module_settings_default_from(staging.path(), &manifest)?;
 
-    dependencies::resolve_system_dependencies(&manifest.dependencies.system)?;
-
-    for dependency in &manifest.dependencies.modules {
-        match resolve_module_dependency(dependency, registry, visiting) {
-            Ok(()) => {}
-
-            Err(error) if dependency.required => {
-                return Err(format!(
-                    "required module dependency '{}' could not be resolved: {error}",
-                    dependency.name
-                ));
-            }
-
-            Err(error) => eprintln!(
-                "N.E.E.B.L.E.S.: optional module dependency '{}' could not be resolved: {error}",
-                dependency.name
-            ),
-        }
-    }
-
     let folder = entry.folder.as_deref().unwrap_or(name);
     if !valid_module_id(folder) {
         return Err(format!("invalid module folder in registry: {folder}"));
@@ -2279,8 +2142,6 @@ fn install_internal(
          */
         let rollback_error = fs::remove_dir_all(&destination).err();
 
-        visiting.remove(name);
-
         return match rollback_error {
             None => Err(format!(
                 "could not initialize settings for module '{}': {}; module installation was rolled back",
@@ -2300,8 +2161,6 @@ fn install_internal(
     if let Err(error) = register_deactivate_entry(name, &manifest) {
         let rollback_error = fs::remove_dir_all(&destination).err();
 
-        visiting.remove(name);
-
         return match rollback_error {
             None => Err(format!(
                 "could not register deactivate resources for module '{}': {}; module installation was rolled back and local settings were preserved",
@@ -2318,8 +2177,6 @@ fn install_internal(
                 )),
         };
     }
-
-    visiting.remove(name);
 
     if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
         "module.lifecycle",
@@ -2588,10 +2445,6 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
         .get(name)
         .ok_or_else(|| format!("module '{name}' does not exist in the N.E.E.B.L.E.S. registry"))?;
 
-    if !dependencies::command_exists("git") {
-        return Err("git is required by Boss to update modules from repositories".to_string());
-    }
-
     /*
      * Stage the candidate INSIDE modules_root().
      *
@@ -2647,7 +2500,6 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
      * - tray contract
      * - notifications protocol
      * - language contract
-     * - dependency declarations
      * - safe paths
      */
     let manifest = read_manifest(&staging.path().join("manifest.json"))?;
@@ -2666,39 +2518,6 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
             "module '{}' staged version '{}' does not match registry version '{}'",
             name, manifest.version, entry.version
         ));
-    }
-
-    /*
-     * Resolve every dependency while the old module is
-     * still intact.
-     */
-    dependencies::resolve_system_dependencies(&manifest.dependencies.system)?;
-
-    let mut visiting = HashSet::new();
-    visiting.insert(name.to_string());
-
-    for dependency in &manifest.dependencies.modules {
-        match resolve_module_dependency(
-            dependency,
-            &registry,
-            &mut visiting,
-        ) {
-            Ok(()) => {}
-
-            Err(error) if dependency.required => {
-                return Err(format!(
-                    "required module dependency '{}' could not be resolved before updating '{}': {error}",
-                    dependency.name,
-                    name
-                ));
-            }
-
-            Err(error) => eprintln!(
-                "N.E.E.B.L.E.S.: optional module dependency '{}' could not be resolved before updating '{}': {error}",
-                dependency.name,
-                name
-            ),
-        }
     }
 
     /*
@@ -3613,80 +3432,6 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
             manifest.name, manifest.version
         )
     })?;
-
-    for dependency in &manifest.dependencies.system {
-        if dependency.name.trim().is_empty() {
-            return Err(format!(
-                "module '{}' declares a system dependency with an empty name",
-                manifest.name
-            ));
-        }
-
-        if let Some(version) = &dependency.version {
-            let requirement = version.requirement.trim();
-
-            if requirement.is_empty() {
-                return Err(format!(
-                    "module '{}' declares an empty system dependency version requirement for '{}'",
-                    manifest.name, dependency.name
-                ));
-            }
-
-            match version.scheme {
-                dependencies::SystemVersionScheme::Semver => {
-                    semver::VersionReq::parse(requirement).map_err(|error| {
-                        format!(
-                            "module '{}' declares invalid semantic system dependency version requirement '{}' for '{}': {error}",
-                            manifest.name, requirement, dependency.name
-                        )
-                    })?;
-                }
-
-                dependencies::SystemVersionScheme::Debian => {
-                    dependencies::validate_debian_requirement(requirement).map_err(|error| {
-                        format!(
-                            "module '{}' declares invalid Debian system dependency version requirement '{}' for '{}': {error}",
-                            manifest.name, requirement, dependency.name
-                        )
-                    })?;
-                }
-            }
-        }
-    }
-
-    for dependency in &manifest.dependencies.modules {
-        if !valid_module_id(&dependency.name) {
-            return Err(format!(
-                "module '{}' declares invalid module dependency id '{}'",
-                manifest.name, dependency.name
-            ));
-        }
-
-        if dependency.name == manifest.name {
-            return Err(format!(
-                "module '{}' cannot depend on itself",
-                manifest.name
-            ));
-        }
-
-        if let Some(minimum_version) = dependency.minimum_version.as_deref() {
-            let minimum_version = minimum_version.trim();
-
-            if minimum_version.is_empty() {
-                return Err(format!(
-                    "module '{}' declares an empty minimum_version for dependency '{}'",
-                    manifest.name, dependency.name
-                ));
-            }
-
-            Version::parse(minimum_version).map_err(|error| {
-                format!(
-                    "module '{}' declares invalid minimum_version '{}' for dependency '{}': {error}",
-                    manifest.name, minimum_version, dependency.name
-                )
-            })?;
-        }
-    }
 
     let entrypoint = resolve_module_file(module_dir, &manifest.entrypoint, "entrypoint")?;
 

@@ -888,6 +888,5 @@ fn print_help() {
     println!("  neebles modules enable|disable <module>");
     println!("  neebles notify <info|success|warning|critical|fatal> <title> <message>");
     println!("  neebles socket serve");
-    println!("  neebles boss local-installer '<LocalInstallerRequest JSON>'");
     println!("  neebles --request-json '<ExecutionRequest JSON>'");
 }

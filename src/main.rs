@@ -1,12 +1,10 @@
 mod cli;
 mod config;
 mod contracts;
-mod dependencies;
 mod dispatcher;
 mod external;
 mod ipc;
 mod languages;
-mod local_installer;
 mod module_ipc;
 mod modules;
 pub mod nightmare;
