@@ -97,7 +97,6 @@
   "installer.log.launcher_added": "Launcher de N.E.E.B.L.E.S. agregado a Plasma.",
   "installer.progress.authorization_accepted": "Autorización administrativa aceptada.",
   "installer.progress.validating_payload": "Validando contenido de N.E.E.B.L.E.S...",
-  "installer.progress.checking_dependencies": "Comprobando dependencias de ejecución de Boss...",
   "installer.progress.creating_structure": "Creando estructura de directorios de N.E.E.B.L.E.S...",
   "installer.progress.installing_backend": "Instalando backend de N.E.E.B.L.E.S...",
   "installer.progress.installing_ui": "Instalando interfaz de N.E.E.B.L.E.S...",

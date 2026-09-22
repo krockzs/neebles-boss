@@ -382,42 +382,6 @@ for path in "$INSTALL_ROOT" "$CLIENT_ROOT" "$MODULES_DIR" "$SHARED_DIR"; do
     fi
 done
 
-progress 16
-status_key "installer.progress.checking_dependencies"
-
-if [[ -z "$DESTDIR" ]] && command -v apt >/dev/null 2>&1; then
-    BOSS_RUNTIME_PACKAGES=(
-        git
-        curl
-        libnotify-bin
-        util-linux
-        systemd
-        libqt6quick6
-        liblayershellqtinterface6
-    )
-
-    MISSING=()
-
-    command -v git >/dev/null 2>&1 || MISSING+=(git)
-    command -v curl >/dev/null 2>&1 || MISSING+=(curl)
-    command -v setpriv >/dev/null 2>&1 || MISSING+=(util-linux)
-    command -v systemd-run >/dev/null 2>&1 || MISSING+=(systemd)
-    command -v notify-send >/dev/null 2>&1 || MISSING+=(libnotify-bin)
-
-    dpkg-query -W -f='${Status}' libqt6quick6 2>/dev/null \
-        | grep -q "install ok installed" \
-        || MISSING+=(libqt6quick6)
-
-    dpkg-query -W -f='${Status}' liblayershellqtinterface6 2>/dev/null \
-        | grep -q "install ok installed" \
-        || MISSING+=(liblayershellqtinterface6)
-
-    if (( ${#MISSING[@]} > 0 )); then
-        apt install -y "${MISSING[@]}"
-    fi
-
-    apt-mark manual "${BOSS_RUNTIME_PACKAGES[@]}"
-fi
 
 progress 25
 status_key "installer.progress.creating_structure"

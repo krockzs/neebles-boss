@@ -8,6 +8,13 @@ REPO_ROOT="$(
 
 cd "$REPO_ROOT"
 
+if grep -Eq "command -v apt|apt install|apt-get|dpkg-query|apt-mark|BOSS_RUNTIME_PACKAGES|kpackagetool6" scripts/install.sh; then
+    echo "PACKAGING TEST INVALID: installer negotiates application dependencies with the host" >&2
+    exit 1
+fi
+
+echo "HOST-INDEPENDENT INSTALLER CONTRACT: VALID"
+
 BACKEND="$REPO_ROOT/target/debug/neebles-backend"
 UI="$REPO_ROOT/ui/client/build/neebles-ui"
 AUTH="$REPO_ROOT/ui/auth-agent/build/neebles-auth-agent"
