@@ -43,7 +43,6 @@ GLOBAL_INSTALLER_DESKTOP="${DESTDIR}/usr/share/applications/org.neebles.Installe
 SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 TRAY_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-host.service"
 TRAY_SNI_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-sni-host.service"
-STAGE0_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-stage0.service"
 RUNTIME_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-runtime.service"
 EXTERNAL_SOCKET="${DESTDIR}/usr/lib/systemd/system/neebles-external.socket"
 EXTERNAL_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-external.service"
@@ -361,7 +360,6 @@ REQUIRED_FILES=(
     spacer/metadata.json
     spacer/contents/ui/main.qml
     systemd/neebles-tray-manager.service
-    systemd/neebles-stage0.service
     systemd/neebles-runtime.service
     runtime/tray-host/neebles-tray-host
     runtime/qml/NEEBLES/BossEvents/libneebles-launcher-events.so
@@ -554,11 +552,9 @@ backup_global_path "$GLOBAL_INSTALLER_DESKTOP" "global-installer-desktop"
 backup_global_path "$SYSTEMD_SERVICE" "systemd-service"
 backup_global_path "$TRAY_HOST_SERVICE" "tray-host-service"
 backup_global_path "$TRAY_SNI_HOST_SERVICE" "tray-sni-host-service"
-backup_global_path "$STAGE0_SERVICE" "stage0-service"
 backup_global_path "$RUNTIME_SERVICE" "runtime-service"
 backup_global_path "$EXTERNAL_SOCKET" "external-socket"
 backup_global_path "$EXTERNAL_SERVICE" "external-service"
-backup_global_path "$RUNTIME_WANTS/neebles-stage0.service" "stage0-wants"
 backup_global_path "$RUNTIME_WANTS/neebles-runtime.service" "runtime-wants"
 backup_global_path "$SOCKET_WANTS/neebles-external.socket" "external-socket-wants"
 backup_global_path "$EXTERNAL_SOCKET_DROPIN_DIR" "external-socket-dropin"
@@ -633,9 +629,6 @@ fi
 
 install -d -m 0755 "$(dirname "$RUNTIME_SERVICE")"
 
-install -m 0644 \
-    "$CLIENT_DATA_SOURCE/systemd/neebles-stage0.service" \
-    "$STAGE0_SERVICE"
 
 install -m 0644 \
     "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
@@ -652,9 +645,6 @@ install -m 0644 \
 install -d -m 0755 "$RUNTIME_WANTS"
 install -d -m 0755 "$SOCKET_WANTS"
 
-ln -sfnT \
-    /usr/lib/systemd/system/neebles-stage0.service \
-    "$RUNTIME_WANTS/neebles-stage0.service"
 
 ln -sfnT \
     /usr/lib/systemd/system/neebles-runtime.service \
@@ -775,13 +765,6 @@ do
         }
 done
 
-cmp -s \
-    "$CLIENT_DATA_SOURCE/systemd/neebles-stage0.service" \
-    "$STAGE0_SERVICE" \
-    || {
-        echo "Installed Stage0 service does not match payload." >&2
-        exit 1
-    }
 
 cmp -s \
     "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
@@ -821,11 +804,9 @@ if [[ -z "$DESTDIR" ]]; then
     systemctl daemon-reload
 
     systemctl enable neebles-external.socket
-    systemctl enable neebles-stage0.service
     systemctl enable neebles-runtime.service
 
     systemctl restart neebles-external.socket
-    systemctl restart neebles-stage0.service
     systemctl restart neebles-runtime.service
 
     systemctl is-active --quiet neebles-runtime.service || {

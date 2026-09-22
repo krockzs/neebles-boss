@@ -1,6 +1,5 @@
 [Unit]
 Description=N.E.E.B.L.E.S. External Envelope Socket
-Before=neebles-stage0.service
 
 [Socket]
 ListenSequentialPacket=/run/neebles/external.sock

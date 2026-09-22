@@ -32,13 +32,6 @@ pub fn incompatibility_message(
     ])
 }
 
-pub fn stage0_message(state: impl Into<String>, message: impl Into<String>) -> Map<String, Value> {
-    Map::from_iter([
-        ("state".to_string(), Value::String(state.into())),
-        ("message".to_string(), Value::String(message.into())),
-    ])
-}
-
 fn build_external_envelope_with_activation<PackageBuilder, MessageBuilder>(
     envelope_type: impl Into<String>,
     endpoint: impl Into<String>,
@@ -532,7 +525,7 @@ fn consume_external_envelope(envelope: ExternalEnvelope) -> Result<(), String> {
      * Transport and remote dispatch are intentionally not implemented here.
      *
      * external.sock only establishes the local outbound boundary.
-     * Stage0 must never wait for internet or remote delivery.
+     * Local Boss/module operation must never wait for remote delivery.
      */
     let _ = envelope;
     Ok(())
@@ -640,11 +633,10 @@ mod tests {
 
         assert_eq!(result, 0);
 
-        let envelope =
-            build_external_envelope_with_activation("stage0", "", true, Map::new, || {
-                stage0_message("ready", "Stage0 completed")
-            })
-            .expect("external envelope should be built");
+        let envelope = build_external_envelope_with_activation("error", "", true, Map::new, || {
+            error_message("example", "Example error")
+        })
+        .expect("external envelope should be built");
 
         let payload = serde_json::to_vec(&envelope).expect("external envelope should serialize");
 
@@ -673,9 +665,9 @@ mod tests {
         let decoded: ExternalEnvelope = serde_json::from_slice(&buffer[..received as usize])
             .expect("received packet should decode");
 
-        assert_eq!(decoded.envelope_type, "stage0");
-        assert_eq!(decoded.message["state"], "ready");
-        assert_eq!(decoded.message["message"], "Stage0 completed");
+        assert_eq!(decoded.envelope_type, "error");
+        assert_eq!(decoded.message["code"], "example");
+        assert_eq!(decoded.message["message"], "Example error");
     }
 
     #[test]
@@ -694,10 +686,6 @@ mod tests {
         assert_eq!(result, 0);
 
         let envelopes = vec![
-            build_external_envelope_with_activation("stage0", "", true, Map::new, || {
-                stage0_message("ready", "Stage0 completed")
-            })
-            .expect("stage0 envelope should be built"),
             build_external_envelope_with_activation("error", "", true, Map::new, || {
                 error_message("installer_failed", "Installer recipe failed")
             })
@@ -747,7 +735,7 @@ mod tests {
             libc::close(sockets[1]);
         }
 
-        assert_eq!(received_types, vec!["stage0", "error", "incompatibility"]);
+        assert_eq!(received_types, vec!["error", "incompatibility"]);
     }
 
     #[test]
@@ -756,7 +744,7 @@ mod tests {
         let message_called = Cell::new(false);
 
         let envelope = build_external_envelope_with_activation(
-            "stage0",
+            "error",
             "https://example.invalid/report",
             false,
             || {
@@ -804,40 +792,28 @@ mod tests {
     }
 
     #[test]
-    fn builds_stage0_message() {
-        assert_eq!(
-            stage0_message("failed", "Stage0 could not restore local integrity"),
-            object(json!({
-                "state": "failed",
-                "message": "Stage0 could not restore local integrity"
-            }))
-        );
-    }
-
-    #[test]
     fn enabled_external_builds_generic_envelope() {
-        let envelope =
-            build_external_envelope_with_activation("stage0", "", true, Map::new, || {
-                stage0_message("failed", "example")
-            })
-            .expect("external envelope should be built");
+        let envelope = build_external_envelope_with_activation("error", "", true, Map::new, || {
+            error_message("example", "Example error")
+        })
+        .expect("external envelope should be built");
 
-        assert_eq!(envelope.envelope_type, "stage0");
+        assert_eq!(envelope.envelope_type, "error");
         assert_eq!(envelope.endpoint, "");
         assert!(envelope.activate);
         assert!(envelope.package.is_empty());
-        assert_eq!(envelope.message, stage0_message("failed", "example"));
+        assert_eq!(envelope.message, error_message("example", "Example error"));
 
         let serialized =
             serde_json::to_value(envelope).expect("external envelope should serialize");
 
-        assert_eq!(serialized["type"], "stage0");
+        assert_eq!(serialized["type"], "error");
         assert_eq!(serialized["endpoint"], "");
         assert_eq!(serialized["activate"], true);
         assert_eq!(serialized["package"], json!({}));
         assert_eq!(
             serialized["message"],
-            json!({"state": "failed", "message": "example"})
+            json!({"code": "example", "message": "Example error"})
         );
     }
 }
