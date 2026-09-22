@@ -117,7 +117,7 @@
   "modules.uninstall_confirm": "Uninstall",
   "telemetry.settings": "Telemetry Settings",
   "telemetry.enable": "Enable telemetry",
-  "telemetry.description": "When enabled, N.E.E.B.L.E.S. may send External runtime and diagnostic events to the configured server. When disabled, External transmission remains blocked.",
+  "telemetry.description": "When enabled, N.E.E.B.L.E.S. permits diagnostic events to enter the local External boundary. When disabled, External transmission remains blocked.",
   "telemetry.more_information": "More information about telemetry",
   "telemetry.exit": "Exit",
   "telemetry.activated": "Telemetry activated",

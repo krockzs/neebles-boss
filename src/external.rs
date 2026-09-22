@@ -18,20 +18,6 @@ pub fn error_message(code: impl Into<String>, message: impl Into<String>) -> Map
     ])
 }
 
-pub fn incompatibility_message(
-    component: impl Into<String>,
-    current: impl Into<String>,
-    required: impl Into<String>,
-    message: impl Into<String>,
-) -> Map<String, Value> {
-    Map::from_iter([
-        ("component".to_string(), Value::String(component.into())),
-        ("current".to_string(), Value::String(current.into())),
-        ("required".to_string(), Value::String(required.into())),
-        ("message".to_string(), Value::String(message.into())),
-    ])
-}
-
 fn build_external_envelope_with_activation<PackageBuilder, MessageBuilder>(
     envelope_type: impl Into<String>,
     endpoint: impl Into<String>,
@@ -687,18 +673,13 @@ mod tests {
 
         let envelopes = vec![
             build_external_envelope_with_activation("error", "", true, Map::new, || {
-                error_message("installer_failed", "Installer recipe failed")
+                error_message("first_error", "First error")
             })
-            .expect("error envelope should be built"),
-            build_external_envelope_with_activation("incompatibility", "", true, Map::new, || {
-                incompatibility_message(
-                    "libqt6quick6",
-                    "6.4",
-                    ">=6.5,<7.0",
-                    "Installed version is outside the supported range",
-                )
+            .expect("first error envelope should be built"),
+            build_external_envelope_with_activation("error", "", true, Map::new, || {
+                error_message("second_error", "Second error")
             })
-            .expect("incompatibility envelope should be built"),
+            .expect("second error envelope should be built"),
         ];
 
         for envelope in &envelopes {
@@ -708,7 +689,7 @@ mod tests {
                 .expect("external envelope should send as one packet");
         }
 
-        let mut received_types = Vec::new();
+        let mut received_codes = Vec::new();
 
         for _ in 0..envelopes.len() {
             let mut buffer = vec![0_u8; MAX_EXTERNAL_PACKET_BYTES];
@@ -727,7 +708,14 @@ mod tests {
             let decoded: ExternalEnvelope = serde_json::from_slice(&buffer[..received as usize])
                 .expect("received packet should decode");
 
-            received_types.push(decoded.envelope_type);
+            assert_eq!(decoded.envelope_type, "error");
+
+            received_codes.push(
+                decoded.message["code"]
+                    .as_str()
+                    .expect("error code should be String")
+                    .to_string(),
+            );
         }
 
         unsafe {
@@ -735,7 +723,7 @@ mod tests {
             libc::close(sockets[1]);
         }
 
-        assert_eq!(received_types, vec!["error", "incompatibility"]);
+        assert_eq!(received_codes, vec!["first_error", "second_error"]);
     }
 
     #[test]
@@ -769,24 +757,6 @@ mod tests {
             object(json!({
                 "code": "installer_failed",
                 "message": "Installer recipe failed"
-            }))
-        );
-    }
-
-    #[test]
-    fn builds_incompatibility_message() {
-        assert_eq!(
-            incompatibility_message(
-                "libqt6quick6",
-                "6.4",
-                ">=6.5,<7.0",
-                "Installed version is outside the supported range",
-            ),
-            object(json!({
-                "component": "libqt6quick6",
-                "current": "6.4",
-                "required": ">=6.5,<7.0",
-                "message": "Installed version is outside the supported range"
             }))
         );
     }
