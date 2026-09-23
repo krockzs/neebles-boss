@@ -3746,3 +3746,128 @@ mod launcher_contract_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod module_transaction_certification_tests {
+    use super::{transaction_id, ModuleInstallStaging};
+
+    use std::fs;
+
+    fn test_path(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "neebles-module-transaction-test-{}-{}",
+            label,
+            transaction_id()
+        ))
+    }
+
+    #[test]
+    fn certification_staging_refuses_existing_recovery_data() {
+        let path = test_path("existing");
+
+        fs::create_dir_all(&path).expect("could not create existing staging fixture");
+
+        let marker = path.join("recovery-data");
+
+        fs::write(&marker, b"preserve").expect("could not create recovery marker");
+
+        let result = ModuleInstallStaging::prepare(path.clone());
+
+        assert!(result.is_err(), "existing staging path must be rejected");
+
+        assert_eq!(
+            fs::read(&marker).expect("existing recovery marker was destroyed"),
+            b"preserve"
+        );
+
+        fs::remove_dir_all(path).expect("could not clean existing staging fixture");
+    }
+
+    #[test]
+    fn certification_uncommitted_staging_is_cleaned_on_drop() {
+        let path = test_path("drop");
+
+        {
+            let staging =
+                ModuleInstallStaging::prepare(path.clone()).expect("could not prepare staging");
+
+            fs::create_dir_all(staging.path()).expect("could not materialize staging");
+
+            fs::write(staging.path().join("candidate"), b"candidate")
+                .expect("could not create staged candidate");
+
+            assert!(path.exists(), "staging fixture must exist before drop");
+        }
+
+        assert!(!path.exists(), "uncommitted staging survived Drop cleanup");
+    }
+
+    #[test]
+    fn certification_commit_publishes_candidate_and_preserves_it() {
+        let staging_path = test_path("commit-source");
+
+        let destination = test_path("commit-destination");
+
+        let staging =
+            ModuleInstallStaging::prepare(staging_path.clone()).expect("could not prepare staging");
+
+        fs::create_dir_all(staging.path()).expect("could not materialize staging");
+
+        fs::write(staging.path().join("candidate"), b"known-good")
+            .expect("could not create candidate");
+
+        staging
+            .commit(&destination)
+            .expect("candidate commit failed");
+
+        assert!(
+            !staging_path.exists(),
+            "staging path survived successful commit"
+        );
+
+        assert_eq!(
+            fs::read(destination.join("candidate")).expect("committed candidate is missing"),
+            b"known-good"
+        );
+
+        fs::remove_dir_all(destination).expect("could not clean committed fixture");
+    }
+
+    #[test]
+    fn certification_failed_commit_cleans_unpublished_candidate() {
+        let staging_path = test_path("failed-source");
+
+        let missing_parent = test_path("missing-parent");
+
+        let destination = missing_parent.join("destination");
+
+        let staging =
+            ModuleInstallStaging::prepare(staging_path.clone()).expect("could not prepare staging");
+
+        fs::create_dir_all(staging.path()).expect("could not materialize staging");
+
+        fs::write(staging.path().join("candidate"), b"candidate")
+            .expect("could not create candidate");
+
+        let result = staging.commit(&destination);
+
+        assert!(
+            result.is_err(),
+            "commit unexpectedly succeeded without destination parent"
+        );
+
+        assert!(
+            !staging_path.exists(),
+            "failed unpublished candidate survived cleanup"
+        );
+
+        assert!(
+            !destination.exists(),
+            "failed commit published a destination"
+        );
+
+        if missing_parent.exists() {
+            fs::remove_dir_all(missing_parent).expect("could not clean failed commit fixture");
+        }
+    }
+}
