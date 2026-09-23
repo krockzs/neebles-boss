@@ -1,4 +1,4 @@
-use crate::contracts::{Lifecycle, StateMode};
+use crate::contracts::{InvocationLifecycle, StateMode};
 
 use crate::module_ipc::protocol::{ModuleMessage, ModuleRuntimeState};
 
@@ -32,7 +32,7 @@ pub fn invoke(
     module: &str,
     contract: &str,
     endpoint: &str,
-    lifecycle: Lifecycle,
+    lifecycle: InvocationLifecycle,
     state_mode: StateMode,
     args: Vec<String>,
     payload: Option<Value>,

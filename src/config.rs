@@ -16,6 +16,9 @@ pub struct BossConfig {
     pub telemetry_enabled: bool,
 
     #[serde(default)]
+    pub modules: BTreeMap<String, BTreeMap<String, bool>>,
+
+    #[serde(default)]
     pub disabled_modules: Vec<String>,
 
     #[serde(default)]
@@ -59,6 +62,8 @@ pub fn default_json() -> Result<Value, String> {
         "telemetry": {
             "enabled": "false"
         },
+
+        "modules": "{}",
 
         "ui": {
             "language": language,
@@ -144,6 +149,16 @@ fn string_map(value: &BTreeMap<String, String>) -> Result<String, String> {
         .map_err(|error| format!("could not serialize Boss String: {error}"))
 }
 
+fn module_states(
+    local: &Value,
+    default: &Value,
+) -> Result<BTreeMap<String, BTreeMap<String, bool>>, String> {
+    let value = string(local, default, "modules")?;
+
+    serde_json::from_str(&value)
+        .map_err(|error| format!("Boss setting modules contains invalid String data: {error}"))
+}
+
 pub fn load_or_initialize() -> Result<BossConfig, String> {
     let (local, default) = local_settings()?;
 
@@ -157,6 +172,8 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
         normal_notifications: boss_bool(&local, &default, "ui.normal_notifications")?,
 
         telemetry_enabled: boss_bool(&local, &default, "telemetry.enabled")?,
+
+        modules: module_states(&local, &default)?,
 
         disabled_modules: boss_list(&local, &default, "ui.disabled_modules")?,
 
@@ -173,7 +190,6 @@ pub fn set_language(code: &str) -> Result<BossConfig, String> {
         .ok_or_else(|| format!("unsupported N.E.E.B.L.E.S. language: {code}"))?;
 
     let path = config_path()?;
-
     let default = default_json()?;
 
     settings::update_from_default(&path, &default)?;
@@ -186,11 +202,8 @@ pub fn set_language(code: &str) -> Result<BossConfig, String> {
 pub fn set_bool(key: &str, value: bool) -> Result<BossConfig, String> {
     let path_name = match key {
         "tray_enabled" => "tray.enabled",
-
         "launcher_enabled" => "launcher.enabled",
-
         "normal_notifications" => "ui.normal_notifications",
-
         "telemetry_enabled" => "telemetry.enabled",
 
         _ => {
@@ -199,7 +212,6 @@ pub fn set_bool(key: &str, value: bool) -> Result<BossConfig, String> {
     };
 
     let path = config_path()?;
-
     let default = default_json()?;
 
     settings::update_from_default(&path, &default)?;
@@ -384,4 +396,60 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
     )?;
 
     load_or_initialize()
+}
+
+#[cfg(test)]
+mod module_state_tests {
+    use super::*;
+
+    #[test]
+    fn module_states_accept_multiple_modules_and_objects() {
+        let raw = r#"{
+            "module-a": {
+                "indicator": true,
+                "worker": false,
+                "whatever": true
+            },
+            "module-b": {
+                "overlay": false
+            }
+        }"#;
+
+        let parsed: BTreeMap<String, BTreeMap<String, bool>> = serde_json::from_str(raw).unwrap();
+
+        assert_eq!(parsed["module-a"]["indicator"], true);
+        assert_eq!(parsed["module-a"]["worker"], false);
+        assert_eq!(parsed["module-b"]["overlay"], false);
+    }
+
+    #[test]
+    fn module_states_reject_non_boolean_object_state() {
+        let raw = r#"{
+            "module-a": {
+                "worker": "true"
+            }
+        }"#;
+
+        let parsed = serde_json::from_str::<BTreeMap<String, BTreeMap<String, bool>>>(raw);
+
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn module_states_round_trip_without_interpreting_object_ids() {
+        let mut objects = BTreeMap::new();
+        objects.insert("tray".to_string(), true);
+        objects.insert("pepe".to_string(), false);
+        objects.insert("renderer-x".to_string(), true);
+
+        let mut modules = BTreeMap::new();
+        modules.insert("synthetic-module".to_string(), objects);
+
+        let encoded = serde_json::to_string(&modules).unwrap();
+
+        let decoded: BTreeMap<String, BTreeMap<String, bool>> =
+            serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded, modules);
+    }
 }

@@ -5,6 +5,7 @@ mod dispatcher;
 mod external;
 mod ipc;
 mod languages;
+mod lifecycle;
 mod module_ipc;
 mod modules;
 pub mod nightmare;

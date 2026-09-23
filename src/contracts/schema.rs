@@ -6,13 +6,13 @@ pub const CONTRACT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum Lifecycle {
+pub enum InvocationLifecycle {
     Oneshot,
     Runtime,
     Tracked,
 }
 
-impl Default for Lifecycle {
+impl Default for InvocationLifecycle {
     fn default() -> Self {
         Self::Oneshot
     }
@@ -59,7 +59,7 @@ pub struct ContractEndpoint {
     pub endpoint: String,
 
     #[serde(default)]
-    pub lifecycle: Lifecycle,
+    pub lifecycle: InvocationLifecycle,
 
     #[serde(default)]
     pub state_mode: StateMode,

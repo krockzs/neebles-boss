@@ -1,4 +1,4 @@
-use crate::contracts::{Lifecycle, StateMode};
+use crate::contracts::{InvocationLifecycle, StateMode};
 
 use serde::{Deserialize, Serialize};
 
@@ -106,7 +106,7 @@ pub enum ModuleMessage {
         contract: String,
         endpoint: String,
 
-        lifecycle: Lifecycle,
+        lifecycle: InvocationLifecycle,
         state_mode: StateMode,
 
         #[serde(default)]

@@ -79,6 +79,16 @@ pub struct ModuleManifest {
     pub entrypoint: String,
 
     /*
+     * Optional module lifecycle contract.
+     *
+     * This is a reference to a module-owned declarative lifecycle
+     * file. Boss knows the lifecycle transition names but does not
+     * know the technology described by their String recipes.
+     */
+    #[serde(default)]
+    pub lifecycle: Option<String>,
+
+    /*
      * Dynamic module contracts.
      *
      * A module may extend the N.E.E.B.L.E.S. ecosystem by
@@ -3513,6 +3523,18 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
     validate_module_language_contract(module_dir)?;
 
     /*
+     * Lifecycle is part of the installed module contract.
+     *
+     * Validate the referenced declarative contract before an
+     * installation or update may commit.
+     */
+    if let Some(lifecycle_path) = manifest.lifecycle.as_deref() {
+        let lifecycle_path = resolve_module_file(module_dir, lifecycle_path, "lifecycle")?;
+
+        let _ = crate::lifecycle::load(&lifecycle_path)?;
+    }
+
+    /*
      * Settings are part of the installed module contract.
      *
      * Validation happens before installation/update commit,
@@ -3599,6 +3621,104 @@ fn valid_module_id(value: &str) -> bool {
 #[allow(dead_code)]
 fn _language_contract_example() -> Result<String, String> {
     Ok(languages::load_manifest()?.default)
+}
+
+#[cfg(test)]
+mod lifecycle_contract_reference_tests {
+    use super::*;
+    use std::fs;
+
+    fn temporary_module_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "neebles-lifecycle-contract-test-{}-{}-{}",
+            std::process::id(),
+            transaction_id(),
+            label
+        ));
+
+        fs::create_dir_all(&path).unwrap();
+
+        path
+    }
+
+    fn manifest_with_lifecycle(path: &str) -> ModuleManifest {
+        ModuleManifest {
+            schema: MODULE_SCHEMA_VERSION,
+            name: "synthetic-lifecycle-module".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "entrypoint".to_string(),
+            lifecycle: Some(path.to_string()),
+            contracts: Vec::new(),
+            commands: BTreeMap::new(),
+            tray: None,
+            notifications: None,
+            settings: None,
+        }
+    }
+
+    #[test]
+    fn lifecycle_reference_loads_valid_module_local_file() {
+        let module_dir = temporary_module_dir("valid");
+
+        let lifecycle_path = module_dir.join("lifecycle.json");
+
+        fs::write(
+            &lifecycle_path,
+            r#"{
+                "hardcoded": {
+                    "alpha": "one"
+                },
+                "start": "recipe start",
+                "stop": "recipe stop"
+            }"#,
+        )
+        .unwrap();
+
+        let resolved = resolve_module_file(&module_dir, "lifecycle.json", "lifecycle").unwrap();
+
+        let contract = crate::lifecycle::load(&resolved).unwrap();
+
+        assert_eq!(contract.hardcoded.get("alpha"), Some(&"one".to_string()));
+
+        assert_eq!(contract.start.as_deref(), Some("recipe start"));
+
+        fs::remove_dir_all(module_dir).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_reference_rejects_escape_from_module_directory() {
+        let module_dir = temporary_module_dir("escape");
+
+        let error =
+            resolve_module_file(&module_dir, "../outside-lifecycle.json", "lifecycle").unwrap_err();
+
+        assert!(
+            error.contains("invalid path")
+                || error.contains("must be relative")
+                || error.contains("escapes")
+        );
+
+        fs::remove_dir_all(module_dir).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_reference_rejects_missing_file() {
+        let module_dir = temporary_module_dir("missing");
+
+        let error =
+            resolve_module_file(&module_dir, "missing-lifecycle.json", "lifecycle").unwrap_err();
+
+        assert!(error.contains("could not resolve") || error.contains("not a file"));
+
+        fs::remove_dir_all(module_dir).unwrap();
+    }
+
+    #[test]
+    fn manifest_carries_lifecycle_reference_as_string() {
+        let manifest = manifest_with_lifecycle("lifecycle.json");
+
+        assert_eq!(manifest.lifecycle.as_deref(), Some("lifecycle.json"));
+    }
 }
 
 #[cfg(test)]
