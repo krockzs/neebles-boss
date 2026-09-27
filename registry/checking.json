@@ -2,7 +2,7 @@
   "schema": 1,
   "target": "neebles-boss",
   "channel": "stable",
-  "stable_version": "1.0.14",
+  "stable_version": "1.0.15",
   "checks": [
     {
       "id": "client-root",

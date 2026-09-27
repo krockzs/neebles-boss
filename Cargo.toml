@@ -9,5 +9,10 @@ description = "N.E.E.B.L.E.S. Boss backend"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+goblin = "0.10"
 semver = "1"
 zbus = "5"
+
+[[test]]
+name = "domesticacion_elfica"
+path = "testings/domesticacion/rust/domesticacion.rs"

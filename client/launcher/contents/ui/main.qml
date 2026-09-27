@@ -66,7 +66,7 @@ PlasmoidItem {
     }
 
     function refresh() {
-        exec("neebles --version", function(output) {
+        exec("/opt/neebles/client/bin/neebles --version", function(output) {
             const value = output.trim()
             const match = value.match(/([0-9]+\.[0-9]+\.[0-9]+)/)
 
@@ -74,7 +74,7 @@ PlasmoidItem {
                 bossVersion = match[1]
         })
 
-        exec("neebles i18n dump", function(output) {
+        exec("/opt/neebles/client/bin/neebles i18n dump", function(output) {
             try {
                 strings = JSON.parse(output)
             } catch (e) {
@@ -82,7 +82,7 @@ PlasmoidItem {
             }
         })
 
-        exec("neebles modules installed", function(output) {
+        exec("/opt/neebles/client/bin/neebles modules installed", function(output) {
             try {
                 const installed = JSON.parse(output)
 
@@ -366,7 +366,7 @@ PlasmoidItem {
 
                                 onClicked:
                                     root.exec(
-                                        "neebles "
+                                        "/opt/neebles/client/bin/neebles "
                                         + modelData.name
                                         + " "
                                         + modelData.launcher_action,
@@ -431,7 +431,7 @@ PlasmoidItem {
                                         : "enable"
 
                                     root.exec(
-                                        "neebles modules "
+                                        "/opt/neebles/client/bin/neebles modules "
                                         + verb
                                         + " "
                                         + modelData.name,
@@ -566,7 +566,7 @@ PlasmoidItem {
 
                 onClicked:
                     root.exec(
-                        "neebles start",
+                        "/opt/neebles/client/bin/neebles start",
                         function() {}
                     )
             }

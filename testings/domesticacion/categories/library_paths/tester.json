@@ -1,0 +1,1294 @@
+{
+  "schema": "3",
+  "category": "library_paths",
+  "input": {
+    "value": "String",
+    "targets": "String[]"
+  },
+  "tester": "matrix",
+  "technology_specific": false,
+  "spells": [
+    {
+      "name": "boss.physical",
+      "options": {
+        "target_shape": [
+          "file",
+          "directory",
+          "symlink",
+          "missing",
+          "mixed"
+        ],
+        "target_count": [
+          "single",
+          "multiple"
+        ],
+        "path_form": [
+          "relative",
+          "absolute",
+          "parent_escape"
+        ]
+      },
+      "cases": [
+        {
+          "id": "relative-single-file",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-directory",
+          "select": {
+            "target_shape": "directory",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-symlink",
+          "select": {
+            "target_shape": "symlink",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-multiple-mixed",
+          "select": {
+            "target_shape": "mixed",
+            "target_count": "multiple",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-missing",
+          "select": {
+            "target_shape": "missing",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "report_missing"
+        },
+        {
+          "id": "absolute-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "absolute"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "parent-escape-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "parent_escape"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.path_contract",
+      "options": {
+        "path_form": [
+          "relative",
+          "absolute",
+          "parent_escape"
+        ],
+        "cardinality": [
+          "single",
+          "multiple"
+        ],
+        "presence": [
+          "present",
+          "missing"
+        ]
+      },
+      "cases": [
+        {
+          "id": "relative-single-present",
+          "select": {
+            "path_form": "relative",
+            "cardinality": "single",
+            "presence": "present"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-multiple-present",
+          "select": {
+            "path_form": "relative",
+            "cardinality": "multiple",
+            "presence": "present"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-missing",
+          "select": {
+            "path_form": "relative",
+            "cardinality": "single",
+            "presence": "missing"
+          },
+          "expect": "report_missing"
+        },
+        {
+          "id": "absolute-rejected",
+          "select": {
+            "path_form": "absolute",
+            "cardinality": "single",
+            "presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "parent-escape-rejected",
+          "select": {
+            "path_form": "parent_escape",
+            "cardinality": "single",
+            "presence": "present"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.world_reference_resolution",
+      "options": {
+        "reference_form": [
+          "absolute",
+          "relative",
+          "parent_escape"
+        ],
+        "target_state": [
+          "present",
+          "missing"
+        ],
+        "binding": [
+          "direct",
+          "symlink_inside",
+          "symlink_outside",
+          "symlink_broken"
+        ]
+      },
+      "cases": [
+        {
+          "id": "absolute-present",
+          "select": {
+            "reference_form": "absolute",
+            "target_state": "present",
+            "binding": "direct"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "absolute-missing",
+          "select": {
+            "reference_form": "absolute",
+            "target_state": "missing",
+            "binding": "direct"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "relative-present",
+          "select": {
+            "reference_form": "relative",
+            "target_state": "present",
+            "binding": "direct"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-missing",
+          "select": {
+            "reference_form": "relative",
+            "target_state": "missing",
+            "binding": "direct"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "parent-escape-present",
+          "select": {
+            "reference_form": "parent_escape",
+            "target_state": "present",
+            "binding": "direct"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "parent-escape-missing",
+          "select": {
+            "reference_form": "parent_escape",
+            "target_state": "missing",
+            "binding": "direct"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "symlink-inside-world",
+          "select": {
+            "reference_form": "relative",
+            "target_state": "present",
+            "binding": "symlink_inside"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "symlink-outside-world",
+          "select": {
+            "reference_form": "relative",
+            "target_state": "present",
+            "binding": "symlink_outside"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "broken-symlink",
+          "select": {
+            "reference_form": "relative",
+            "target_state": "present",
+            "binding": "symlink_broken"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.relative_reference_transformation",
+      "options": {
+        "origin": [
+          "same_directory",
+          "parent_directory",
+          "child_directory",
+          "sibling_directory",
+          "deep_directory",
+          "outside_world"
+        ],
+        "target_state": [
+          "present",
+          "missing"
+        ]
+      },
+      "cases": [
+        {
+          "id": "same-directory",
+          "select": {
+            "origin": "same_directory",
+            "target_state": "present"
+          },
+          "expect": "."
+        },
+        {
+          "id": "target-in-parent",
+          "select": {
+            "origin": "parent_directory",
+            "target_state": "present"
+          },
+          "expect": ".."
+        },
+        {
+          "id": "target-in-child",
+          "select": {
+            "origin": "child_directory",
+            "target_state": "present"
+          },
+          "expect": "plugins"
+        },
+        {
+          "id": "target-in-sibling",
+          "select": {
+            "origin": "sibling_directory",
+            "target_state": "present"
+          },
+          "expect": "../bin"
+        },
+        {
+          "id": "deep-to-shallow",
+          "select": {
+            "origin": "deep_directory",
+            "target_state": "present"
+          },
+          "expect": "../../../share"
+        },
+        {
+          "id": "outside-world",
+          "select": {
+            "origin": "outside_world",
+            "target_state": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "missing-target",
+          "select": {
+            "origin": "child_directory",
+            "target_state": "missing"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.recursive_closure_certification",
+      "options": {
+        "topology": [
+          "linear",
+          "branch",
+          "cycle"
+        ],
+        "closure_state": [
+          "sealed",
+          "missing_leaf",
+          "outside_leaf"
+        ]
+      },
+      "cases": [
+        {
+          "id": "linear-sealed",
+          "select": {
+            "topology": "linear",
+            "closure_state": "sealed"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "branch-sealed",
+          "select": {
+            "topology": "branch",
+            "closure_state": "sealed"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "cycle-sealed",
+          "select": {
+            "topology": "cycle",
+            "closure_state": "sealed"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "linear-missing-leaf",
+          "select": {
+            "topology": "linear",
+            "closure_state": "missing_leaf"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "branch-missing-leaf",
+          "select": {
+            "topology": "branch",
+            "closure_state": "missing_leaf"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "linear-outside-leaf",
+          "select": {
+            "topology": "linear",
+            "closure_state": "outside_leaf"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "branch-outside-leaf",
+          "select": {
+            "topology": "branch",
+            "closure_state": "outside_leaf"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "cycle-outside-leaf",
+          "select": {
+            "topology": "cycle",
+            "closure_state": "outside_leaf"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.search_reference_projection",
+      "options": {
+        "form": [
+          "absolute",
+          "origin_exact",
+          "origin_child",
+          "bare_relative",
+          "unknown_token",
+          "search_list_with_empty_component",
+          "raw_empty_sequence"
+        ]
+      },
+      "cases": [
+        {
+          "id": "absolute-world-path",
+          "select": {
+            "form": "absolute"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "origin-exact",
+          "select": {
+            "form": "origin_exact"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "origin-child",
+          "select": {
+            "form": "origin_child"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "bare-relative-rejected",
+          "select": {
+            "form": "bare_relative"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "unknown-token-rejected",
+          "select": {
+            "form": "unknown_token"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "empty-search-component-rejected",
+          "select": {
+            "form": "search_list_with_empty_component"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "raw-empty-sequence-rejected",
+          "select": {
+            "form": "raw_empty_sequence"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.search_candidate_resolution",
+      "options": {
+        "placement": [
+          "first",
+          "second",
+          "missing",
+          "outside_symlink"
+        ],
+        "search_authority": [
+          "world_absolute",
+          "elf_origin"
+        ]
+      },
+      "cases": [
+        {
+          "id": "absolute-first-candidate",
+          "select": {
+            "placement": "first",
+            "search_authority": "world_absolute"
+          },
+          "expect": "first"
+        },
+        {
+          "id": "absolute-second-candidate",
+          "select": {
+            "placement": "second",
+            "search_authority": "world_absolute"
+          },
+          "expect": "second"
+        },
+        {
+          "id": "origin-first-candidate",
+          "select": {
+            "placement": "first",
+            "search_authority": "elf_origin"
+          },
+          "expect": "first"
+        },
+        {
+          "id": "origin-second-candidate",
+          "select": {
+            "placement": "second",
+            "search_authority": "elf_origin"
+          },
+          "expect": "second"
+        },
+        {
+          "id": "missing-candidate",
+          "select": {
+            "placement": "missing",
+            "search_authority": "world_absolute"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "escaping-candidate",
+          "select": {
+            "placement": "outside_symlink",
+            "search_authority": "world_absolute"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.direct_search_policy",
+      "options": {
+        "metadata": [
+          "rpath_only",
+          "runpath_only",
+          "both",
+          "none"
+        ]
+      },
+      "cases": [
+        {
+          "id": "rpath-only",
+          "select": {
+            "metadata": "rpath_only"
+          },
+          "expect": "rpath"
+        },
+        {
+          "id": "runpath-only",
+          "select": {
+            "metadata": "runpath_only"
+          },
+          "expect": "runpath"
+        },
+        {
+          "id": "both-prefers-runpath",
+          "select": {
+            "metadata": "both"
+          },
+          "expect": "runpath"
+        },
+        {
+          "id": "no-search-metadata",
+          "select": {
+            "metadata": "none"
+          },
+          "expect": "none"
+        }
+      ]
+    },
+    {
+      "name": "boss.transitive_search_inheritance",
+      "options": {
+        "parent_source": [
+          "rpath",
+          "runpath",
+          "none"
+        ],
+        "depth": [
+          "child",
+          "descendant"
+        ]
+      },
+      "cases": [
+        {
+          "id": "rpath-reaches-child",
+          "select": {
+            "parent_source": "rpath",
+            "depth": "child"
+          },
+          "expect": "inherited"
+        },
+        {
+          "id": "rpath-reaches-descendant",
+          "select": {
+            "parent_source": "rpath",
+            "depth": "descendant"
+          },
+          "expect": "inherited"
+        },
+        {
+          "id": "runpath-stops-at-child-boundary",
+          "select": {
+            "parent_source": "runpath",
+            "depth": "child"
+          },
+          "expect": "none"
+        },
+        {
+          "id": "runpath-never-reaches-descendant",
+          "select": {
+            "parent_source": "runpath",
+            "depth": "descendant"
+          },
+          "expect": "none"
+        },
+        {
+          "id": "nothing-produces-nothing",
+          "select": {
+            "parent_source": "none",
+            "depth": "child"
+          },
+          "expect": "none"
+        }
+      ]
+    },
+    {
+      "name": "boss.effective_search_composition",
+      "options": {
+        "inherited": [
+          "rpath",
+          "none"
+        ],
+        "current": [
+          "rpath",
+          "runpath",
+          "none"
+        ]
+      },
+      "cases": [
+        {
+          "id": "inherited-only",
+          "select": {
+            "inherited": "rpath",
+            "current": "none"
+          },
+          "expect": "inherited"
+        },
+        {
+          "id": "current-rpath-only",
+          "select": {
+            "inherited": "none",
+            "current": "rpath"
+          },
+          "expect": "current_rpath"
+        },
+        {
+          "id": "current-runpath-only",
+          "select": {
+            "inherited": "none",
+            "current": "runpath"
+          },
+          "expect": "current_runpath"
+        },
+        {
+          "id": "current-rpath-plus-inherited",
+          "select": {
+            "inherited": "rpath",
+            "current": "rpath"
+          },
+          "expect": "current_then_inherited"
+        },
+        {
+          "id": "inherited-plus-current-runpath",
+          "select": {
+            "inherited": "rpath",
+            "current": "runpath"
+          },
+          "expect": "inherited_then_runpath"
+        },
+        {
+          "id": "nothing-to-search",
+          "select": {
+            "inherited": "none",
+            "current": "none"
+          },
+          "expect": "none"
+        }
+      ]
+    },
+    {
+      "name": "boss.search_context_normalization",
+      "options": {
+        "shape": [
+          "empty",
+          "unique",
+          "duplicates",
+          "first_occurrence_order"
+        ]
+      },
+      "cases": [
+        {
+          "id": "empty-context-remains-empty",
+          "select": {
+            "shape": "empty"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0
+          }
+        },
+        {
+          "id": "unique-context-remains-identical",
+          "select": {
+            "shape": "unique"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 2
+          }
+        },
+        {
+          "id": "duplicate-search-roots-collapse",
+          "select": {
+            "shape": "duplicates"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 2
+          }
+        },
+        {
+          "id": "normalization-preserves-first-occurrence-order",
+          "select": {
+            "shape": "first_occurrence_order"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "boss.search_authority_grants",
+      "options": {
+        "shape": [
+          "zero",
+          "one",
+          "multiple",
+          "duplicate_grant",
+          "unknown",
+          "relative_descriptor_location",
+          "relative_domestic_path"
+        ]
+      },
+      "cases": [
+        {
+          "id": "execution-may-receive-zero-authorities",
+          "select": {
+            "shape": "zero"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0
+          }
+        },
+        {
+          "id": "execution-may-receive-one-authority",
+          "select": {
+            "shape": "one"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 1
+          }
+        },
+        {
+          "id": "execution-may-receive-many-ordered-authorities",
+          "select": {
+            "shape": "multiple"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 2
+          }
+        },
+        {
+          "id": "duplicate-grants-collapse-by-first-occurrence",
+          "select": {
+            "shape": "duplicate_grant"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 1
+          }
+        },
+        {
+          "id": "unknown-authority-is-error",
+          "select": {
+            "shape": "unknown"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "descriptor-location-must-be-absolute",
+          "select": {
+            "shape": "relative_descriptor_location"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "domestic-authority-path-must-be-absolute",
+          "select": {
+            "shape": "relative_domestic_path"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.effective_search_authority_projection",
+      "options": {
+        "shape": [
+          "explicit_only",
+          "defaults_only",
+          "explicit_then_defaults",
+          "origin_then_defaults",
+          "invalid_default"
+        ]
+      },
+      "cases": [
+        {
+          "id": "explicit-search-projects-without-defaults",
+          "select": {
+            "shape": "explicit_only"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 1
+          }
+        },
+        {
+          "id": "controlled-defaults-work-without-explicit-search",
+          "select": {
+            "shape": "defaults_only"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 2
+          }
+        },
+        {
+          "id": "explicit-search-precedes-controlled-defaults",
+          "select": {
+            "shape": "explicit_then_defaults"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 3
+          }
+        },
+        {
+          "id": "origin-search-and-controlled-defaults-share-authority-projection",
+          "select": {
+            "shape": "origin_then_defaults"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 2
+          }
+        },
+        {
+          "id": "bare-relative-controlled-default-is-rejected",
+          "select": {
+            "shape": "invalid_default"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.observed_resolution_authority",
+      "options": {
+        "declaration": [
+          "exact",
+          "superset",
+          "missing_observed"
+        ],
+        "observation": [
+          "single",
+          "multiple"
+        ]
+      },
+      "cases": [
+        {
+          "id": "single-exact",
+          "select": {
+            "declaration": "exact",
+            "observation": "single"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "multiple-exact",
+          "select": {
+            "declaration": "exact",
+            "observation": "multiple"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "single-declared-superset",
+          "select": {
+            "declaration": "superset",
+            "observation": "single"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "multiple-declared-superset",
+          "select": {
+            "declaration": "superset",
+            "observation": "multiple"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "single-undeclared-observation",
+          "select": {
+            "declaration": "missing_observed",
+            "observation": "single"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "multiple-with-undeclared-observation",
+          "select": {
+            "declaration": "missing_observed",
+            "observation": "multiple"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.elf_interpreter_observation",
+      "options": {
+        "interpreter_shape": [
+          "none",
+          "absolute",
+          "relative"
+        ]
+      },
+      "cases": [
+        {
+          "id": "no-interpreter-produces-no-evidence",
+          "select": {
+            "interpreter_shape": "none"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0,
+            "findings_size": 0
+          }
+        },
+        {
+          "id": "absolute-interpreter-is-observed-verbatim",
+          "select": {
+            "interpreter_shape": "absolute"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 1,
+            "findings_size": 0
+          }
+        },
+        {
+          "id": "relative-interpreter-is-observed-not-resolved",
+          "select": {
+            "interpreter_shape": "relative"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 1,
+            "findings_size": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "boss.elf_interpreter_resolution",
+      "options": {
+        "shape": [
+          "none",
+          "absolute_inside",
+          "absolute_missing",
+          "relative"
+        ]
+      },
+      "cases": [
+        {
+          "id": "no-interpreter-needs-no-resolution",
+          "select": {
+            "shape": "none"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "absolute-interpreter-resolves-inside-world",
+          "select": {
+            "shape": "absolute_inside"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "missing-interpreter-is-error",
+          "select": {
+            "shape": "absolute_missing"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "relative-interpreter-is-error",
+          "select": {
+            "shape": "relative"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.elf_needed_observation",
+      "options": {
+        "needed_shape": [
+          "none",
+          "single",
+          "multiple",
+          "duplicate"
+        ]
+      },
+      "cases": [
+        {
+          "id": "no-needed",
+          "select": {
+            "needed_shape": "none"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0
+          }
+        },
+        {
+          "id": "single-needed",
+          "select": {
+            "needed_shape": "single"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 1
+          }
+        },
+        {
+          "id": "multiple-needed",
+          "select": {
+            "needed_shape": "multiple"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 2
+          }
+        },
+        {
+          "id": "duplicate-needed-evidence-preserved",
+          "select": {
+            "needed_shape": "duplicate"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "boss.elf_needed_resolution",
+      "options": {
+        "shape": [
+          "runpath_hit",
+          "rpath_hit",
+          "default_hit",
+          "missing"
+        ]
+      },
+      "cases": [
+        {
+          "id": "runpath-resolves-needed-inside-world",
+          "select": {
+            "shape": "runpath_hit"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "rpath-resolves-needed-inside-world",
+          "select": {
+            "shape": "rpath_hit"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "controlled-default-resolves-needed-inside-world",
+          "select": {
+            "shape": "default_hit"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "missing-needed-never-falls-back-to-host",
+          "select": {
+            "shape": "missing"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.elf_needed_frontier",
+      "options": {
+        "shape": [
+          "two_children",
+          "no_children",
+          "missing_child"
+        ]
+      },
+      "cases": [
+        {
+          "id": "one-elf-resolves-complete-needed-frontier",
+          "select": {
+            "shape": "two_children"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 2
+          }
+        },
+        {
+          "id": "elf-without-needed-has-empty-frontier",
+          "select": {
+            "shape": "no_children"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0
+          }
+        },
+        {
+          "id": "missing-frontier-member-is-error",
+          "select": {
+            "shape": "missing_child"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.elf_recursive_closure",
+      "options": {
+        "shape": [
+          "chain",
+          "cycle",
+          "same_path_distinct_context",
+          "missing_dependency"
+        ]
+      },
+      "cases": [
+        {
+          "id": "recursive-chain-reaches-every-contact",
+          "select": {
+            "shape": "chain"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 3
+          }
+        },
+        {
+          "id": "recursive-cycle-converges",
+          "select": {
+            "shape": "cycle"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 2
+          }
+        },
+        {
+          "id": "same-path-with-distinct-inherited-context-remains-distinct-state",
+          "select": {
+            "shape": "same_path_distinct_context"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 5
+          }
+        },
+        {
+          "id": "missing-recursive-contact-is-error",
+          "select": {
+            "shape": "missing_dependency"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.observation_contract",
+      "options": {
+        "shape": [
+          "empty",
+          "finding",
+          "multiple_findings",
+          "evidence_and_findings"
+        ]
+      },
+      "cases": [
+        {
+          "id": "empty-observation-keeps-pass",
+          "select": {
+            "shape": "empty"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0,
+            "findings_size": 0
+          }
+        },
+        {
+          "id": "single-finding-keeps-pass",
+          "select": {
+            "shape": "finding"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0,
+            "findings_size": 1
+          }
+        },
+        {
+          "id": "multiple-findings-keep-pass",
+          "select": {
+            "shape": "multiple_findings"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0,
+            "findings_size": 2
+          }
+        },
+        {
+          "id": "evidence-and-finding-coexist",
+          "select": {
+            "shape": "evidence_and_findings"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 2,
+            "findings_size": 1
+          }
+        }
+      ]
+    }
+  ]
+}

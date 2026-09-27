@@ -1,4 +1,6 @@
 #include "installercontroller.h"
+#include "../../client/shared/runtimeauthority.h"
+#include "../../client/shared/domesticprocess.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -28,6 +30,19 @@ InstallerController::InstallerController(
         m_backendBinary = arguments.at(2);
         m_uiBinary = arguments.at(3);
         m_clientDataArchive = arguments.at(4);
+    }
+
+    if (arguments.size() >= 7) {
+        m_runtimeResolver =
+            arguments.at(5).trimmed();
+
+        m_runtimeManifest =
+            arguments.at(6).trimmed();
+    }
+
+    if (arguments.size() >= 8) {
+        m_authoritySupply =
+            arguments.at(7).trimmed();
     }
 
     m_process.setProcessChannelMode(QProcess::MergedChannels);
@@ -119,8 +134,14 @@ void InstallerController::startInstallation()
     if (m_running)
         return;
 
-    if (m_installScript.isEmpty() || m_backendBinary.isEmpty() || m_uiBinary.isEmpty()
-        || m_clientDataArchive.isEmpty()) {
+    if (
+        m_installScript.isEmpty()
+        || m_backendBinary.isEmpty()
+        || m_uiBinary.isEmpty()
+        || m_clientDataArchive.isEmpty()
+        || m_runtimeResolver.isEmpty()
+        || m_runtimeManifest.isEmpty()
+    ) {
         setStatus(
             text(
                 QStringLiteral(
@@ -141,10 +162,14 @@ void InstallerController::startInstallation()
         return;
     }
 
-    if (!QFileInfo::exists(m_installScript) ||
-        !QFileInfo::exists(m_backendBinary) ||
-        !QFileInfo::exists(m_uiBinary) ||
-        !QFileInfo::exists(m_clientDataArchive)) {
+    if (
+        !QFileInfo::exists(m_installScript)
+        || !QFileInfo::exists(m_backendBinary)
+        || !QFileInfo::exists(m_uiBinary)
+        || !QFileInfo::exists(m_clientDataArchive)
+        || !QFileInfo(m_runtimeResolver).isExecutable()
+        || !QFileInfo(m_runtimeManifest).isReadable()
+    ) {
         setStatus(
             text(
                 QStringLiteral(
@@ -230,6 +255,12 @@ void InstallerController::startInstallation()
         QStringLiteral("--running"),
         QStringLiteral("false"),
 
+        QStringLiteral("--runtime-resolver"),
+        m_runtimeResolver,
+
+        QStringLiteral("--runtime-manifest"),
+        m_runtimeManifest,
+
         QStringLiteral("--"),
 
         m_installScript,
@@ -238,12 +269,54 @@ void InstallerController::startInstallation()
         m_clientDataArchive,
 
         /*
-         * install.sh receives the auth agent as
-         * mandatory fourth payload and installs it
+         * install.sh receives the auth agent plus the exact
+         * bootstrap runtime authority and materializes both
          * permanently with Boss.
          */
-        authAgent
+        authAgent,
+        m_runtimeResolver,
+        m_runtimeManifest
     };
+
+    if (!m_authoritySupply.isEmpty()) {
+        const QFileInfo supplyInfo(
+            m_authoritySupply
+        );
+
+        if (
+            !supplyInfo.isAbsolute()
+            || !supplyInfo.isFile()
+            || !supplyInfo.isReadable()
+        ) {
+            setStatus(
+                text(
+                    QStringLiteral(
+                        "installer.status.payload_missing"
+                    )
+                )
+            );
+
+            appendLog(
+                QStringLiteral(
+                    "AuthoritySupply transport path is invalid: "
+                )
+                + m_authoritySupply
+            );
+
+            m_running = false;
+            m_finished = true;
+            m_success = false;
+
+            emit runningChanged();
+            emit finishedChanged();
+
+            return;
+        }
+
+        args.append(
+            m_authoritySupply
+        );
+    }
 
     m_process.start(
         authAgent,
@@ -400,11 +473,134 @@ void InstallerController::integrateDesktop()
      *
      * Do not duplicate Boss configuration parsing here.
      */
-    QProcess::execute(
-        QStringLiteral("/usr/bin/systemctl"),
+    QString runtimeAuthorityError;
+
+    const QString systemctl =
+        NeeblesRuntimeAuthority::resolve(
+            m_runtimeResolver,
+            m_runtimeManifest,
+            QStringLiteral("boss.systemctl"),
+            QStringLiteral("executable"),
+            &runtimeAuthorityError
+        );
+
+    if (systemctl.isEmpty()) {
+        appendLog(
+            QStringLiteral(
+                "N.E.E.B.L.E.S. runtime authority could not resolve boss.systemctl: "
+            )
+            + runtimeAuthorityError
+        );
+
+        return;
+    }
+
+    const QString runtimeDir =
+        qEnvironmentVariable(
+            "XDG_RUNTIME_DIR"
+        ).trimmed();
+
+    const QString sessionBus =
+        qEnvironmentVariable(
+            "DBUS_SESSION_BUS_ADDRESS"
+        ).trimmed();
+
+    if (
+        runtimeDir.isEmpty()
+        || sessionBus.isEmpty()
+    ) {
+        appendLog(
+            QStringLiteral(
+                "N.E.E.B.L.E.S. desktop protocol environment is incomplete"
+            )
+        );
+
+        return;
+    }
+
+    QProcessEnvironment protocolEnvironment;
+
+    protocolEnvironment.insert(
+        QStringLiteral(
+            "XDG_RUNTIME_DIR"
+        ),
+        runtimeDir
+    );
+
+    protocolEnvironment.insert(
+        QStringLiteral(
+            "DBUS_SESSION_BUS_ADDRESS"
+        ),
+        sessionBus
+    );
+
+    const auto executeSystemInterface =
+        [&](
+            const QStringList &arguments
+        ) -> int {
+            QProcess process;
+            QString domesticProcessError;
+
+            if (
+                !NeeblesDomesticProcess::configure(
+                    &process,
+                    NeeblesDomesticProcess::EnvironmentClass::SystemInterface,
+                    protocolEnvironment,
+                    QProcessEnvironment(),
+                    QSet<QString>(),
+                    &domesticProcessError
+                )
+            ) {
+                appendLog(
+                    QStringLiteral(
+                        "Could not seal system interface process: "
+                    )
+                    + domesticProcessError
+                );
+
+                return -1;
+            }
+
+            process.start(
+                systemctl,
+                arguments
+            );
+
+            if (
+                !process.waitForStarted(
+                    5000
+                )
+            ) {
+                return -1;
+            }
+
+            if (
+                !process.waitForFinished(
+                    30000
+                )
+            ) {
+                process.kill();
+                process.waitForFinished();
+
+                return -1;
+            }
+
+            if (
+                process.exitStatus()
+                    != QProcess::NormalExit
+            ) {
+                return -1;
+            }
+
+            return process.exitCode();
+        };
+
+    executeSystemInterface(
         {
             QStringLiteral("--user"),
-            QStringLiteral("daemon-reload")
+            QStringLiteral(
+                "daemon-reload"
+            )
         }
     );
 
@@ -415,8 +611,7 @@ void InstallerController::integrateDesktop()
      * Manager, Qt Host and SNI Host must remain available
      * regardless of the persisted visual state.
      */
-    QProcess::execute(
-        QStringLiteral("/usr/bin/systemctl"),
+    executeSystemInterface(
         {
             QStringLiteral("--user"),
             QStringLiteral("enable"),
@@ -427,8 +622,7 @@ void InstallerController::integrateDesktop()
         }
     );
 
-    QProcess::execute(
-        QStringLiteral("/usr/bin/systemctl"),
+    executeSystemInterface(
         {
             QStringLiteral("--user"),
             QStringLiteral("enable"),
@@ -439,8 +633,7 @@ void InstallerController::integrateDesktop()
         }
     );
 
-    QProcess::execute(
-        QStringLiteral("/usr/bin/systemctl"),
+    executeSystemInterface(
         {
             QStringLiteral("--user"),
             QStringLiteral("enable"),
@@ -476,27 +669,26 @@ void InstallerController::installLauncherIntoPanel()
         return;
     }
 
-    QString qdbus;
+    QString runtimeAuthorityError;
 
-    if (
-        QFileInfo::exists(
-            QStringLiteral("/usr/bin/qdbus6")
-        )
-    )
-        qdbus = QStringLiteral("/usr/bin/qdbus6");
-    else if (
-        QFileInfo::exists(
-            QStringLiteral("/usr/bin/qdbus")
-        )
-    )
-        qdbus = QStringLiteral("/usr/bin/qdbus");
-    else {
+    const QString qdbus =
+        NeeblesRuntimeAuthority::resolve(
+            m_runtimeResolver,
+            m_runtimeManifest,
+            QStringLiteral("boss.qdbus6"),
+            QStringLiteral("executable"),
+            &runtimeAuthorityError
+        );
+
+    if (qdbus.isEmpty()) {
         appendLog(
             text(
                 QStringLiteral(
                     "installer.log.qdbus_missing"
                 )
             )
+            + QStringLiteral(": ")
+            + runtimeAuthorityError
         );
         return;
     }
@@ -578,6 +770,42 @@ if (targetPanel) {
 )JS");
 
     QProcess process;
+    QString domesticProcessError;
+
+    QProcessEnvironment protocolEnvironment;
+
+    protocolEnvironment.insert(
+        QStringLiteral("XDG_RUNTIME_DIR"),
+        qEnvironmentVariable(
+            "XDG_RUNTIME_DIR"
+        ).trimmed()
+    );
+
+    protocolEnvironment.insert(
+        QStringLiteral("DBUS_SESSION_BUS_ADDRESS"),
+        qEnvironmentVariable(
+            "DBUS_SESSION_BUS_ADDRESS"
+        ).trimmed()
+    );
+
+    if (
+        !NeeblesDomesticProcess::configure(
+            &process,
+            NeeblesDomesticProcess::EnvironmentClass::SystemInterface,
+            protocolEnvironment,
+            QProcessEnvironment(),
+            QSet<QString>(),
+            &domesticProcessError
+        )
+    ) {
+        appendLog(
+            QStringLiteral(
+                "Could not seal qdbus system interface process: "
+            )
+            + domesticProcessError
+        );
+        return;
+    }
 
     process.start(
         qdbus,

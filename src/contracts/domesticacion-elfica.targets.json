@@ -1,0 +1,91 @@
+{
+  "schema": "1",
+  "name": "domesticacion-elfica-targets",
+  "entries": [
+    {
+      "category": "executable",
+      "value": "curl",
+      "targets": [
+        "usr/bin/curl"
+      ]
+    },
+    {
+      "category": "executable",
+      "value": "env",
+      "targets": [
+        "usr/bin/env"
+      ]
+    },
+    {
+      "category": "executable",
+      "value": "git",
+      "targets": [
+        "usr/bin/git"
+      ]
+    },
+    {
+      "category": "executable",
+      "value": "notify-send",
+      "targets": [
+        "usr/bin/notify-send"
+      ]
+    },
+    {
+      "category": "executable",
+      "value": "setpriv",
+      "targets": [
+        "usr/bin/setpriv"
+      ]
+    },
+    {
+      "category": "executable",
+      "value": "systemctl",
+      "targets": [
+        "usr/bin/systemctl"
+      ]
+    },
+    {
+      "category": "executable",
+      "value": "systemd-run",
+      "targets": [
+        "usr/bin/systemd-run"
+      ]
+    },
+    {
+      "category": "executable",
+      "value": "pkexec",
+      "targets": [
+        "usr/bin/pkexec"
+      ]
+    },
+    {
+      "category": "executable",
+      "value": "qdbus6",
+      "targets": [
+        "usr/bin/qdbus6"
+      ]
+    },
+    {
+      "category": "executable",
+      "value": "tar",
+      "targets": [
+        "usr/bin/tar"
+      ]
+    },
+    {
+      "category": "library_paths",
+      "value": "core.multiarch",
+      "targets": [
+        "usr/lib/x86_64-linux-gnu"
+      ]
+    },
+    {
+      "category": "library_paths",
+      "value": "core.multiarch+core.systemd-runtime",
+      "targets": [
+        "usr/lib/x86_64-linux-gnu",
+        "usr/lib/x86_64-linux-gnu/systemd"
+      ]
+    }
+  ]
+}

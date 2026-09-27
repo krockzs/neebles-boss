@@ -1,4 +1,6 @@
 #include "authagent.h"
+#include "../../client/shared/runtimeauthority.h"
+#include "../../client/shared/domesticprocess.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -177,6 +179,8 @@ int main(
 
     NeeblesAuthContext context;
 
+    QString runtimeResolver;
+    QString runtimeManifest;
     QStringList command;
 
     bool commandSection = false;
@@ -249,11 +253,28 @@ int main(
 
             context.running =
                 parseBool(running);
+        } else if (
+            value
+            == QStringLiteral("--runtime-resolver")
+        ) {
+            if (!takeValue(runtimeResolver))
+                return 2;
+        } else if (
+            value
+            == QStringLiteral("--runtime-manifest")
+        ) {
+            if (!takeValue(runtimeManifest))
+                return 2;
         }
     }
 
-    if (command.isEmpty())
+    if (
+        command.isEmpty()
+        || runtimeResolver.trimmed().isEmpty()
+        || runtimeManifest.trimmed().isEmpty()
+    ) {
         return 2;
+    }
 
     if (context.locale.isEmpty())
         context.locale =
@@ -283,6 +304,21 @@ int main(
     }
 
     QProcess privilegedProcess;
+
+    QString domesticProcessError;
+
+    if (
+        !NeeblesDomesticProcess::configure(
+            &privilegedProcess,
+            NeeblesDomesticProcess::EnvironmentClass::SystemInterface,
+            QProcessEnvironment(),
+            QProcessEnvironment(),
+            QSet<QString>(),
+            &domesticProcessError
+        )
+    ) {
+        return 1;
+    }
 
     privilegedProcess.setProcessChannelMode(
         QProcess::ForwardedChannels
@@ -351,8 +387,24 @@ int main(
             pkexecArgs
                 << command.mid(1);
 
+            QString runtimeAuthorityError;
+
+            const QString pkexec =
+                NeeblesRuntimeAuthority::resolve(
+                    runtimeResolver,
+                    runtimeManifest,
+                    QStringLiteral("boss.pkexec"),
+                    QStringLiteral("executable"),
+                    &runtimeAuthorityError
+                );
+
+            if (pkexec.isEmpty()) {
+                app.exit(1);
+                return;
+            }
+
             privilegedProcess.start(
-                QStringLiteral("pkexec"),
+                pkexec,
                 pkexecArgs
             );
         }

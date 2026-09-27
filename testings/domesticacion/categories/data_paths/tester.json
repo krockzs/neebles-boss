@@ -1,0 +1,254 @@
+{
+  "schema": "3",
+  "category": "data_paths",
+  "input": {
+    "value": "String",
+    "targets": "String[]"
+  },
+  "tester": "matrix",
+  "technology_specific": false,
+  "spells": [
+    {
+      "name": "boss.physical",
+      "options": {
+        "target_shape": [
+          "file",
+          "directory",
+          "symlink",
+          "missing",
+          "mixed"
+        ],
+        "target_count": [
+          "single",
+          "multiple"
+        ],
+        "path_form": [
+          "relative",
+          "absolute",
+          "parent_escape"
+        ]
+      },
+      "cases": [
+        {
+          "id": "relative-single-file",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-directory",
+          "select": {
+            "target_shape": "directory",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-symlink",
+          "select": {
+            "target_shape": "symlink",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-multiple-mixed",
+          "select": {
+            "target_shape": "mixed",
+            "target_count": "multiple",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-missing",
+          "select": {
+            "target_shape": "missing",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "report_missing"
+        },
+        {
+          "id": "absolute-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "absolute"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "parent-escape-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "parent_escape"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.path_contract",
+      "options": {
+        "path_form": [
+          "relative",
+          "absolute",
+          "parent_escape"
+        ],
+        "cardinality": [
+          "single",
+          "multiple"
+        ],
+        "presence": [
+          "present",
+          "missing"
+        ]
+      },
+      "cases": [
+        {
+          "id": "relative-single-present",
+          "select": {
+            "path_form": "relative",
+            "cardinality": "single",
+            "presence": "present"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-multiple-present",
+          "select": {
+            "path_form": "relative",
+            "cardinality": "multiple",
+            "presence": "present"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-missing",
+          "select": {
+            "path_form": "relative",
+            "cardinality": "single",
+            "presence": "missing"
+          },
+          "expect": "report_missing"
+        },
+        {
+          "id": "absolute-rejected",
+          "select": {
+            "path_form": "absolute",
+            "cardinality": "single",
+            "presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "parent-escape-rejected",
+          "select": {
+            "path_form": "parent_escape",
+            "cardinality": "single",
+            "presence": "present"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.reference_requirement",
+      "options": {
+        "reachability": [
+          "reachable",
+          "unreachable"
+        ],
+        "requirement": [
+          "required",
+          "optional"
+        ],
+        "presence": [
+          "present",
+          "missing"
+        ]
+      },
+      "cases": [
+        {
+          "id": "reachable-required-present",
+          "select": {
+            "reachability": "reachable",
+            "requirement": "required",
+            "presence": "present"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "reachable-required-missing",
+          "select": {
+            "reachability": "reachable",
+            "requirement": "required",
+            "presence": "missing"
+          },
+          "expect": "report_missing"
+        },
+        {
+          "id": "reachable-optional-present",
+          "select": {
+            "reachability": "reachable",
+            "requirement": "optional",
+            "presence": "present"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "reachable-optional-missing",
+          "select": {
+            "reachability": "reachable",
+            "requirement": "optional",
+            "presence": "missing"
+          },
+          "expect": "optional_missing"
+        },
+        {
+          "id": "unreachable-required-present",
+          "select": {
+            "reachability": "unreachable",
+            "requirement": "required",
+            "presence": "present"
+          },
+          "expect": "unreachable"
+        },
+        {
+          "id": "unreachable-required-missing",
+          "select": {
+            "reachability": "unreachable",
+            "requirement": "required",
+            "presence": "missing"
+          },
+          "expect": "unreachable"
+        },
+        {
+          "id": "unreachable-optional-present",
+          "select": {
+            "reachability": "unreachable",
+            "requirement": "optional",
+            "presence": "present"
+          },
+          "expect": "unreachable"
+        },
+        {
+          "id": "unreachable-optional-missing",
+          "select": {
+            "reachability": "unreachable",
+            "requirement": "optional",
+            "presence": "missing"
+          },
+          "expect": "unreachable"
+        }
+      ]
+    }
+  ]
+}

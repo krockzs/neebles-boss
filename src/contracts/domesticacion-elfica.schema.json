@@ -1,0 +1,15 @@
+{
+  "schema": "1",
+  "name": "domesticacion-elfica",
+  "value_type": "String",
+  "categories": {
+    "executable": "String",
+    "environment": "String",
+    "library_paths": "String",
+    "data_paths": "String",
+    "runtime_paths": "String",
+    "helpers": "String",
+    "allowed_session_inputs": "String"
+  },
+  "unknown_category": "error"
+}

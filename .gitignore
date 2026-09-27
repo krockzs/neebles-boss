@@ -8,3 +8,9 @@ ui/auth-agent/build/
 /client/tray-host/build/
 
 /client/launcher-plugin/build/
+
+# Local generated state
+/release/craft*/
+/scripts/__pycache__/
+/testings/domesticacion/qt/build/
+/ui/installer/build-domestic/

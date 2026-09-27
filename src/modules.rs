@@ -5,6 +5,7 @@ use crate::contracts::{
 use crate::languages;
 use crate::privileges;
 use crate::settings;
+use neebles_backend::domestic_environment::parse_environment_lines;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -43,6 +44,9 @@ pub struct CommandContract {
 
     #[serde(default)]
     pub launcher: bool,
+
+    #[serde(default)]
+    pub allowed_session_inputs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -508,6 +512,7 @@ fn checkout_registry_commit(
     name: &str,
     entry: &RegistryModule,
     destination: &Path,
+    writable_authority: &str,
 ) -> Result<(), String> {
     let expected = entry.commit.trim().to_ascii_lowercase();
 
@@ -518,16 +523,91 @@ fn checkout_registry_commit(
         ));
     }
 
-    let status = Command::new("git")
-        .arg("init")
-        .arg(destination)
-        .status()
-        .map_err(|error| {
-            format!(
-                "could not initialize staged repository for module '{}': {error}",
-                name
+    fs::create_dir(destination).map_err(|error| {
+        format!(
+            "could not materialize module staging directory {} for '{}': {error}",
+            destination.display(),
+            name
+        )
+    })?;
+
+    let registry =
+        neebles_backend::domestic_authority_supply_process::process_supplied_authority_registry()?;
+
+    let grants = neebles_backend::domestic_authority_supply::build_authority_grant_set(
+        registry,
+        [
+            "platform.filesystem_boundary",
+            "system.dns_resolver_config",
+            writable_authority,
+        ],
+    )?;
+
+    let platform_descriptor = grants.descriptor_path(registry, "platform.filesystem_boundary")?;
+
+    let dns_descriptor = grants.descriptor_path(registry, "system.dns_resolver_config")?;
+
+    let writable_descriptor = grants.descriptor_path(registry, writable_authority)?;
+
+    let platform =
+        neebles_backend::domestic_platform_authority::load_platform_authority_descriptor(
+            &platform_descriptor,
+            "platform.filesystem_boundary",
+        )?;
+
+    let dns =
+        neebles_backend::domestic_external_data_authority::load_external_data_authority_descriptor(
+            &dns_descriptor,
+            "system.dns_resolver_config",
+        )?;
+
+    let writable =
+        neebles_backend::domestic_writable_data_authority::load_writable_data_authority_descriptor(
+            &writable_descriptor,
+            writable_authority,
+        )?;
+
+    let writable_grant =
+        neebles_backend::domestic_writable_data_authority::grant_writable_data_subpath(
+            &writable,
+            destination,
+            destination,
+        )?;
+
+    let runtime_manifest =
+        neebles_backend::domestic_runtime_authority::current_boss_runtime_manifest()?;
+
+    let plan =
+        neebles_backend::domestic_boundary_execution::compose_materialized_boundary_execution_plan_with_writable_data(
+            &runtime_manifest,
+            "boss.git",
+            &platform,
+            &[dns],
+            &[writable_grant],
+            true,
+            true,
+            true,
+            Some(Path::new("/tmp")),
+        )?;
+
+    let git_command = |arguments: &[std::ffi::OsString]| {
+        neebles_backend::domestic_boundary_execution::build_pure_materialized_boundary_execution_command(
+                &plan,
+                arguments,
             )
-        })?;
+    };
+
+    let init_arguments = [
+        std::ffi::OsString::from("init"),
+        destination.as_os_str().to_os_string(),
+    ];
+
+    let status = git_command(&init_arguments)?.status().map_err(|error| {
+        format!(
+            "could not initialize staged repository for module '{}': {error}",
+            name
+        )
+    })?;
 
     if !status.success() {
         return Err(format!(
@@ -536,11 +616,16 @@ fn checkout_registry_commit(
         ));
     }
 
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(destination)
-        .args(["remote", "add", "origin"])
-        .arg(&entry.repo)
+    let remote_arguments = [
+        std::ffi::OsString::from("-C"),
+        destination.as_os_str().to_os_string(),
+        std::ffi::OsString::from("remote"),
+        std::ffi::OsString::from("add"),
+        std::ffi::OsString::from("origin"),
+        std::ffi::OsString::from(&entry.repo),
+    ];
+
+    let status = git_command(&remote_arguments)?
         .status()
         .map_err(|error| format!("could not configure module '{}' repository: {error}", name))?;
 
@@ -551,22 +636,22 @@ fn checkout_registry_commit(
         ));
     }
 
-    /*
-     * Fetch the immutable object named by the registry.
-     * We intentionally do not resolve or trust branch tip.
-     */
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(destination)
-        .args(["fetch", "--depth", "1", "origin"])
-        .arg(&expected)
-        .status()
-        .map_err(|error| {
-            format!(
-                "could not fetch pinned commit for module '{}': {error}",
-                name
-            )
-        })?;
+    let fetch_arguments = [
+        std::ffi::OsString::from("-C"),
+        destination.as_os_str().to_os_string(),
+        std::ffi::OsString::from("fetch"),
+        std::ffi::OsString::from("--depth"),
+        std::ffi::OsString::from("1"),
+        std::ffi::OsString::from("origin"),
+        std::ffi::OsString::from(&expected),
+    ];
+
+    let status = git_command(&fetch_arguments)?.status().map_err(|error| {
+        format!(
+            "could not fetch pinned commit for module '{}': {error}",
+            name
+        )
+    })?;
 
     if !status.success() {
         return Err(format!(
@@ -575,10 +660,15 @@ fn checkout_registry_commit(
         ));
     }
 
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(destination)
-        .args(["checkout", "--detach", "FETCH_HEAD"])
+    let checkout_arguments = [
+        std::ffi::OsString::from("-C"),
+        destination.as_os_str().to_os_string(),
+        std::ffi::OsString::from("checkout"),
+        std::ffi::OsString::from("--detach"),
+        std::ffi::OsString::from("FETCH_HEAD"),
+    ];
+
+    let status = git_command(&checkout_arguments)?
         .status()
         .map_err(|error| {
             format!(
@@ -594,17 +684,19 @@ fn checkout_registry_commit(
         ));
     }
 
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(destination)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .map_err(|error| {
-            format!(
-                "could not verify checked out commit for module '{}': {error}",
-                name
-            )
-        })?;
+    let verify_arguments = [
+        std::ffi::OsString::from("-C"),
+        destination.as_os_str().to_os_string(),
+        std::ffi::OsString::from("rev-parse"),
+        std::ffi::OsString::from("HEAD"),
+    ];
+
+    let output = git_command(&verify_arguments)?.output().map_err(|error| {
+        format!(
+            "could not verify checked out commit for module '{}': {error}",
+            name
+        )
+    })?;
 
     if !output.status.success() {
         return Err(format!(
@@ -649,6 +741,54 @@ fn local_module_icon(module_dir: &Path) -> String {
     String::new()
 }
 
+fn build_network_boundary_command(
+    world_name: &str,
+    arguments: &[std::ffi::OsString],
+) -> Result<std::process::Command, String> {
+    let registry =
+        neebles_backend::domestic_authority_supply_process::process_supplied_authority_registry()?;
+
+    let grants = neebles_backend::domestic_authority_supply::build_authority_grant_set(
+        registry,
+        ["platform.filesystem_boundary", "system.dns_resolver_config"],
+    )?;
+
+    let platform_descriptor = grants.descriptor_path(registry, "platform.filesystem_boundary")?;
+
+    let dns_descriptor = grants.descriptor_path(registry, "system.dns_resolver_config")?;
+
+    let platform =
+        neebles_backend::domestic_platform_authority::load_platform_authority_descriptor(
+            &platform_descriptor,
+            "platform.filesystem_boundary",
+        )?;
+
+    let dns =
+        neebles_backend::domestic_external_data_authority::load_external_data_authority_descriptor(
+            &dns_descriptor,
+            "system.dns_resolver_config",
+        )?;
+
+    let runtime_manifest =
+        neebles_backend::domestic_runtime_authority::current_boss_runtime_manifest()?;
+
+    let plan =
+        neebles_backend::domestic_boundary_execution::compose_materialized_boundary_execution_plan(
+            &runtime_manifest,
+            world_name,
+            &platform,
+            &[dns],
+            true,
+            true,
+            true,
+            Some(std::path::Path::new("/tmp")),
+        )?;
+
+    neebles_backend::domestic_boundary_execution::build_pure_materialized_boundary_execution_command(
+        &plan, arguments,
+    )
+}
+
 fn github_raw_base(repo: &str, revision: &str) -> Option<String> {
     let repo = repo
         .strip_prefix("https://github.com/")?
@@ -668,11 +808,19 @@ fn remote_module_icon(repo: &str, commit: &str) -> String {
     for extension in MODULE_ICON_EXTENSIONS {
         let url = format!("{base}/icon.{extension}");
 
-        let status = Command::new("curl")
-            .args(["-fsIL", "--max-time", "5", url.as_str()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        let arguments = [
+            std::ffi::OsString::from("-fsIL"),
+            std::ffi::OsString::from("--max-time"),
+            std::ffi::OsString::from("5"),
+            std::ffi::OsString::from(url.as_str()),
+        ];
+
+        let mut command = match build_network_boundary_command("boss.curl", &arguments) {
+            Ok(command) => command,
+            Err(_) => return String::new(),
+        };
+
+        let status = command.stdout(Stdio::null()).stderr(Stdio::null()).status();
 
         if matches!(status, Ok(value) if value.success()) {
             return url;
@@ -1374,14 +1522,12 @@ fn stop_module(name: &str) -> Result<(), String> {
         ));
     }
 
-    let status = Command::new("kill")
-        .args(["-TERM", pid.to_string().as_str()])
-        .status()
-        .map_err(|error| format!("could not stop module '{name}' process {pid}: {error}"))?;
+    let signal_result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
 
-    if !status.success() {
+    if signal_result != 0 {
         return Err(format!(
-            "could not send SIGTERM to module '{name}' process {pid}"
+            "could not send SIGTERM to module '{name}' process {pid}: {}",
+            std::io::Error::last_os_error()
         ));
     }
 
@@ -1396,14 +1542,12 @@ fn stop_module(name: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let status = Command::new("kill")
-        .args(["-KILL", pid.to_string().as_str()])
-        .status()
-        .map_err(|error| format!("could not force-stop module '{name}' process {pid}: {error}"))?;
+    let signal_result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
 
-    if !status.success() {
+    if signal_result != 0 {
         return Err(format!(
-            "could not send SIGKILL to module '{name}' process {pid}"
+            "could not send SIGKILL to module '{name}' process {pid}: {}",
+            std::io::Error::last_os_error()
         ));
     }
 
@@ -1709,15 +1853,30 @@ pub fn start_tray_provider(name: &str) -> Result<bool, String> {
 
     let language = resolve_module_language(&module_dir, &requested_language)?;
 
-    let mut command = Command::new(&provider);
+    let domestic_environment = BTreeMap::from([
+        ("NEEBLES_LANGUAGE".to_string(), language),
+        ("NEEBLES_CALLER".to_string(), "tray-manager".to_string()),
+        ("NEEBLES_MODULE".to_string(), name.to_string()),
+        (
+            "NEEBLES_CONFIG".to_string(),
+            config_path.display().to_string(),
+        ),
+        (
+            "NEEBLES_TRAY_SOCKET".to_string(),
+            socket_path.display().to_string(),
+        ),
+    ]);
+
+    let mut command = neebles_backend::domestic_environment::build_process_command(
+        &provider,
+        neebles_backend::domestic_environment::ProcessEnvironmentClass::Pure,
+        &domestic_environment,
+        &BTreeMap::new(),
+        &std::collections::BTreeSet::new(),
+    )?;
 
     command
         .current_dir(&module_dir)
-        .env("NEEBLES_LANGUAGE", language)
-        .env("NEEBLES_CALLER", "tray-manager")
-        .env("NEEBLES_MODULE", name)
-        .env("NEEBLES_CONFIG", config_path)
-        .env("NEEBLES_TRAY_SOCKET", socket_path)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -1772,20 +1931,14 @@ pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
         ));
     }
 
-    let status = Command::new("kill")
-        .args(["-TERM", pid.to_string().as_str()])
-        .status()
-        .map_err(|error| {
-            format!(
-                "could not stop tray provider for module '{}' process {}: {error}",
-                name, pid
-            )
-        })?;
+    let signal_result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
 
-    if !status.success() {
+    if signal_result != 0 {
         return Err(format!(
-            "could not send SIGTERM to tray provider for module '{}' process {}",
-            name, pid
+            "could not send SIGTERM to tray provider for module '{}' process {}: {}",
+            name,
+            pid,
+            std::io::Error::last_os_error()
         ));
     }
 
@@ -1800,20 +1953,14 @@ pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
         return Ok(true);
     }
 
-    let status = Command::new("kill")
-        .args(["-KILL", pid.to_string().as_str()])
-        .status()
-        .map_err(|error| {
-            format!(
-                "could not force-stop tray provider for module '{}' process {}: {error}",
-                name, pid
-            )
-        })?;
+    let signal_result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
 
-    if !status.success() {
+    if signal_result != 0 {
         return Err(format!(
-            "could not send SIGKILL to tray provider for module '{}' process {}",
-            name, pid
+            "could not send SIGKILL to tray provider for module '{}' process {}: {}",
+            name,
+            pid,
+            std::io::Error::last_os_error()
         ));
     }
 
@@ -1919,12 +2066,13 @@ fn registry_url() -> Result<String, String> {
      * Boss first resolves the exact main commit and then reads
      * registry/modules.json from that immutable commit SHA.
      */
-    let output = Command::new("git")
-        .args([
-            "ls-remote",
-            "https://github.com/krockzs/neebles-boss.git",
-            "refs/heads/main",
-        ])
+    let arguments = [
+        std::ffi::OsString::from("ls-remote"),
+        std::ffi::OsString::from("https://github.com/krockzs/neebles-boss.git"),
+        std::ffi::OsString::from("refs/heads/main"),
+    ];
+
+    let output = build_network_boundary_command("boss.git", &arguments)?
         .output()
         .map_err(|error| format!("could not resolve N.E.E.B.L.E.S. registry revision: {error}"))?;
 
@@ -1960,8 +2108,12 @@ fn registry_url() -> Result<String, String> {
 
 pub fn fetch_registry() -> Result<Registry, String> {
     let url = registry_url()?;
-    let output = Command::new("curl")
-        .args(["-fsSL", url.as_str()])
+    let arguments = [
+        std::ffi::OsString::from("-fsSL"),
+        std::ffi::OsString::from(url.as_str()),
+    ];
+
+    let output = build_network_boundary_command("boss.curl", &arguments)?
         .output()
         .map_err(|error| format!("could not start curl: {error}"))?;
 
@@ -2104,7 +2256,7 @@ fn install_internal(name: &str, registry: &Registry) -> Result<(), String> {
 
     let staging = ModuleInstallStaging::prepare(temp)?;
 
-    checkout_registry_commit(name, entry, staging.path())?;
+    checkout_registry_commit(name, entry, staging.path(), "boss.modules.install_staging")?;
 
     let manifest_path = staging.path().join("manifest.json");
     let manifest = read_manifest(&manifest_path)?;
@@ -2494,7 +2646,7 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
      * Clone the candidate instead of mutating the current
      * checkout with git reset.
      */
-    checkout_registry_commit(name, entry, staging.path())?;
+    checkout_registry_commit(name, entry, staging.path(), "boss.modules.update_staging")?;
 
     /*
      * read_manifest() is now the schema-3 gate.
@@ -2777,51 +2929,10 @@ fn resolve_module_language(module_dir: &Path, requested: &str) -> Result<String,
     Ok(language.code.clone())
 }
 
-fn desktop_session_environment_key_allowed(key: &str) -> bool {
-    matches!(
-        key,
-        "DISPLAY" | "WAYLAND_DISPLAY" | "XAUTHORITY" | "PATH" | "LANG" | "SSH_AUTH_SOCK"
-    ) || key.starts_with("LC_")
-        || key.starts_with("XDG_")
-        || key.starts_with("KDE_")
-        || key.starts_with("QT_")
-        || key.starts_with("GTK_")
-        || key.starts_with("GDK_")
-}
-
-fn parse_desktop_session_environment(raw: &str) -> BTreeMap<String, String> {
-    let mut environment = BTreeMap::new();
-
-    environment.insert(
-        "PATH".to_string(),
-        "/usr/local/bin:/usr/bin:/bin".to_string(),
-    );
-
-    for line in raw.lines() {
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-
-        let key = key.trim();
-
-        if key.is_empty()
-            || key == "XDG_RUNTIME_DIR"
-            || key == "DBUS_SESSION_BUS_ADDRESS"
-            || !desktop_session_environment_key_allowed(key)
-        {
-            continue;
-        }
-
-        environment.insert(key.to_string(), value.to_string());
-    }
-
-    environment
-}
-
 fn desktop_session_environment(
     desktop_uid: libc::uid_t,
     desktop_gid: libc::gid_t,
-) -> Result<BTreeMap<String, String>, String> {
+) -> Result<(BTreeMap<String, String>, String, String), String> {
     let runtime_dir = format!("/run/user/{desktop_uid}");
 
     let session_bus = format!("unix:path={runtime_dir}/bus");
@@ -2830,26 +2941,39 @@ fn desktop_session_environment(
 
     let mut command;
 
+    let protocol_environment = BTreeMap::from([
+        ("XDG_RUNTIME_DIR".to_string(), runtime_dir.clone()),
+        ("DBUS_SESSION_BUS_ADDRESS".to_string(), session_bus.clone()),
+    ]);
+
     if current_uid == desktop_uid {
-        command = Command::new("/usr/bin/systemctl");
+        command = neebles_backend::domestic_environment::build_process_command(
+            neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.systemctl")?,
+            neebles_backend::domestic_environment::ProcessEnvironmentClass::SystemInterface,
+            &protocol_environment,
+            &BTreeMap::new(),
+            &std::collections::BTreeSet::new(),
+        )?;
 
-        command
-            .env_clear()
-            .env("XDG_RUNTIME_DIR", &runtime_dir)
-            .env("DBUS_SESSION_BUS_ADDRESS", &session_bus)
-            .arg("--user")
-            .arg("show-environment");
+        command.arg("--user").arg("show-environment");
     } else if current_uid == 0 {
-        command = Command::new("/usr/bin/setpriv");
+        command = neebles_backend::domestic_environment::build_process_command(
+            neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.setpriv")?,
+            neebles_backend::domestic_environment::ProcessEnvironmentClass::SystemInterface,
+            &protocol_environment,
+            &BTreeMap::new(),
+            &std::collections::BTreeSet::new(),
+        )?;
 
         command
-            .env_clear()
-            .env("XDG_RUNTIME_DIR", &runtime_dir)
-            .env("DBUS_SESSION_BUS_ADDRESS", &session_bus)
             .arg(format!("--reuid={desktop_uid}"))
             .arg(format!("--regid={desktop_gid}"))
             .arg("--init-groups")
-            .arg("/usr/bin/systemctl")
+            .arg(
+                neebles_backend::domestic_runtime_authority::resolve_boss_executable(
+                    "boss.systemctl",
+                )?,
+            )
             .arg("--user")
             .arg("show-environment");
     } else {
@@ -2876,26 +3000,7 @@ fn desktop_session_environment(
         format!("desktop user manager returned non-UTF-8 environment data: {error}")
     })?;
 
-    let mut environment = parse_desktop_session_environment(&raw);
-
-    environment.insert("XDG_RUNTIME_DIR".to_string(), runtime_dir);
-
-    environment.insert("DBUS_SESSION_BUS_ADDRESS".to_string(), session_bus);
-
-    Ok(environment)
-}
-
-fn append_preserved_neebles_environment(command: &mut Command) {
-    for key in [
-        "NEEBLES_ROOT",
-        "NEEBLES_CLIENT_ROOT",
-        "NEEBLES_MODULES_REGISTRY",
-        "NEEBLES_COMMAND",
-    ] {
-        if let Some(value) = env::var_os(key) {
-            command.arg(format!("{key}={}", value.to_string_lossy()));
-        }
-    }
+    Ok((parse_environment_lines(&raw), runtime_dir, session_bus))
 }
 
 fn build_module_execution_command(
@@ -2907,116 +3012,99 @@ fn build_module_execution_command(
     name: &str,
     config_path: &Path,
 ) -> Result<Command, String> {
-    if contract.requires_root {
-        let mut command = Command::new(entrypoint);
+    let mut domestic = BTreeMap::<String, String>::new();
 
-        command
-            .args(args)
-            .env("NEEBLES_LANGUAGE", language)
-            .env("NEEBLES_CALLER", caller)
-            .env("NEEBLES_MODULE", name)
-            .env("NEEBLES_CONFIG", config_path);
+    domestic.insert("NEEBLES_LANGUAGE".to_string(), language.to_string());
+
+    domestic.insert("NEEBLES_CALLER".to_string(), caller.to_string());
+
+    domestic.insert("NEEBLES_MODULE".to_string(), name.to_string());
+
+    domestic.insert(
+        "NEEBLES_CONFIG".to_string(),
+        config_path.display().to_string(),
+    );
+
+    if contract.requires_root {
+        let mut command = neebles_backend::domestic_environment::build_process_command(
+            entrypoint,
+            neebles_backend::domestic_environment::ProcessEnvironmentClass::Pure,
+            &domestic,
+            &BTreeMap::new(),
+            &std::collections::BTreeSet::new(),
+        )?;
+
+        command.args(args);
 
         return Ok(command);
     }
 
-    let (desktop_uid, desktop_gid) = crate::runtime_identity::desktop_identity()?;
+    let (session_environment, runtime_dir, session_bus) = desktop_session_environment(
+        crate::runtime_identity::desktop_identity()?.0,
+        crate::runtime_identity::desktop_identity()?.1,
+    )?;
 
-    let session_environment = desktop_session_environment(desktop_uid, desktop_gid)?;
+    domestic.insert("XDG_RUNTIME_DIR".to_string(), runtime_dir);
+
+    domestic.insert("DBUS_SESSION_BUS_ADDRESS".to_string(), session_bus);
+
+    let allowed_session_inputs = contract
+        .allowed_session_inputs
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let (desktop_uid, desktop_gid) = crate::runtime_identity::desktop_identity()?;
 
     let current_uid = unsafe { libc::geteuid() };
 
     if current_uid == desktop_uid {
-        let mut command = Command::new(entrypoint);
+        let mut command = neebles_backend::domestic_environment::build_process_command(
+            entrypoint,
+            neebles_backend::domestic_environment::ProcessEnvironmentClass::Session,
+            &domestic,
+            &session_environment,
+            &allowed_session_inputs,
+        )?;
 
-        command
-            .args(args)
-            .envs(session_environment)
-            .env("NEEBLES_LANGUAGE", language)
-            .env("NEEBLES_CALLER", caller)
-            .env("NEEBLES_MODULE", name)
-            .env("NEEBLES_CONFIG", config_path);
+        command.args(args);
 
         return Ok(command);
     }
 
     if current_uid != 0 {
-        return Err(format!(
-            "Boss process uid {current_uid} cannot execute non-root module action as desktop uid {desktop_uid}"
-        ));
+        return Err(
+            format!(
+                "Boss process uid {current_uid} cannot execute non-root module action as desktop uid {desktop_uid}"
+            )
+        );
     }
 
-    let mut command = Command::new("/usr/bin/setpriv");
+    let sealed = neebles_backend::domestic_environment::build_process_environment(
+        neebles_backend::domestic_environment::ProcessEnvironmentClass::Session,
+        &domestic,
+        &session_environment,
+        &allowed_session_inputs,
+    )?;
+
+    let mut command = neebles_backend::domestic_environment::build_pure_process_command(
+        neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.setpriv")?,
+    )?;
 
     command
-        .env_clear()
         .arg(format!("--reuid={desktop_uid}"))
         .arg(format!("--regid={desktop_gid}"))
         .arg("--init-groups")
         .arg("--reset-env")
-        .arg("/usr/bin/env");
+        .arg(neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.env")?);
 
-    for (key, value) in session_environment {
+    for (key, value) in sealed {
         command.arg(format!("{key}={value}"));
     }
 
-    append_preserved_neebles_environment(&mut command);
-
-    command
-        .arg(format!("NEEBLES_LANGUAGE={language}"))
-        .arg(format!("NEEBLES_CALLER={caller}"))
-        .arg(format!("NEEBLES_MODULE={name}"))
-        .arg(format!("NEEBLES_CONFIG={}", config_path.display()))
-        .arg(entrypoint)
-        .args(args);
+    command.arg(entrypoint).args(args);
 
     Ok(command)
-}
-
-#[cfg(test)]
-mod desktop_execution_environment_tests {
-    use super::*;
-
-    #[test]
-    fn desktop_environment_keeps_session_values() {
-        let environment =
-            parse_desktop_session_environment(
-                "DISPLAY=:0\nWAYLAND_DISPLAY=wayland-0\nXAUTHORITY=/run/user/1000/xauth\nXDG_SESSION_TYPE=wayland\nKDE_FULL_SESSION=true\nPATH=/custom/bin:/usr/bin\n",
-            );
-
-        assert_eq!(environment.get("DISPLAY"), Some(&":0".to_string()));
-
-        assert_eq!(
-            environment.get("WAYLAND_DISPLAY"),
-            Some(&"wayland-0".to_string())
-        );
-
-        assert_eq!(
-            environment.get("XDG_SESSION_TYPE"),
-            Some(&"wayland".to_string())
-        );
-
-        assert_eq!(
-            environment.get("PATH"),
-            Some(&"/custom/bin:/usr/bin".to_string())
-        );
-    }
-
-    #[test]
-    fn desktop_environment_rejects_privileged_loader_values() {
-        let environment =
-            parse_desktop_session_environment(
-                "DISPLAY=:0\nLD_PRELOAD=/tmp/evil.so\nLD_LIBRARY_PATH=/tmp/evil\nPYTHONPATH=/tmp/python\n",
-            );
-
-        assert_eq!(environment.get("DISPLAY"), Some(&":0".to_string()));
-
-        assert!(!environment.contains_key("LD_PRELOAD"));
-
-        assert!(!environment.contains_key("LD_LIBRARY_PATH"));
-
-        assert!(!environment.contains_key("PYTHONPATH"));
-    }
 }
 
 pub fn execute(name: &str, args: &[String], caller: &str) -> Result<i32, String> {

@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import stat
+import subprocess
 import tarfile
 from pathlib import Path, PurePosixPath
 
@@ -15,6 +16,8 @@ REQUIRED_ASSETS = {
     "auth_agent": "neebles-auth-agent",
     "client_data": "client-data.tar.gz",
     "install": "install.sh",
+    "runtime_resolver": "neebles-runtime-resolve",
+    "runtime_archive": "boss-runtime.tar.gz",
 }
 
 EXECUTABLE_ASSETS = {
@@ -23,6 +26,7 @@ EXECUTABLE_ASSETS = {
     "installer",
     "auth_agent",
     "install",
+    "runtime_resolver",
 }
 
 REQUIRED_CLIENT_DATA_ROOTS = {
@@ -237,6 +241,114 @@ def validate_tar(path: Path) -> None:
         )
 
 
+def validate_runtime_archive(path: Path) -> None:
+    try:
+        archive = tarfile.open(path, mode="r:gz")
+    except (tarfile.TarError, OSError) as exc:
+        fail(f"domestic runtime archive cannot be opened: {exc}")
+
+    manifest_bytes = None
+    root_seen = False
+
+    with archive:
+        members = archive.getmembers()
+
+        if not members:
+            fail("domestic runtime archive is empty")
+
+        for member in members:
+            pure = PurePosixPath(member.name)
+
+            if pure.is_absolute() or ".." in pure.parts:
+                fail(
+                    "domestic runtime archive contains unsafe path: "
+                    + repr(member.name)
+                )
+
+            normalized = "/".join(
+                part
+                for part in pure.parts
+                if part not in ("", ".")
+            )
+
+            if normalized == "rootfs" or normalized.startswith("rootfs/"):
+                root_seen = True
+
+            if normalized == "domestic-runtime.json":
+                if not member.isfile():
+                    fail("domestic runtime manifest is not a regular file")
+
+                handle = archive.extractfile(member)
+
+                if handle is None:
+                    fail("domestic runtime manifest cannot be read")
+
+                manifest_bytes = handle.read()
+
+    if not root_seen:
+        fail("domestic runtime archive does not contain rootfs")
+
+    if manifest_bytes is None:
+        fail(
+            "domestic runtime archive does not contain domestic-runtime.json"
+        )
+
+    try:
+        manifest = json.loads(
+            manifest_bytes.decode("utf-8")
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        fail(
+            "domestic runtime manifest is invalid: "
+            + str(exc)
+        )
+
+    if manifest.get("schema") != "1":
+        fail('domestic runtime manifest schema must be exactly "1"')
+
+    if manifest.get("name") != "neebles-domestic-runtime":
+        fail("domestic runtime manifest identity mismatch")
+
+    if manifest.get("root") != "rootfs":
+        fail("domestic runtime manifest root must be exactly rootfs")
+
+
+def validate_runtime_resolver(path: Path) -> None:
+    program_headers = subprocess.run(
+        ["readelf", "-l", str(path)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+    if program_headers.returncode != 0:
+        fail(
+            "could not inspect bootstrap runtime resolver program headers"
+        )
+
+    if " INTERP " in program_headers.stdout:
+        fail(
+            "bootstrap runtime resolver must not require an ELF interpreter"
+        )
+
+    dynamic = subprocess.run(
+        ["readelf", "-d", str(path)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+    if dynamic.returncode != 0:
+        fail(
+            "could not inspect bootstrap runtime resolver dynamic section"
+        )
+
+    if "(NEEDED)" in dynamic.stdout:
+        fail(
+            "bootstrap runtime resolver must not require shared libraries"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dist", required=True)
@@ -363,6 +475,12 @@ def main() -> None:
                 fail(f"asset {key!r} is not executable: {filename}")
 
     validate_tar(dist / REQUIRED_ASSETS["client_data"])
+    validate_runtime_archive(
+        dist / REQUIRED_ASSETS["runtime_archive"]
+    )
+    validate_runtime_resolver(
+        dist / REQUIRED_ASSETS["runtime_resolver"]
+    )
 
     checksums = parse_checksums(sums_path)
 

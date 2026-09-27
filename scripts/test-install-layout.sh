@@ -15,15 +15,36 @@ fi
 
 echo "HOST-INDEPENDENT INSTALLER CONTRACT: VALID"
 
-BACKEND="$REPO_ROOT/target/debug/neebles-backend"
-UI="$REPO_ROOT/ui/client/build/neebles-ui"
-AUTH="$REPO_ROOT/ui/auth-agent/build/neebles-auth-agent"
-TRAY_HOST="$REPO_ROOT/client/tray-host/build/neebles-tray-host"
+CUSTOM="$HOME/NEEBLES/neebles-custom"
+CANONICAL_WORK="$CUSTOM/build_sysroot_6.8.2/work"
 
-for binary in "$BACKEND" "$UI" "$AUTH" "$TRAY_HOST"; do
+BACKEND="$REPO_ROOT/target/debug/neebles-backend"
+RUNTIME_RESOLVER="$REPO_ROOT/target/debug/neebles-runtime-resolve"
+UI="$CANONICAL_WORK/canonical-ui/neebles-ui"
+AUTH="$CANONICAL_WORK/canonical-auth-agent/neebles-auth-agent"
+TRAY_HOST="$CANONICAL_WORK/canonical-tray-host/neebles-tray-host"
+LAUNCHER_PLUGIN="$CANONICAL_WORK/canonical-launcher-plugin"
+
+for binary in "$BACKEND" "$UI" "$AUTH" "$TRAY_HOST" "$RUNTIME_RESOLVER"; do
     [[ -f "$binary" ]] || {
-        echo "PACKAGING TEST INVALID: missing built binary: $binary" >&2
-        echo "Run ./scripts/build-all.sh first." >&2
+        echo "PACKAGING TEST INVALID: missing required artifact: $binary" >&2
+        exit 1
+    }
+done
+
+[[ -d "$LAUNCHER_PLUGIN" ]] || {
+    echo "PACKAGING TEST INVALID: missing canonical launcher plugin: $LAUNCHER_PLUGIN" >&2
+    exit 1
+}
+
+for item in \
+    libneebles-launcher-events.so \
+    libneebles-launcher-eventsplugin.so \
+    neebles-launcher-events.qmltypes \
+    qmldir
+do
+    [[ -f "$LAUNCHER_PLUGIN/$item" ]] || {
+        echo "PACKAGING TEST INVALID: missing launcher runtime artifact: $LAUNCHER_PLUGIN/$item" >&2
         exit 1
     }
 done
@@ -31,6 +52,10 @@ done
 ROOT="$(mktemp -d)"
 ARCHIVE="$ROOT/client-data.tar.gz"
 ARCHIVE_SECOND="$ROOT/client-data-second.tar.gz"
+AUTHORITY_SUPPLY="$ROOT/authority-supply.json"
+RUNTIME_AUTHORITY="$ROOT/runtime-authority"
+RUNTIME_MANIFEST="$RUNTIME_AUTHORITY/domestic-runtime.json"
+RUNTIME_ROOTFS="$RUNTIME_AUTHORITY/rootfs"
 
 cleanup() {
     rm -rf "$ROOT"
@@ -38,13 +63,65 @@ cleanup() {
 
 trap cleanup EXIT
 
+printf '{}\n' > "$AUTHORITY_SUPPLY"
+
+install -d -m 0755 "$RUNTIME_ROOTFS/usr/bin"
+
+printf '#!/bin/sh\nexit 0\n' > "$RUNTIME_ROOTFS/usr/bin/pkexec"
+chmod 0755 "$RUNTIME_ROOTFS/usr/bin/pkexec"
+
+python3 - "$RUNTIME_MANIFEST" <<'PY_RUNTIME_FIXTURE'
+from pathlib import Path
+import json
+import sys
+
+path = Path(
+    sys.argv[1]
+)
+
+data = {
+    "schema": "1",
+    "name": "neebles-domestic-runtime",
+    "root": "rootfs",
+    "worlds": {
+        "boss.pkexec": {
+            "categories": {
+                "executable": {
+                    "category": "executable",
+                    "value": "fixture-pkexec",
+                    "declared_targets": [
+                        "usr/bin/pkexec"
+                    ],
+                    "resolved_targets": [
+                        "usr/bin/pkexec"
+                    ]
+                }
+            }
+        }
+    }
+}
+
+path.write_text(
+    json.dumps(
+        data,
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n"
+)
+PY_RUNTIME_FIXTURE
+
 "$REPO_ROOT/scripts/build-client-data.sh" \
     "$ARCHIVE" \
-    "$REPO_ROOT/client"
+    "$REPO_ROOT/client" \
+    "$LAUNCHER_PLUGIN" \
+    "$TRAY_HOST"
 
 "$REPO_ROOT/scripts/build-client-data.sh" \
     "$ARCHIVE_SECOND" \
-    "$REPO_ROOT/client"
+    "$REPO_ROOT/client" \
+    "$LAUNCHER_PLUGIN" \
+    "$TRAY_HOST"
 
 cmp -s "$ARCHIVE" "$ARCHIVE_SECOND" || {
     echo "PACKAGING TEST INVALID: client-data archive is not reproducible" >&2
@@ -59,7 +136,9 @@ run_install_archive() {
         "$BACKEND" \
         "$UI" \
         "$ARCHIVE" \
-        "$AUTH"
+        "$AUTH" \
+        "$RUNTIME_RESOLVER" \
+        "$RUNTIME_MANIFEST"
 }
 
 run_install_directory() {
@@ -75,7 +154,21 @@ run_install_directory() {
         "$BACKEND" \
         "$UI" \
         "$extracted" \
-        "$AUTH"
+        "$AUTH" \
+        "$RUNTIME_RESOLVER" \
+        "$RUNTIME_MANIFEST"
+}
+
+run_install_archive_with_supply() {
+    DESTDIR="$ROOT" \
+        "$REPO_ROOT/scripts/install.sh" \
+        "$BACKEND" \
+        "$UI" \
+        "$ARCHIVE" \
+        "$AUTH" \
+        "$RUNTIME_RESOLVER" \
+        "$RUNTIME_MANIFEST" \
+        "$AUTHORITY_SUPPLY"
 }
 
 assert_file() {
@@ -181,6 +274,19 @@ assert_mode 755 "$CLIENT/backend/neebles-backend"
 assert_mode 755 "$CLIENT/ui/neebles-ui"
 assert_mode 755 "$CLIENT/auth/neebles-auth-agent"
 assert_mode 755 "$CLIENT/tray-host/neebles-tray-host"
+assert_mode 755 "$CLIENT/runtime/neebles-runtime-resolve"
+assert_mode 644 "$CLIENT/runtime/boss/domestic-runtime.json"
+assert_mode 755 "$CLIENT/runtime/boss/rootfs/usr/bin/pkexec"
+
+cmp -s "$RUNTIME_RESOLVER" "$CLIENT/runtime/neebles-runtime-resolve" || {
+    echo "PACKAGING TEST INVALID: installed runtime resolver differs from fixture" >&2
+    exit 1
+}
+
+cmp -s "$RUNTIME_MANIFEST" "$CLIENT/runtime/boss/domestic-runtime.json" || {
+    echo "PACKAGING TEST INVALID: installed runtime manifest differs from fixture" >&2
+    exit 1
+}
 assert_mode 644 "$BOSS_EVENTS/libneebles-launcher-events.so"
 assert_mode 644 "$BOSS_EVENTS/libneebles-launcher-eventsplugin.so"
 assert_mode 644 "$BOSS_EVENTS/neebles-launcher-events.qmltypes"
@@ -308,7 +414,9 @@ DESTDIR="$ROOT" \
     "$BACKEND" \
     "$UI" \
     "$ARCHIVE" \
-    "$AUTH"
+    "$AUTH" \
+    "$RUNTIME_RESOLVER" \
+    "$RUNTIME_MANIFEST"
 ROLLBACK_RC=$?
 set -e
 
@@ -409,5 +517,37 @@ cmp -s \
     echo "PACKAGING TEST INVALID: final install globally enabled Tray SNI Host" >&2
     exit 1
 }
+
+echo "=== EXPLICIT AUTHORITY SUPPLY ==="
+
+run_install_archive_with_supply
+
+grep -Fxq \
+    "ExecStart=/opt/neebles/client/backend/neebles-backend --authority-supply $AUTHORITY_SUPPLY socket serve" \
+    "$ROOT/usr/lib/systemd/system/neebles-runtime.service" \
+    || {
+        echo "PACKAGING TEST INVALID: AuthoritySupply was not persisted into runtime service" >&2
+        exit 1
+    }
+
+if grep -Fq \
+    "authority-supply" \
+    "$ROOT/etc/neebles/runtime.env"
+then
+    echo "PACKAGING TEST INVALID: AuthoritySupply leaked into runtime.env" >&2
+    exit 1
+fi
+
+echo "=== RESTORE STANDALONE CONTRACT ==="
+
+run_install_archive
+
+grep -Fxq \
+    "ExecStart=/opt/neebles/client/backend/neebles-backend socket serve" \
+    "$ROOT/usr/lib/systemd/system/neebles-runtime.service" \
+    || {
+        echo "PACKAGING TEST INVALID: standalone runtime service was not restored" >&2
+        exit 1
+    }
 
 echo "PACKAGING INSTALL CONTRACT: VALID"

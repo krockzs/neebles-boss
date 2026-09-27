@@ -1,0 +1,98 @@
+{
+  "schema": "3",
+  "category": "helpers",
+  "input": {
+    "value": "String",
+    "targets": "String[]"
+  },
+  "tester": "matrix",
+  "technology_specific": false,
+  "spells": [
+    {
+      "name": "boss.physical",
+      "options": {
+        "target_shape": [
+          "file",
+          "directory",
+          "symlink",
+          "missing",
+          "mixed"
+        ],
+        "target_count": [
+          "single",
+          "multiple"
+        ],
+        "path_form": [
+          "relative",
+          "absolute",
+          "parent_escape"
+        ]
+      },
+      "cases": [
+        {
+          "id": "relative-single-file",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-directory",
+          "select": {
+            "target_shape": "directory",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-symlink",
+          "select": {
+            "target_shape": "symlink",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-multiple-mixed",
+          "select": {
+            "target_shape": "mixed",
+            "target_count": "multiple",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-missing",
+          "select": {
+            "target_shape": "missing",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "report_missing"
+        },
+        {
+          "id": "absolute-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "absolute"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "parent-escape-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "parent_escape"
+          },
+          "expect": "error"
+        }
+      ]
+    }
+  ]
+}

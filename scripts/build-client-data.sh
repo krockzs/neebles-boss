@@ -4,10 +4,10 @@ set -euo pipefail
 OUTPUT="${1:-}"
 SOURCE="${2:-client}"
 LAUNCHER_PLUGIN_BUILD="${3:-client/launcher-plugin/build}"
-TRAY_HOST_BUILD="${4:-client/tray-host/build}"
+TRAY_HOST_BINARY="${4:-client/tray-host/build/neebles-tray-host}"
 
 if [[ -z "$OUTPUT" ]]; then
-    echo "Usage: $0 <output.tar.gz> [client-source-directory] [launcher-plugin-build-directory] [tray-host-build-directory]" >&2
+    echo "Usage: $0 <output.tar.gz> [client-source-directory] [launcher-plugin-build-directory] [tray-host-binary]" >&2
     exit 1
 fi
 
@@ -37,7 +37,7 @@ done
 OUTPUT="$(realpath -m "$OUTPUT")"
 SOURCE="$(realpath "$SOURCE")"
 LAUNCHER_PLUGIN_BUILD="$(realpath "$LAUNCHER_PLUGIN_BUILD")"
-TRAY_HOST_BUILD="$(realpath "$TRAY_HOST_BUILD")"
+TRAY_HOST_BINARY="$(realpath "$TRAY_HOST_BINARY")"
 
 LAUNCHER_RUNTIME_FILES=(
     libneebles-launcher-events.so
@@ -51,8 +51,8 @@ LAUNCHER_RUNTIME_FILES=(
     exit 1
 }
 
-[[ -f "$TRAY_HOST_BUILD/neebles-tray-host" ]] || {
-    echo "Tray Host runtime artifact missing: $TRAY_HOST_BUILD/neebles-tray-host" >&2
+[[ -f "$TRAY_HOST_BINARY" ]] || {
+    echo "Tray Host runtime artifact missing: $TRAY_HOST_BINARY" >&2
     exit 1
 }
 
@@ -60,12 +60,10 @@ install -d -m 0755 "$(dirname "$OUTPUT")"
 
 TMP="${OUTPUT}.tmp.$$"
 STAGE="$(mktemp -d)"
-LAUNCHER_INSTALL="$(mktemp -d)"
 
 cleanup() {
     rm -f "$TMP"
     rm -rf "$STAGE"
-    rm -rf "$LAUNCHER_INSTALL"
 }
 
 trap cleanup EXIT
@@ -74,20 +72,18 @@ for root in "${REQUIRED_ROOTS[@]}"; do
     cp -a "$SOURCE/$root" "$STAGE/$root"
 done
 
-cmake --install "$LAUNCHER_PLUGIN_BUILD" --prefix "$LAUNCHER_INSTALL"
-
-LAUNCHER_PLUGIN_INSTALL="$LAUNCHER_INSTALL/lib/qt6/qml/NEEBLES/BossEvents"
+LAUNCHER_PLUGIN_INSTALL="$LAUNCHER_PLUGIN_BUILD"
 
 for item in "${LAUNCHER_RUNTIME_FILES[@]}"; do
     [[ -f "$LAUNCHER_PLUGIN_INSTALL/$item" ]] || {
-        echo "Installed launcher plugin runtime artifact missing: $LAUNCHER_PLUGIN_INSTALL/$item" >&2
+        echo "Launcher plugin runtime artifact missing: $LAUNCHER_PLUGIN_INSTALL/$item" >&2
         exit 1
     }
 done
 
 install -d -m 0755     "$STAGE/runtime/tray-host"     "$STAGE/runtime/qml/NEEBLES/BossEvents"
 
-install -m 0755     "$TRAY_HOST_BUILD/neebles-tray-host"     "$STAGE/runtime/tray-host/neebles-tray-host"
+install -m 0755     "$TRAY_HOST_BINARY"     "$STAGE/runtime/tray-host/neebles-tray-host"
 
 for item in "${LAUNCHER_RUNTIME_FILES[@]}"; do
     install -m 0644         "$LAUNCHER_PLUGIN_INSTALL/$item"         "$STAGE/runtime/qml/NEEBLES/BossEvents/$item"
@@ -98,6 +94,5 @@ tar     --sort=name     --mtime='@0'     --owner=0     --group=0     --numeric-o
 mv "$TMP" "$OUTPUT"
 trap - EXIT
 rm -rf "$STAGE"
-rm -rf "$LAUNCHER_INSTALL"
 
 echo "Built reproducible client data: $OUTPUT"

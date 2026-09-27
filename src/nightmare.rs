@@ -130,8 +130,55 @@ pub fn load_cached_catalog() -> Result<Option<Value>, String> {
 }
 
 fn resolve_neebles_os_main_commit() -> Result<String, String> {
-    let output = std::process::Command::new("git")
-        .args(["ls-remote", NEEBLES_OS_REPOSITORY, "refs/heads/main"])
+    let registry =
+        neebles_backend::domestic_authority_supply_process::process_supplied_authority_registry()?;
+
+    let grants = neebles_backend::domestic_authority_supply::build_authority_grant_set(
+        registry,
+        ["platform.filesystem_boundary", "system.dns_resolver_config"],
+    )?;
+
+    let platform_descriptor = grants.descriptor_path(registry, "platform.filesystem_boundary")?;
+
+    let dns_descriptor = grants.descriptor_path(registry, "system.dns_resolver_config")?;
+
+    let platform =
+        neebles_backend::domestic_platform_authority::load_platform_authority_descriptor(
+            &platform_descriptor,
+            "platform.filesystem_boundary",
+        )?;
+
+    let dns =
+        neebles_backend::domestic_external_data_authority::load_external_data_authority_descriptor(
+            &dns_descriptor,
+            "system.dns_resolver_config",
+        )?;
+
+    let manifest = neebles_backend::domestic_runtime_authority::current_boss_runtime_manifest()?;
+
+    let plan =
+        neebles_backend::domestic_boundary_execution::compose_materialized_boundary_execution_plan(
+            &manifest,
+            "boss.git",
+            &platform,
+            &[dns],
+            true,
+            true,
+            true,
+            Some(Path::new("/tmp")),
+        )?;
+
+    let arguments = [
+        std::ffi::OsString::from("ls-remote"),
+        std::ffi::OsString::from(NEEBLES_OS_REPOSITORY),
+        std::ffi::OsString::from("refs/heads/main"),
+    ];
+
+    let output =
+        neebles_backend::domestic_boundary_execution::build_pure_materialized_boundary_execution_command(
+            &plan,
+            &arguments,
+        )?
         .output()
         .map_err(|error| {
             format!("Nightmare could not start git while resolving neebles-os main: {error}")
@@ -177,8 +224,57 @@ fn fetch_remote_catalog() -> Result<Value, String> {
     let commit = resolve_neebles_os_main_commit()?;
     let url = remote_catalog_url(&commit)?;
 
-    let output = std::process::Command::new("curl")
-        .args(["-fsSL", "--max-time", "15", &url])
+    let registry =
+        neebles_backend::domestic_authority_supply_process::process_supplied_authority_registry()?;
+
+    let grants = neebles_backend::domestic_authority_supply::build_authority_grant_set(
+        registry,
+        ["platform.filesystem_boundary", "system.dns_resolver_config"],
+    )?;
+
+    let platform_descriptor = grants.descriptor_path(registry, "platform.filesystem_boundary")?;
+
+    let dns_descriptor = grants.descriptor_path(registry, "system.dns_resolver_config")?;
+
+    let platform =
+        neebles_backend::domestic_platform_authority::load_platform_authority_descriptor(
+            &platform_descriptor,
+            "platform.filesystem_boundary",
+        )?;
+
+    let dns =
+        neebles_backend::domestic_external_data_authority::load_external_data_authority_descriptor(
+            &dns_descriptor,
+            "system.dns_resolver_config",
+        )?;
+
+    let runtime_manifest =
+        neebles_backend::domestic_runtime_authority::current_boss_runtime_manifest()?;
+
+    let plan =
+        neebles_backend::domestic_boundary_execution::compose_materialized_boundary_execution_plan(
+            &runtime_manifest,
+            "boss.curl",
+            &platform,
+            &[dns],
+            true,
+            true,
+            true,
+            Some(Path::new("/tmp")),
+        )?;
+
+    let arguments = [
+        std::ffi::OsString::from("-fsSL"),
+        std::ffi::OsString::from("--max-time"),
+        std::ffi::OsString::from("15"),
+        std::ffi::OsString::from(&url),
+    ];
+
+    let output =
+        neebles_backend::domestic_boundary_execution::build_pure_materialized_boundary_execution_command(
+            &plan,
+            &arguments,
+        )?
         .output()
         .map_err(|error| {
             format!("Nightmare could not start curl while reading remote catalog: {error}")

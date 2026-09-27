@@ -1,60 +1,87 @@
-# N.E.E.B.L.E.S. Boss — implementation overlay
+# N.E.E.B.L.E.S. Boss — Implemented Architecture
 
-This overlay implements the architecture discussed for the Boss core:
+Current source line: **1.0.15**
 
-- Small Rust director core.
-- Generic `ExecutionRequest` / `ExecutionResponse` JSON contract.
-- CLI module delegation: `neebles <module> [arguments...]`.
-- Centralized privilege elevation for CLI operations through automatic `sudo` re-execution.
-- Module-local command privilege contracts (`requires_root`).
-- Generic module dependency resolver with `apt`, `snap`, and `flatpak` providers plus `args`.
-- Provider bootstrap for Snap/Flatpak when missing.
-- Recursive module dependencies.
-- Boss-owned language selection, first-run Linux locale detection, then independent persistent config.
-- Main Qt UI: Config + Modules.
-- Qt tray: quick module open/enable/disable.
-- Plasma launcher package: quick access beside Plasma's normal launcher.
-- Boss-routed Plasma notifications with mandatory critical/fatal policy.
+This file describes the architecture implemented in the current Boss working tree.
 
-## Module manifest contract
+## Governance boundary
 
-Example:
+Boss is a generic governor.
 
-```json
-{
-  "schema": 1,
-  "name": "recovery",
-  "version": "1.0.0",
-  "entrypoint": "bin/neebles-recovery",
-  "commands": {
-    "status": { "requires_root": false },
-    "restore": { "requires_root": true }
-  },
-  "dependencies": {
-    "system": [
-      {
-        "name": "rsync",
-        "provider": "apt",
-        "package": "rsync",
-        "args": [],
-        "check": "rsync",
-        "required": true
-      }
-    ],
-    "modules": []
-  }
-}
+It owns contracts, module transactions, authority registration, grants, privilege boundaries, runtime transport, IPC routing, desktop integration, notifications and persistent-state transformation orchestration.
+
+Technology-specific implementation remains owned by the relevant consumer or platform component.
+
+## Authority invariant
+
+```text
+resource existence != authority to use resource
 ```
 
-## Execution request contract
+## Platform ownership
 
-```json
-{
-  "target": "recovery",
-  "action": "restore",
-  "args": ["--full", "backup.neebles"],
-  "context": { "caller": "cli" }
-}
+N.E.E.B.L.E.S. OS owns canonical platform authority definitions.
+
+N.E.E.B.L.E.S. BUILD materializes those definitions into the image.
+
+Boss receives AuthoritySupply and consumes the supplied authority.
+
+## Domestic worlds
+
+Boss models controlled worlds for executables, libraries, environment data and filesystem boundaries.
+
+Search authority and execution authority are explicit and independent concepts.
+
+ELF resolution can observe interpreters and required libraries, resolve them inside controlled search authority and certify recursive closure.
+
+## Permanent runtime
+
+The installed Boss runtime is retained below:
+
+```text
+/opt/neebles/client/runtime/boss/
 ```
 
-The module owns the meaning of `action` and `args`. Boss only directs execution, privileges, dependencies, state, language, and result routing.
+## Installer transaction
+
+The installer consumes certified resolver and runtime inputs.
+
+Client data and integrations are staged before publication.
+
+Failure paths preserve rollback semantics.
+
+## Module governor
+
+The module governor provides transactional staging, validation, publication and cleanup.
+
+Partial candidates do not become active state.
+
+## Lifecycle boundary
+
+Lifecycle declaration parsing and validation are implemented.
+
+Generic lifecycle execution is not implemented yet.
+
+The existence of lifecycle recipes must not be interpreted as proof of a generic execution engine.
+
+## Esbirro boundary
+
+Esbirro uses the generic authority and domestic execution machinery to evaluate declarative spell matrices.
+
+Its contracts and spell data are versioned with Boss.
+
+Its controlled development and runtime material is preserved through N.E.E.B.L.E.S. CUSTOM.
+
+## Recovery
+
+Recovery is external to Boss and belongs to N.E.E.B.L.E.S. BUILD.
+
+`neebles-check` can verify and reconstruct certified corpora independently from ordinary Boss startup.
+
+## Downstream modules
+
+Boss reaches its final generic contract first.
+
+The Test Module is adapted afterward and does not constrain Boss design.
+
+This document applies to **1.0.15** only.

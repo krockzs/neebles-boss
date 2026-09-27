@@ -89,6 +89,7 @@ signals:
 private:
     QString commandPath() const;
     QString authorizationPath() const;
+    QStringList runtimeAuthorityArguments() const;
     QByteArray run(const QStringList &arguments, bool privileged, int timeoutMs, bool *ok = nullptr);
     QVariant parseJson(const QByteArray &data) const;
     void loadConfig();

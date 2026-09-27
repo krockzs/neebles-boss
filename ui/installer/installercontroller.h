@@ -56,6 +56,9 @@ private:
     QString m_backendBinary;
     QString m_uiBinary;
     QString m_clientDataArchive;
+    QString m_runtimeResolver;
+    QString m_runtimeManifest;
+    QString m_authoritySupply;
     QProcess m_process;
     QByteArray m_buffer;
     QVariantMap m_strings;

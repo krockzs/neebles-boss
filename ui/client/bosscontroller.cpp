@@ -77,13 +77,16 @@ QString BossController::commandPath() const
 
     const QString installed =
         QStringLiteral(
-            "/usr/local/bin/neebles"
+            "/opt/neebles/client/bin/neebles"
         );
 
-    if (QFileInfo::exists(installed))
+    if (
+        QFileInfo::exists(installed)
+        && QFileInfo(installed).isExecutable()
+    )
         return installed;
 
-    return QStringLiteral("neebles");
+    return {};
 }
 
 QString BossController::authorizationPath() const
@@ -142,6 +145,43 @@ QString BossController::authorizationPath() const
 
     return {};
 }
+
+QStringList BossController::runtimeAuthorityArguments() const
+{
+    const QString resolver =
+        qEnvironmentVariable(
+            "NEEBLES_RUNTIME_RESOLVER"
+        ).trimmed();
+
+    const QString manifest =
+        qEnvironmentVariable(
+            "NEEBLES_RUNTIME_MANIFEST"
+        ).trimmed();
+
+    const QFileInfo resolverInfo(resolver);
+    const QFileInfo manifestInfo(manifest);
+
+    if (
+        resolver.isEmpty()
+        || manifest.isEmpty()
+        || !resolverInfo.isAbsolute()
+        || !resolverInfo.isFile()
+        || !resolverInfo.isExecutable()
+        || !manifestInfo.isAbsolute()
+        || !manifestInfo.isFile()
+        || !manifestInfo.isReadable()
+    ) {
+        return {};
+    }
+
+    return {
+        QStringLiteral("--runtime-resolver"),
+        resolverInfo.absoluteFilePath(),
+        QStringLiteral("--runtime-manifest"),
+        manifestInfo.absoluteFilePath()
+    };
+}
+
 
 
 QByteArray BossController::run(
@@ -327,6 +367,24 @@ QByteArray BossController::run(
                 ? QStringLiteral("true")
                 : QStringLiteral("false")
             );
+
+        const QStringList runtimeAuthority =
+            runtimeAuthorityArguments();
+
+        if (runtimeAuthority.isEmpty()) {
+            if (ok)
+                *ok = false;
+
+            setStatusText(
+                QStringLiteral(
+                    "N.E.E.B.L.E.S. runtime authority transport is unavailable"
+                )
+            );
+
+            return {};
+        }
+
+        elevated.append(runtimeAuthority);
 
         elevated
             << QStringLiteral("--")
@@ -1564,7 +1622,32 @@ void BossController::startModuleProcess(
                 running
                 ? QStringLiteral("true")
                 : QStringLiteral("false")
-            )
+            );
+
+        const QStringList runtimeAuthority =
+            runtimeAuthorityArguments();
+
+        if (runtimeAuthority.isEmpty()) {
+            appendModuleOperationLog(
+                name,
+                QStringLiteral(
+                    "N.E.E.B.L.E.S. runtime authority transport is unavailable"
+                )
+            );
+
+            setModuleOperationField(
+                name,
+                QStringLiteral("running"),
+                false
+            );
+
+            setBusy(false);
+            return;
+        }
+
+        arguments.append(runtimeAuthority);
+
+        arguments
             << QStringLiteral("--")
             << commandPath();
 

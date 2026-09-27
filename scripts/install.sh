@@ -270,8 +270,8 @@ if [[ -z "$DESTDIR" && ${EUID} -ne 0 ]]; then
     exit 1
 fi
 
-if [[ $# -ne 4 ]]; then
-    echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <client-data.tar.gz|client-data-directory> <neebles-auth-agent-binary>" >&2
+if [[ $# -ne 6 && $# -ne 7 ]]; then
+    echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <client-data.tar.gz|client-data-directory> <neebles-auth-agent-binary> <runtime-resolver> <runtime-manifest> [authority-supply]" >&2
     exit 1
 fi
 
@@ -279,7 +279,29 @@ BACKEND_SOURCE="$1"
 UI_SOURCE="$2"
 CLIENT_DATA_ARCHIVE="$3"
 AUTH_AGENT_SOURCE="$4"
+RUNTIME_RESOLVER_SOURCE="$5"
+RUNTIME_MANIFEST_SOURCE="$6"
+AUTHORITY_SUPPLY_SOURCE=""
 CLIENT_DATA_SOURCE=""
+
+if [[ $# -eq 7 ]]; then
+    AUTHORITY_SUPPLY_SOURCE="$7"
+
+    [[ "$AUTHORITY_SUPPLY_SOURCE" == /* ]] || {
+        echo "AuthoritySupply path must be absolute." >&2
+        exit 1
+    }
+
+    [[ "$AUTHORITY_SUPPLY_SOURCE" =~ ^/[A-Za-z0-9._/+:-]+$ ]] || {
+        echo "AuthoritySupply path contains unsupported characters." >&2
+        exit 1
+    }
+
+    [[ -f "$AUTHORITY_SUPPLY_SOURCE" && -r "$AUTHORITY_SUPPLY_SOURCE" ]] || {
+        echo "AuthoritySupply path is missing or unreadable: $AUTHORITY_SUPPLY_SOURCE" >&2
+        exit 1
+    }
+fi
 
 progress 5
 status_key "installer.progress.authorization_accepted"
@@ -290,13 +312,138 @@ status_key "installer.progress.validating_payload"
 for item in \
     "$BACKEND_SOURCE" \
     "$UI_SOURCE" \
-    "$AUTH_AGENT_SOURCE"
+    "$AUTH_AGENT_SOURCE" \
+    "$RUNTIME_RESOLVER_SOURCE"
 do
     [[ -f "$item" && -r "$item" ]] || {
         echo "Required binary payload is missing or unreadable: $item" >&2
         exit 1
     }
 done
+
+[[ -x "$RUNTIME_RESOLVER_SOURCE" ]] || {
+    echo "Runtime resolver is not executable: $RUNTIME_RESOLVER_SOURCE" >&2
+    exit 1
+}
+
+[[ -f "$RUNTIME_MANIFEST_SOURCE" && -r "$RUNTIME_MANIFEST_SOURCE" ]] || {
+    echo "Runtime manifest is missing or unreadable: $RUNTIME_MANIFEST_SOURCE" >&2
+    exit 1
+}
+
+RUNTIME_ROOT_RELATIVE="$(
+    python3 - "$RUNTIME_MANIFEST_SOURCE" <<'PY_RUNTIME_ROOT'
+from pathlib import Path, PurePosixPath
+import json
+import sys
+
+manifest = Path(
+    sys.argv[1]
+)
+
+try:
+    data = json.loads(
+        manifest.read_text(
+            encoding="utf-8"
+        )
+    )
+except Exception as error:
+    raise SystemExit(
+        "invalid runtime manifest JSON: "
+        + str(error)
+    )
+
+root_value = data.get(
+    "root"
+)
+
+if not isinstance(
+    root_value,
+    str,
+):
+    raise SystemExit(
+        "runtime manifest root is not a string"
+    )
+
+root_value = root_value.strip()
+
+if not root_value:
+    raise SystemExit(
+        "runtime manifest root is empty"
+    )
+
+root_reference = PurePosixPath(
+    root_value
+)
+
+if root_reference.is_absolute():
+    raise SystemExit(
+        "runtime manifest root must be relative"
+    )
+
+if any(
+    part in {
+        "",
+        ".",
+        "..",
+    }
+    for part in root_reference.parts
+):
+    raise SystemExit(
+        "runtime manifest root contains unsafe path components"
+    )
+
+authority = manifest.parent.resolve(
+    strict=True
+)
+
+candidate = (
+    manifest.parent
+    / Path(
+        *root_reference.parts
+    )
+)
+
+try:
+    resolved = candidate.resolve(
+        strict=True
+    )
+
+    resolved.relative_to(
+        authority
+    )
+except Exception as error:
+    raise SystemExit(
+        "runtime manifest root escapes authority: "
+        + str(error)
+    )
+
+if not resolved.is_dir():
+    raise SystemExit(
+        "runtime manifest root is not a directory"
+    )
+
+print(
+    root_reference.as_posix()
+)
+PY_RUNTIME_ROOT
+)" || {
+    echo "Runtime manifest does not describe a valid local authority root." >&2
+    exit 1
+}
+
+[[ -n "$RUNTIME_ROOT_RELATIVE" ]] || {
+    echo "Runtime manifest resolved an empty authority root." >&2
+    exit 1
+}
+
+RUNTIME_AUTHORITY_SOURCE="${RUNTIME_MANIFEST_SOURCE%/*}"
+RUNTIME_ROOTFS_SOURCE="$RUNTIME_AUTHORITY_SOURCE/$RUNTIME_ROOT_RELATIVE"
+
+[[ -d "$RUNTIME_ROOTFS_SOURCE" ]] || {
+    echo "Runtime authority root is missing: $RUNTIME_ROOTFS_SOURCE" >&2
+    exit 1
+}
 
 if [[ -f "$CLIENT_DATA_ARCHIVE" ]]; then
     validate_client_archive "$CLIENT_DATA_ARCHIVE"
@@ -468,6 +615,18 @@ install -m 0755 \
     "$CLIENT_DATA_SOURCE/runtime/tray-host/neebles-tray-host" \
     "$CLIENT_STAGE/tray-host/neebles-tray-host"
 
+install -d -m 0755 "$CLIENT_STAGE/runtime/boss"
+
+install -m 0755 "$RUNTIME_RESOLVER_SOURCE" "$CLIENT_STAGE/runtime/neebles-runtime-resolve"
+
+install -m 0644 "$RUNTIME_MANIFEST_SOURCE" "$CLIENT_STAGE/runtime/boss/domestic-runtime.json"
+
+RUNTIME_ROOTFS_STAGE="$CLIENT_STAGE/runtime/boss/$RUNTIME_ROOT_RELATIVE"
+
+install -d -m 0755 "$(dirname -- "$RUNTIME_ROOTFS_STAGE")"
+
+cp -a --     "$RUNTIME_ROOTFS_SOURCE"     "$RUNTIME_ROOTFS_STAGE"
+
 progress 66
 status_key "installer.progress.installing_client_data"
 
@@ -491,6 +650,31 @@ if [[ -z "$DESTDIR" ]]; then
 fi
 
 "$CLIENT_STAGE/bin/neebles" --version
+
+cmp -s "$RUNTIME_RESOLVER_SOURCE" "$CLIENT_STAGE/runtime/neebles-runtime-resolve" || {
+    echo "Installed runtime resolver differs from bootstrap authority." >&2
+    exit 1
+}
+
+cmp -s "$RUNTIME_MANIFEST_SOURCE" "$CLIENT_STAGE/runtime/boss/domestic-runtime.json" || {
+    echo "Installed runtime manifest differs from bootstrap authority." >&2
+    exit 1
+}
+
+[[ -d "$RUNTIME_ROOTFS_STAGE" ]] || {
+    echo "Installed runtime authority root is missing." >&2
+    exit 1
+}
+
+[[ -x "$CLIENT_STAGE/runtime/neebles-runtime-resolve" ]] || {
+    echo "Installed runtime resolver lost executable permission." >&2
+    exit 1
+}
+
+"$CLIENT_STAGE/runtime/neebles-runtime-resolve"     --manifest "$CLIENT_STAGE/runtime/boss/domestic-runtime.json"     --world boss.pkexec     --category executable     >/dev/null     || {
+        echo "Installed runtime authority cannot resolve boss.pkexec." >&2
+        exit 1
+    }
 
 if [[ -e "$CLIENT_ROOT" ]]; then
     CLIENT_BACKUP="$(mktemp -d "$TMP_DIR/client-backup.XXXXXX")"
@@ -592,10 +776,62 @@ fi
 
 install -d -m 0755 "$(dirname "$RUNTIME_SERVICE")"
 
+if [[ -z "$AUTHORITY_SUPPLY_SOURCE" ]]; then
+    install -m 0644 \
+        "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
+        "$RUNTIME_SERVICE"
+else
+    SOURCE_RUNTIME_EXEC="ExecStart=/opt/neebles/client/backend/neebles-backend socket serve"
 
-install -m 0644 \
-    "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
-    "$RUNTIME_SERVICE"
+    grep -Fxq \
+        "$SOURCE_RUNTIME_EXEC" \
+        "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
+        || {
+            echo "Boss Runtime service source does not expose the expected ExecStart contract." >&2
+            exit 1
+        }
+
+    python3 - \
+        "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
+        "$RUNTIME_SERVICE" \
+        "$AUTHORITY_SUPPLY_SOURCE" \
+        <<'PY_SERVICE'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+supply = sys.argv[3]
+
+old = (
+    "ExecStart=/opt/neebles/client/backend/"
+    "neebles-backend socket serve"
+)
+
+new = (
+    "ExecStart=/opt/neebles/client/backend/"
+    "neebles-backend --authority-supply "
+    + supply
+    + " socket serve"
+)
+
+data = source.read_text()
+
+if data.count(old) != 1:
+    raise SystemExit(
+        "runtime service ExecStart contract mismatch"
+    )
+
+destination.write_text(
+    data.replace(
+        old,
+        new,
+    )
+)
+PY_SERVICE
+
+    chmod 0644 "$RUNTIME_SERVICE"
+fi
 
 install -m 0644 \
     "$CLIENT_DATA_SOURCE/systemd/neebles-external.socket" \
@@ -729,13 +965,28 @@ do
 done
 
 
-cmp -s \
-    "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
-    "$RUNTIME_SERVICE" \
-    || {
-        echo "Installed Boss Runtime service does not match payload." >&2
+if [[ -z "$AUTHORITY_SUPPLY_SOURCE" ]]; then
+    cmp -s \
+        "$CLIENT_DATA_SOURCE/systemd/neebles-runtime.service" \
+        "$RUNTIME_SERVICE" \
+        || {
+            echo "Installed Boss Runtime service does not match standalone payload." >&2
+            exit 1
+        }
+else
+    grep -Fxq \
+        "ExecStart=/opt/neebles/client/backend/neebles-backend --authority-supply $AUTHORITY_SUPPLY_SOURCE socket serve" \
+        "$RUNTIME_SERVICE" \
+        || {
+            echo "Installed Boss Runtime service did not preserve AuthoritySupply." >&2
+            exit 1
+        }
+
+    if grep -Fq "authority-supply" "$RUNTIME_ENV"; then
+        echo "AuthoritySupply leaked into runtime.env." >&2
         exit 1
-    }
+    fi
+fi
 
 cmp -s \
     "$CLIENT_DATA_SOURCE/systemd/neebles-external.socket" \

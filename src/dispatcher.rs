@@ -8,7 +8,6 @@ use crate::settings;
 use crate::surface_state::{self, BossUiState};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::process::Command;
 
 pub fn launch_ui() -> Result<(), String> {
     match surface_state::boss_ui_state() {
@@ -22,21 +21,61 @@ pub fn launch_ui() -> Result<(), String> {
     let (desktop_uid, desktop_gid) = crate::runtime_identity::desktop_identity()?;
     let runtime_dir = format!("/run/user/{desktop_uid}");
     let session_bus = format!("unix:path={runtime_dir}/bus");
-    let ui_path = "/opt/neebles/client/ui/neebles-ui";
+
+    let client_root = crate::languages::client_root()?;
+    let ui_path = client_root.join("ui/neebles-ui");
+    let runtime_resolver = client_root.join("runtime/neebles-runtime-resolve");
+    let runtime_manifest =
+        neebles_backend::domestic_runtime_authority::current_boss_runtime_manifest()?;
+
+    if !runtime_resolver.is_file() {
+        return Err(format!(
+            "installed runtime resolver is missing: {}",
+            runtime_resolver.display()
+        ));
+    }
 
     let opening_generation = surface_state::begin_boss_ui_opening()?;
 
-    let result = Command::new("/usr/bin/setpriv")
+    let setpriv =
+        neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.setpriv")?;
+    let systemd_run =
+        neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.systemd-run")?;
+
+    let protocol_environment = BTreeMap::from([
+        ("XDG_RUNTIME_DIR".to_string(), runtime_dir.clone()),
+        ("DBUS_SESSION_BUS_ADDRESS".to_string(), session_bus.clone()),
+    ]);
+
+    let mut command = neebles_backend::domestic_environment::build_process_command(
+        setpriv,
+        neebles_backend::domestic_environment::ProcessEnvironmentClass::SystemInterface,
+        &protocol_environment,
+        &BTreeMap::new(),
+        &std::collections::BTreeSet::new(),
+    )?;
+
+    let result = command
         .arg(format!("--reuid={desktop_uid}"))
         .arg(format!("--regid={desktop_gid}"))
         .arg("--init-groups")
-        .env("XDG_RUNTIME_DIR", &runtime_dir)
-        .env("DBUS_SESSION_BUS_ADDRESS", &session_bus)
-        .arg("/usr/bin/systemd-run")
+        .arg(systemd_run)
         .arg("--user")
         .arg("--collect")
         .arg("--quiet")
-        .arg(ui_path)
+        .arg(format!(
+            "--setenv=NEEBLES_CLIENT_ROOT={}",
+            client_root.display()
+        ))
+        .arg(format!(
+            "--setenv=NEEBLES_RUNTIME_RESOLVER={}",
+            runtime_resolver.display()
+        ))
+        .arg(format!(
+            "--setenv=NEEBLES_RUNTIME_MANIFEST={}",
+            runtime_manifest.display()
+        ))
+        .arg(&ui_path)
         .status();
 
     match result {

@@ -26,18 +26,17 @@ bool BossCommandClient::startBoss()
     if (command.isEmpty()) {
         const QString installedCommand =
             QStringLiteral(
-                "/usr/local/bin/neebles"
+                "/opt/neebles/client/bin/neebles"
             );
 
         if (
-            QFileInfo::exists(installedCommand)
-            && QFileInfo(installedCommand).isExecutable()
+            !QFileInfo::exists(installedCommand)
+            || !QFileInfo(installedCommand).isExecutable()
         ) {
-            command = installedCommand;
-        } else {
-            command =
-                QStringLiteral("neebles");
+            return false;
         }
+
+        command = installedCommand;
     }
 
     return QProcess::startDetached(

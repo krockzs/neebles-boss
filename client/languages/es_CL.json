@@ -81,7 +81,7 @@
   "installer.status.completed": "La instalación de N.E.E.B.L.E.S. se completó.",
   "installer.status.cancelled_or_failed": "La instalación fue cancelada o falló.",
   "installer.status.start_failed": "No se pudo iniciar el instalador privilegiado.",
-  "installer.log.expected_arguments": "ERROR: se esperaban los argumentos del instalador: <install.sh> <backend> <ui> <tray> <client-data.tar.gz>",
+  "installer.log.expected_arguments": "ERROR: se esperaban los argumentos del instalador: <install.sh> <backend> <ui> <client-data.tar.gz> <runtime-resolver> <runtime-manifest> [authority-supply]",
   "installer.log.payload_missing": "ERROR: uno o más archivos del contenido del instalador no existen.",
   "installer.log.requesting_privileges": "Solicitando privilegios administrativos mediante Polkit...",
   "installer.log.auth_agent_missing": "ERROR: no se encontró el agente de autorización de N.E.E.B.L.E.S.",

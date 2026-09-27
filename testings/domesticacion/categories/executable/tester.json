@@ -1,0 +1,411 @@
+{
+  "schema": "3",
+  "category": "executable",
+  "input": {
+    "value": "String",
+    "targets": "String[]"
+  },
+  "tester": "matrix",
+  "technology_specific": false,
+  "spells": [
+    {
+      "name": "boss.physical",
+      "options": {
+        "target_shape": [
+          "file",
+          "directory",
+          "symlink",
+          "missing",
+          "mixed"
+        ],
+        "target_count": [
+          "single",
+          "multiple"
+        ],
+        "path_form": [
+          "relative",
+          "absolute",
+          "parent_escape"
+        ]
+      },
+      "cases": [
+        {
+          "id": "relative-single-file",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-directory",
+          "select": {
+            "target_shape": "directory",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-symlink",
+          "select": {
+            "target_shape": "symlink",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-multiple-mixed",
+          "select": {
+            "target_shape": "mixed",
+            "target_count": "multiple",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-missing",
+          "select": {
+            "target_shape": "missing",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "report_missing"
+        },
+        {
+          "id": "absolute-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "absolute"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "parent-escape-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "parent_escape"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.call_contract",
+      "options": {
+        "caller_return": [
+          "result",
+          "plain_value"
+        ],
+        "error_policy": [
+          "propagate",
+          "fallback",
+          "ignore"
+        ]
+      },
+      "cases": [
+        {
+          "id": "result-propagates-error",
+          "select": {
+            "caller_return": "result",
+            "error_policy": "propagate"
+          },
+          "expect": "valid"
+        },
+        {
+          "id": "result-can-fallback",
+          "select": {
+            "caller_return": "result",
+            "error_policy": "fallback"
+          },
+          "expect": "valid"
+        },
+        {
+          "id": "plain-value-requires-fallback",
+          "select": {
+            "caller_return": "plain_value",
+            "error_policy": "fallback"
+          },
+          "expect": "valid"
+        },
+        {
+          "id": "plain-value-can-ignore",
+          "select": {
+            "caller_return": "plain_value",
+            "error_policy": "ignore"
+          },
+          "expect": "valid"
+        },
+        {
+          "id": "plain-value-cannot-propagate",
+          "select": {
+            "caller_return": "plain_value",
+            "error_policy": "propagate"
+          },
+          "expect": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "boss.argument_contract",
+      "options": {
+        "required_argument": [
+          "present",
+          "absent"
+        ],
+        "forbidden_argument": [
+          "absent",
+          "present"
+        ]
+      },
+      "cases": [
+        {
+          "id": "required-present-forbidden-absent",
+          "select": {
+            "required_argument": "present",
+            "forbidden_argument": "absent"
+          },
+          "expect": "valid"
+        },
+        {
+          "id": "required-absent-forbidden-absent",
+          "select": {
+            "required_argument": "absent",
+            "forbidden_argument": "absent"
+          },
+          "expect": "invalid"
+        },
+        {
+          "id": "required-present-forbidden-present",
+          "select": {
+            "required_argument": "present",
+            "forbidden_argument": "present"
+          },
+          "expect": "invalid"
+        },
+        {
+          "id": "required-absent-forbidden-present",
+          "select": {
+            "required_argument": "absent",
+            "forbidden_argument": "present"
+          },
+          "expect": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "boss.runtime_authority",
+      "options": {
+        "manifest_identity": [
+          "valid",
+          "invalid"
+        ],
+        "root_form": [
+          "relative",
+          "absolute",
+          "escape"
+        ],
+        "root_presence": [
+          "present",
+          "missing"
+        ],
+        "world_state": [
+          "present",
+          "missing"
+        ],
+        "category_state": [
+          "present",
+          "missing"
+        ],
+        "target_cardinality": [
+          "one",
+          "zero",
+          "many"
+        ],
+        "target_form": [
+          "relative",
+          "absolute",
+          "escape"
+        ],
+        "target_presence": [
+          "present",
+          "missing"
+        ]
+      },
+      "cases": [
+        {
+          "id": "declared-world-resolves-single-domestic-target",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "relative",
+            "root_presence": "present",
+            "world_state": "present",
+            "category_state": "present",
+            "target_cardinality": "one",
+            "target_form": "relative",
+            "target_presence": "present"
+          },
+          "expect": "resolved"
+        },
+        {
+          "id": "invalid-manifest-identity-is-rejected",
+          "select": {
+            "manifest_identity": "invalid",
+            "root_form": "relative",
+            "root_presence": "present",
+            "world_state": "present",
+            "category_state": "present",
+            "target_cardinality": "one",
+            "target_form": "relative",
+            "target_presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "absolute-runtime-root-is-rejected",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "absolute",
+            "root_presence": "present",
+            "world_state": "present",
+            "category_state": "present",
+            "target_cardinality": "one",
+            "target_form": "relative",
+            "target_presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "escaping-runtime-root-is-rejected",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "escape",
+            "root_presence": "present",
+            "world_state": "present",
+            "category_state": "present",
+            "target_cardinality": "one",
+            "target_form": "relative",
+            "target_presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "missing-runtime-root-is-rejected",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "relative",
+            "root_presence": "missing",
+            "world_state": "present",
+            "category_state": "present",
+            "target_cardinality": "one",
+            "target_form": "relative",
+            "target_presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "unknown-world-is-rejected",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "relative",
+            "root_presence": "present",
+            "world_state": "missing",
+            "category_state": "present",
+            "target_cardinality": "one",
+            "target_form": "relative",
+            "target_presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "missing-category-is-rejected",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "relative",
+            "root_presence": "present",
+            "world_state": "present",
+            "category_state": "missing",
+            "target_cardinality": "one",
+            "target_form": "relative",
+            "target_presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "zero-executable-targets-is-rejected",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "relative",
+            "root_presence": "present",
+            "world_state": "present",
+            "category_state": "present",
+            "target_cardinality": "zero",
+            "target_form": "relative",
+            "target_presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "multiple-executable-targets-is-rejected",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "relative",
+            "root_presence": "present",
+            "world_state": "present",
+            "category_state": "present",
+            "target_cardinality": "many",
+            "target_form": "relative",
+            "target_presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "absolute-materialized-target-is-rejected",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "relative",
+            "root_presence": "present",
+            "world_state": "present",
+            "category_state": "present",
+            "target_cardinality": "one",
+            "target_form": "absolute",
+            "target_presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "escaping-materialized-target-is-rejected",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "relative",
+            "root_presence": "present",
+            "world_state": "present",
+            "category_state": "present",
+            "target_cardinality": "one",
+            "target_form": "escape",
+            "target_presence": "present"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "missing-materialized-target-is-rejected",
+          "select": {
+            "manifest_identity": "valid",
+            "root_form": "relative",
+            "root_presence": "present",
+            "world_state": "present",
+            "category_state": "present",
+            "target_cardinality": "one",
+            "target_form": "relative",
+            "target_presence": "missing"
+          },
+          "expect": "error"
+        }
+      ]
+    }
+  ]
+}

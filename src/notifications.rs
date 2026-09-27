@@ -1,6 +1,5 @@
 use crate::config;
 use crate::modules;
-use std::process::Command;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Severity {
@@ -55,7 +54,26 @@ fn emit_transport(
     let icon =
         crate::languages::client_root()?.join("assets/branding/neebles-boss-launcher-icon.png");
 
-    let status = Command::new("notify-send")
+    let (desktop_uid, _) = crate::runtime_identity::desktop_identity()?;
+
+    let runtime_dir = format!("/run/user/{desktop_uid}");
+
+    let session_bus = format!("unix:path={runtime_dir}/bus");
+
+    let protocol_environment = std::collections::BTreeMap::from([
+        ("XDG_RUNTIME_DIR".to_string(), runtime_dir),
+        ("DBUS_SESSION_BUS_ADDRESS".to_string(), session_bus),
+    ]);
+
+    let mut command = neebles_backend::domestic_environment::build_process_command(
+        neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.notify-send")?,
+        neebles_backend::domestic_environment::ProcessEnvironmentClass::SystemInterface,
+        &protocol_environment,
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeSet::new(),
+    )?;
+
+    let status = command
         .args(["-a", application, "-u", severity.urgency()])
         .arg("-i")
         .arg(icon)

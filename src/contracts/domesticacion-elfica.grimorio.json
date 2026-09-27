@@ -1,0 +1,46 @@
+{
+  "schema": "1",
+  "name": "domesticacion-elfica",
+  "worlds": {
+    "boss.curl": {
+      "executable": "curl",
+      "library_paths": "core.multiarch"
+    },
+    "boss.env": {
+      "executable": "env",
+      "library_paths": "core.multiarch"
+    },
+    "boss.git": {
+      "executable": "git",
+      "library_paths": "core.multiarch"
+    },
+    "boss.notify-send": {
+      "executable": "notify-send",
+      "library_paths": "core.multiarch"
+    },
+    "boss.setpriv": {
+      "executable": "setpriv",
+      "library_paths": "core.multiarch"
+    },
+    "boss.systemctl": {
+      "executable": "systemctl",
+      "library_paths": "core.multiarch+core.systemd-runtime"
+    },
+    "boss.systemd-run": {
+      "executable": "systemd-run",
+      "library_paths": "core.multiarch+core.systemd-runtime"
+    },
+    "boss.pkexec": {
+      "executable": "pkexec",
+      "library_paths": "core.multiarch"
+    },
+    "boss.qdbus6": {
+      "executable": "qdbus6",
+      "library_paths": "core.multiarch"
+    },
+    "boss.tar": {
+      "executable": "tar",
+      "library_paths": "core.multiarch"
+    }
+  }
+}

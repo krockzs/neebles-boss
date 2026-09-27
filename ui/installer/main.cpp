@@ -16,6 +16,8 @@
 #include <QUrl>
 
 #include "installercontroller.h"
+#include "../../client/shared/runtimeauthority.h"
+#include "../../client/shared/domesticprocess.h"
 
 static QString findBrandingAsset(
     const QString &name,
@@ -300,11 +302,100 @@ static QString extractClientData(
         return {};
     }
 
+    /*
+     * An explicit client-data payload requires an explicit
+     * bootstrap runtime authority.
+     *
+     * The permanent Boss runtime does not exist yet.
+     * Bootstrap must therefore never discover or borrow it.
+     */
+    if (arguments.size() < 7) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "bootstrap runtime authority arguments are missing"
+                );
+        }
+
+        return {};
+    }
+
+    const QString runtimeResolver =
+        arguments.at(5).trimmed();
+
+    const QString runtimeManifest =
+        arguments.at(6).trimmed();
+
+    if (
+        runtimeResolver.isEmpty()
+        || runtimeManifest.isEmpty()
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "bootstrap runtime authority arguments are empty"
+                );
+        }
+
+        return {};
+    }
+
+    QString runtimeAuthorityError;
+
+    const QString tarTool =
+        NeeblesRuntimeAuthority::resolve(
+            runtimeResolver,
+            runtimeManifest,
+            QStringLiteral("boss.tar"),
+            QStringLiteral("executable"),
+            &runtimeAuthorityError
+        );
+
+    if (tarTool.isEmpty()) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "bootstrap runtime authority could not resolve boss.tar"
+                );
+
+            if (!runtimeAuthorityError.isEmpty()) {
+                *error +=
+                    QStringLiteral(": ")
+                    + runtimeAuthorityError;
+            }
+        }
+
+        return {};
+    }
+
     QProcess tar;
+    QString domesticProcessError;
+
+    if (
+        !NeeblesDomesticProcess::configure(
+            &tar,
+            NeeblesDomesticProcess::EnvironmentClass::Pure,
+            QProcessEnvironment(),
+            QProcessEnvironment(),
+            QSet<QString>(),
+            &domesticProcessError
+        )
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "could not seal tar domestic environment: "
+                )
+                + domesticProcessError;
+        }
+
+        return {};
+    }
 
     tar.start(
-        QStringLiteral("tar"),
+        tarTool,
         {
+            QStringLiteral("--force-local"),
             QStringLiteral("-xzf"),
             archive,
             QStringLiteral("-C"),

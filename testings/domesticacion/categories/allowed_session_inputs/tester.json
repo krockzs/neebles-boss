@@ -1,0 +1,306 @@
+{
+  "schema": "3",
+  "category": "allowed_session_inputs",
+  "input": {
+    "value": "String",
+    "targets": "String[]"
+  },
+  "tester": "matrix",
+  "technology_specific": false,
+  "spells": [
+    {
+      "name": "boss.physical",
+      "options": {
+        "target_shape": [
+          "file",
+          "directory",
+          "symlink",
+          "missing",
+          "mixed"
+        ],
+        "target_count": [
+          "single",
+          "multiple"
+        ],
+        "path_form": [
+          "relative",
+          "absolute",
+          "parent_escape"
+        ]
+      },
+      "cases": [
+        {
+          "id": "relative-single-file",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-directory",
+          "select": {
+            "target_shape": "directory",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-symlink",
+          "select": {
+            "target_shape": "symlink",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-multiple-mixed",
+          "select": {
+            "target_shape": "mixed",
+            "target_count": "multiple",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-missing",
+          "select": {
+            "target_shape": "missing",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "report_missing"
+        },
+        {
+          "id": "absolute-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "absolute"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "parent-escape-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "parent_escape"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.session_policy",
+      "options": {
+        "request": [
+          "absent",
+          "exact",
+          "forbidden",
+          "override"
+        ],
+        "source": [
+          "missing",
+          "present"
+        ],
+        "domestic_collision": [
+          "no",
+          "yes"
+        ]
+      },
+      "cases": [
+        {
+          "id": "absent-input",
+          "select": {
+            "request": "absent",
+            "source": "missing",
+            "domestic_collision": "no"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0
+          }
+        },
+        {
+          "id": "exact-present-input",
+          "select": {
+            "request": "exact",
+            "source": "present",
+            "domestic_collision": "no"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "DISPLAY": ":0"
+            },
+            "size": 1
+          }
+        },
+        {
+          "id": "exact-missing-input",
+          "select": {
+            "request": "exact",
+            "source": "missing",
+            "domestic_collision": "no"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0
+          }
+        },
+        {
+          "id": "forbidden-input",
+          "select": {
+            "request": "forbidden",
+            "source": "present",
+            "domestic_collision": "no"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "domestic-override-attempt",
+          "select": {
+            "request": "override",
+            "source": "present",
+            "domestic_collision": "yes"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.selection_semantics",
+      "options": {
+        "selection": [
+          "exact"
+        ],
+        "source": [
+          "neighbors"
+        ]
+      },
+      "cases": [
+        {
+          "id": "exact-selection-never-expands-by-prefix",
+          "select": {
+            "selection": "exact",
+            "source": "neighbors"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "DISPLAY": ":0",
+              "XDG_SESSION_TYPE": "wayland"
+            },
+            "absent": [
+              "XDG_CURRENT_DESKTOP",
+              "QT_SCALE_FACTOR",
+              "KDE_FULL_SESSION"
+            ],
+            "size": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "boss.forbidden_catalog",
+      "options": {
+        "key": [
+          "PATH",
+          "LD_PRELOAD",
+          "LD_LIBRARY_PATH",
+          "PYTHONPATH",
+          "PYTHONHOME",
+          "QT_PLUGIN_PATH",
+          "QT_QPA_PLATFORM_PLUGIN_PATH",
+          "QML_IMPORT_PATH",
+          "QML2_IMPORT_PATH",
+          "GI_TYPELIB_PATH",
+          "GIO_EXTRA_MODULES"
+        ]
+      },
+      "cases": [
+        {
+          "id": "forbidden-path",
+          "select": {
+            "key": "PATH"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "forbidden-ld-preload",
+          "select": {
+            "key": "LD_PRELOAD"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "forbidden-ld-library-path",
+          "select": {
+            "key": "LD_LIBRARY_PATH"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "forbidden-pythonpath",
+          "select": {
+            "key": "PYTHONPATH"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "forbidden-pythonhome",
+          "select": {
+            "key": "PYTHONHOME"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "forbidden-qt-plugin-path",
+          "select": {
+            "key": "QT_PLUGIN_PATH"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "forbidden-qt-qpa-platform-plugin-path",
+          "select": {
+            "key": "QT_QPA_PLATFORM_PLUGIN_PATH"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "forbidden-qml-import-path",
+          "select": {
+            "key": "QML_IMPORT_PATH"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "forbidden-qml2-import-path",
+          "select": {
+            "key": "QML2_IMPORT_PATH"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "forbidden-gi-typelib-path",
+          "select": {
+            "key": "GI_TYPELIB_PATH"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "forbidden-gio-extra-modules",
+          "select": {
+            "key": "GIO_EXTRA_MODULES"
+          },
+          "expect": "error"
+        }
+      ]
+    }
+  ]
+}

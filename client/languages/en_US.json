@@ -81,7 +81,7 @@
   "installer.status.completed": "N.E.E.B.L.E.S. installation completed.",
   "installer.status.cancelled_or_failed": "Installation was cancelled or failed.",
   "installer.status.start_failed": "Could not start the privileged installer.",
-  "installer.log.expected_arguments": "ERROR: expected installer arguments: <install.sh> <backend> <ui> <tray> <client-data.tar.gz>",
+  "installer.log.expected_arguments": "ERROR: expected installer arguments: <install.sh> <backend> <ui> <client-data.tar.gz> <runtime-resolver> <runtime-manifest> [authority-supply]",
   "installer.log.payload_missing": "ERROR: one or more installer payload files do not exist.",
   "installer.log.requesting_privileges": "Requesting administrator privileges through Polkit...",
   "installer.log.auth_agent_missing": "ERROR: N.E.E.B.L.E.S. authorization agent was not found.",

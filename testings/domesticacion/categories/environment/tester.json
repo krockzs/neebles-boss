@@ -1,0 +1,438 @@
+{
+  "schema": "3",
+  "category": "environment",
+  "input": {
+    "value": "String",
+    "targets": "String[]"
+  },
+  "tester": "matrix",
+  "technology_specific": false,
+  "spells": [
+    {
+      "name": "boss.physical",
+      "options": {
+        "target_shape": [
+          "file",
+          "directory",
+          "symlink",
+          "missing",
+          "mixed"
+        ],
+        "target_count": [
+          "single",
+          "multiple"
+        ],
+        "path_form": [
+          "relative",
+          "absolute",
+          "parent_escape"
+        ]
+      },
+      "cases": [
+        {
+          "id": "relative-single-file",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-directory",
+          "select": {
+            "target_shape": "directory",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-symlink",
+          "select": {
+            "target_shape": "symlink",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-multiple-mixed",
+          "select": {
+            "target_shape": "mixed",
+            "target_count": "multiple",
+            "path_form": "relative"
+          },
+          "expect": "pass"
+        },
+        {
+          "id": "relative-single-missing",
+          "select": {
+            "target_shape": "missing",
+            "target_count": "single",
+            "path_form": "relative"
+          },
+          "expect": "report_missing"
+        },
+        {
+          "id": "absolute-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "absolute"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "parent-escape-target",
+          "select": {
+            "target_shape": "file",
+            "target_count": "single",
+            "path_form": "parent_escape"
+          },
+          "expect": "error"
+        }
+      ]
+    },
+    {
+      "name": "boss.process_environment",
+      "options": {
+        "class": [
+          "pure",
+          "session",
+          "system_interface"
+        ],
+        "domestic": [
+          "empty",
+          "explicit",
+          "private_path"
+        ],
+        "session": [
+          "empty",
+          "allowed",
+          "hostile",
+          "graphical_bridge"
+        ],
+        "allowlist": [
+          "none",
+          "exact",
+          "forbidden",
+          "override",
+          "graphical_bridge"
+        ],
+        "application": [
+          "map",
+          "command"
+        ]
+      },
+      "cases": [
+        {
+          "id": "pure-empty-map",
+          "select": {
+            "class": "pure",
+            "domestic": "empty",
+            "session": "hostile",
+            "allowlist": "none",
+            "application": "map"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0,
+            "absent": [
+              "PATH",
+              "LD_PRELOAD",
+              "DISPLAY"
+            ]
+          }
+        },
+        {
+          "id": "pure-domestic-command",
+          "select": {
+            "class": "pure",
+            "domestic": "explicit",
+            "session": "hostile",
+            "allowlist": "none",
+            "application": "command"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "NEEBLES_TEST": "inside"
+            },
+            "absent": [
+              "PATH",
+              "LD_PRELOAD",
+              "DISPLAY"
+            ],
+            "size": 1
+          }
+        },
+        {
+          "id": "pure-rejects-session-input",
+          "select": {
+            "class": "pure",
+            "domestic": "empty",
+            "session": "allowed",
+            "allowlist": "exact",
+            "application": "map"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "session-exact-input",
+          "select": {
+            "class": "session",
+            "domestic": "empty",
+            "session": "allowed",
+            "allowlist": "exact",
+            "application": "map"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "DISPLAY": ":0"
+            },
+            "absent": [
+              "PATH",
+              "LD_PRELOAD",
+              "NEEBLES_TEST"
+            ],
+            "size": 1
+          }
+        },
+        {
+          "id": "session-forbidden-input",
+          "select": {
+            "class": "session",
+            "domestic": "empty",
+            "session": "hostile",
+            "allowlist": "forbidden",
+            "application": "map"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "session-cannot-override-domestic",
+          "select": {
+            "class": "session",
+            "domestic": "explicit",
+            "session": "allowed",
+            "allowlist": "override",
+            "application": "map"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "system-interface-protocol-command",
+          "select": {
+            "class": "system_interface",
+            "domestic": "explicit",
+            "session": "hostile",
+            "allowlist": "none",
+            "application": "command"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "XDG_RUNTIME_DIR": "/run/user/1000",
+              "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"
+            },
+            "absent": [
+              "PATH",
+              "LD_PRELOAD",
+              "DISPLAY"
+            ],
+            "size": 2
+          }
+        },
+        {
+          "id": "system-interface-rejects-session-input",
+          "select": {
+            "class": "system_interface",
+            "domestic": "explicit",
+            "session": "allowed",
+            "allowlist": "exact",
+            "application": "map"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "pure-empty-command",
+          "select": {
+            "class": "pure",
+            "domestic": "empty",
+            "session": "hostile",
+            "allowlist": "none",
+            "application": "command"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0,
+            "absent": [
+              "PATH",
+              "LD_PRELOAD",
+              "DISPLAY"
+            ]
+          }
+        },
+        {
+          "id": "session-domestic-command",
+          "select": {
+            "class": "session",
+            "domestic": "explicit",
+            "session": "allowed",
+            "allowlist": "exact",
+            "application": "command"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "NEEBLES_TEST": "inside",
+              "DISPLAY": ":0"
+            },
+            "absent": [
+              "PATH",
+              "LD_PRELOAD"
+            ],
+            "size": 2
+          }
+        },
+        {
+          "id": "pure-private-path-authority",
+          "select": {
+            "class": "pure",
+            "domestic": "private_path",
+            "session": "hostile",
+            "allowlist": "none",
+            "application": "map"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "PATH": "/opt/neebles/private/bin"
+            },
+            "absent": [
+              "LD_PRELOAD",
+              "DISPLAY"
+            ],
+            "size": 1
+          }
+        },
+        {
+          "id": "session-graphical-bridge-command",
+          "select": {
+            "class": "session",
+            "domestic": "empty",
+            "session": "graphical_bridge",
+            "allowlist": "graphical_bridge",
+            "application": "command"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "DISPLAY": ":0",
+              "WAYLAND_DISPLAY": "wayland-test",
+              "XAUTHORITY": "/run/user/test/xauthority",
+              "XDG_RUNTIME_DIR": "/run/user/test",
+              "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/test/bus"
+            },
+            "absent": [
+              "PATH",
+              "LD_PRELOAD",
+              "LD_LIBRARY_PATH",
+              "QT_PLUGIN_PATH",
+              "XDG_CURRENT_DESKTOP",
+              "DESKTOP_SESSION"
+            ],
+            "size": 5
+          }
+        }
+      ]
+    },
+    {
+      "name": "boss.raw_environment_parser",
+      "options": {
+        "input_shape": [
+          "mixed"
+        ],
+        "policy": [
+          "parse_only",
+          "seal_exact"
+        ]
+      },
+      "cases": [
+        {
+          "id": "mixed-input-parses-data-only",
+          "select": {
+            "input_shape": "mixed",
+            "policy": "parse_only"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "PATH": "/host/bin",
+              "DISPLAY": ":0",
+              "LD_PRELOAD": "/tmp/evil.so"
+            },
+            "absent": [
+              "BROKEN"
+            ],
+            "size": 3
+          }
+        },
+        {
+          "id": "parsed-data-still-needs-explicit-permission",
+          "select": {
+            "input_shape": "mixed",
+            "policy": "seal_exact"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "DISPLAY": ":0"
+            },
+            "absent": [
+              "PATH",
+              "LD_PRELOAD",
+              "BROKEN"
+            ],
+            "size": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "boss.command_sealing",
+      "options": {
+        "preseed": [
+          "hostile"
+        ],
+        "sealed": [
+          "explicit"
+        ]
+      },
+      "cases": [
+        {
+          "id": "sealed-command-replaces-preexisting-environment",
+          "select": {
+            "preseed": "hostile",
+            "sealed": "explicit"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "NEEBLES_MODULE": "test-module",
+              "DISPLAY": ":0"
+            },
+            "absent": [
+              "PATH",
+              "LD_PRELOAD",
+              "UNRELATED_HOST_VALUE"
+            ],
+            "size": 2
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -14,7 +14,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(
-    Qt6 ${NEEBLES_QT_VERSION_RANGE} REQUIRED
+    Qt6 ${NEEBLES_QT_VERSION} EXACT REQUIRED
     COMPONENTS
         Core
         Widgets
@@ -44,6 +44,9 @@ qt_add_executable(
     main.cpp
     authagent.cpp
     authagent.h
+    ../../client/shared/runtimeauthority.cpp
+    ../../client/shared/runtimeauthority.h
+    ../../client/shared/domesticprocess.h
 )
 
 set(
