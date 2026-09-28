@@ -76,11 +76,6 @@ bool BossEventClient::trayEnabled() const
     return m_trayEnabled;
 }
 
-QStringList BossEventClient::hiddenLauncherModules() const
-{
-    return m_hiddenLauncherModules;
-}
-
 QString BossEventClient::socketPath() const
 {
     const QString overridePath =
@@ -221,22 +216,6 @@ void BossEventClient::setTrayEnabled(
     emit trayEnabledChanged();
 }
 
-void BossEventClient::setHiddenLauncherModules(
-    const QStringList &modules
-)
-{
-    if (
-        m_hiddenLauncherModules
-        == modules
-    ) {
-        return;
-    }
-
-    m_hiddenLauncherModules = modules;
-
-    emit hiddenLauncherModulesChanged();
-}
-
 void BossEventClient::processLine(
     const QByteArray &line
 )
@@ -341,37 +320,13 @@ void BossEventClient::processLine(
             );
         }
 
-        if (
-            payload.contains(
-                QStringLiteral(
-                    "hidden_launcher_modules"
-                )
-            )
-        ) {
-            QStringList hiddenModules;
-
-            const QJsonArray values =
-                payload.value(
-                    QStringLiteral(
-                        "hidden_launcher_modules"
-                    )
-                ).toArray();
-
-            for (
-                const QJsonValue &value
-                : values
-            ) {
-                if (value.isString()) {
-                    hiddenModules.append(
-                        value.toString()
-                    );
-                }
-            }
-
-            setHiddenLauncherModules(
-                hiddenModules
-            );
-        }
+        /*
+         * Any Boss settings change may alter effective SurfaceContent.
+         *
+         * Surface consumers do not interpret persistence maps.
+         * They simply reload canonical module SurfaceContent.
+         */
+        emit settingsChanged();
     }
 }
 

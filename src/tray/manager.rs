@@ -92,7 +92,17 @@ impl TrayManager {
             }
         }
 
-        let visible = config::module_visible("tray", &owner_module)?;
+        /*
+         * Tray provider runtime availability is not presentation
+         * visibility.
+         *
+         * Per-item presentation visibility belongs to the Boss
+         * SurfaceProjection model and is persisted by projection item.
+         *
+         * Provider infrastructure remains available while the module
+         * itself is enabled.
+         */
+        let visible = true;
 
         let record = TrayRecord {
             tray_id: tray_id.clone(),

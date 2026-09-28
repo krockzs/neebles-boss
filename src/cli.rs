@@ -150,24 +150,31 @@ fn config_command(args: &[String]) -> i32 {
                 Err(error) => fail(error),
             }
         }
-        Some("module-visibility") => {
+        Some("surface-item-visibility") => {
             let Some(surface) = args.get(1) else {
                 return fail(
-                    "config module-visibility requires tray or launcher"
+                    "config surface-item-visibility requires a surface"
                         .to_string()
                 );
             };
 
-            let Some(name) = args.get(2) else {
+            let Some(module) = args.get(2) else {
                 return fail(
-                    "config module-visibility requires a module name"
+                    "config surface-item-visibility requires a module name"
                         .to_string()
                 );
             };
 
-            let Some(value) = args.get(3) else {
+            let Some(item_id) = args.get(3) else {
                 return fail(
-                    "config module-visibility requires true or false"
+                    "config surface-item-visibility requires an item id"
+                        .to_string()
+                );
+            };
+
+            let Some(value) = args.get(4) else {
+                return fail(
+                    "config surface-item-visibility requires true or false"
                         .to_string()
                 );
             };
@@ -177,74 +184,52 @@ fn config_command(args: &[String]) -> i32 {
                 Err(error) => return fail(error),
             };
 
-            if surface == "tray" {
-                let manifest = match modules::installed_module_manifest(name) {
-                    Ok(manifest) => manifest,
+            let projection =
+                match modules::installed_module_surface_projection(module) {
+                    Ok(projection) => projection,
                     Err(error) => return fail(error),
                 };
 
-                if manifest.tray.is_none() {
-                    return fail(format!(
-                        "module '{}' does not declare a tray capability",
-                        name
-                    ));
-                }
+            let Some(item) = projection.get(item_id) else {
+                return fail(format!(
+                    "module '{}' does not declare surface projection item '{}'",
+                    module,
+                    item_id
+                ));
+            };
 
-                let request = tray::protocol::TrayMessage::SetVisibility {
-                    tray_id: name.clone(),
-                    visible,
-                };
+            if item.owner_module() != module {
+                return fail(format!(
+                    "surface projection item '{}' is not owned by module '{}'",
+                    item_id,
+                    module
+                ));
+            }
 
-                match tray::client::request(&request) {
-                    Ok(tray::protocol::TrayMessage::Ack { .. }) => {
-                        match config::load_or_initialize() {
-                            Ok(config) => {
-                                notify_boss_config_changed();
-                                print_json(&config)
-                            }
-
-                            Err(error) => fail(error),
-                        }
-                    }
-
-                    Ok(tray::protocol::TrayMessage::Error { message }) => fail(message),
-
-                    Ok(response) => fail(format!(
-                        "unexpected tray visibility response: {:?}",
-                        response
-                    )),
-
-                    Err(error) => fail(error),
-                }
-            } else if surface == "launcher" {
-                match modules::installed_module_launcher_action(name) {
-                    Ok(Some(_)) => {}
-
-                    Ok(None) => {
-                        return fail(format!(
-                            "module '{}' does not declare a launcher action",
-                            name
-                        ));
-                    }
-
-                    Err(error) => return fail(error),
-                }
-
-                match config::set_module_visibility(surface, name, visible) {
-                    Ok(config) => {
-                        notify_boss_config_changed();
-                        print_json(&config)
-                    }
-
-                    Err(error) => fail(error),
-                }
-            } else {
-                fail(format!(
-                    "unknown module visibility surface: {}",
+            if item.surface() != surface {
+                return fail(format!(
+                    "surface projection item '{}' belongs to surface '{}', not '{}'",
+                    item_id,
+                    item.surface(),
                     surface
-                ))
+                ));
+            }
+
+            match config::set_surface_item_visibility(
+                surface,
+                module,
+                item_id,
+                visible,
+            ) {
+                Ok(config) => {
+                    notify_boss_config_changed();
+                    print_json(&config)
+                }
+
+                Err(error) => fail(error),
             }
         }
+
         Some("module-update-notified") => {
             let Some(name) = args.get(1) else {
                 return fail(
@@ -269,7 +254,7 @@ fn config_command(args: &[String]) -> i32 {
             }
         }
         _ => fail(
-            "usage: neebles config show | neebles config set <key> <value> | neebles config module-visibility <tray|launcher> <module> <true|false> | neebles config module-update-notified <module> <version>"
+            "usage: neebles config show | neebles config set <key> <value> | neebles config surface-item-visibility <surface> <module> <item-id> <true|false> | neebles config module-update-notified <module> <version>"
                 .to_string()
         ),
     }
@@ -1190,7 +1175,7 @@ fn print_help() {
     println!("Boss administration:");
     println!("  neebles config show");
     println!("  neebles config set <key> <value>");
-    println!("  neebles config module-visibility <tray|launcher> <module> <true|false>");
+    println!("  neebles config surface-item-visibility <surface> <module> <item-id> <true|false>");
     println!("  neebles config module-update-notified <module> <version>");
     println!("  neebles modules available|installed");
     println!("  neebles modules install|update|uninstall <module>");

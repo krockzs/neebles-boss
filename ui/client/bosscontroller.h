@@ -17,8 +17,6 @@ class BossController final : public QObject
     Q_PROPERTY(bool launcherEnabled READ launcherEnabled NOTIFY configChanged)
     Q_PROPERTY(bool normalNotifications READ normalNotifications NOTIFY configChanged)
     Q_PROPERTY(bool telemetryEnabled READ telemetryEnabled NOTIFY configChanged)
-    Q_PROPERTY(QVariantList hiddenTrayModules READ hiddenTrayModules NOTIFY configChanged)
-    Q_PROPERTY(QVariantList hiddenLauncherModules READ hiddenLauncherModules NOTIFY configChanged)
     Q_PROPERTY(QVariantList languages READ languages NOTIFY languagesChanged)
     Q_PROPERTY(QVariantList modules READ modules NOTIFY modulesChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
@@ -34,8 +32,6 @@ public:
     bool launcherEnabled() const { return m_launcherEnabled; }
     bool normalNotifications() const { return m_normalNotifications; }
     bool telemetryEnabled() const { return m_telemetryEnabled; }
-    QVariantList hiddenTrayModules() const { return m_hiddenTrayModules; }
-    QVariantList hiddenLauncherModules() const { return m_hiddenLauncherModules; }
     QVariantList languages() const { return m_languages; }
     QVariantList modules() const { return m_modules; }
     bool busy() const { return m_busy; }
@@ -82,9 +78,13 @@ public:
         const QString &name
     );
     Q_INVOKABLE void setModuleEnabled(const QString &name, bool enabled);
-    Q_INVOKABLE void setModuleVisibility(const QString &surface,
-                                         const QString &name,
-                                         bool visible);
+
+    Q_INVOKABLE void setSurfaceItemVisibility(
+        const QString &surface,
+        const QString &module,
+        const QString &itemId,
+        bool visible
+    );
 
 signals:
     void configChanged();
@@ -137,8 +137,6 @@ private:
     bool m_launcherEnabled = true;
     bool m_normalNotifications = true;
     bool m_telemetryEnabled = false;
-    QVariantList m_hiddenTrayModules;
-    QVariantList m_hiddenLauncherModules;
     QVariantList m_languages;
     QVariantList m_modules;
     QVariantMap m_strings;

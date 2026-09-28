@@ -398,7 +398,36 @@ pub fn installed_module_surface_projection(
 
     let lifecycle = lifecycle_contract_from_module(&module_dir, &manifest)?;
 
-    surface_projection_from_module(&module_dir, &manifest, &lifecycle)
+    let mut projection = surface_projection_from_module(&module_dir, &manifest, &lifecycle)?;
+
+    /*
+     * Contract visibility is the module-provided default.
+     *
+     * Boss-owned durable presentation overrides are applied here,
+     * before SurfaceContent is materialized for UI, Launcher, Tray
+     * or any future Boss surface.
+     *
+     * Functional state remains Lifecycle-owned and is not stored here.
+     */
+    let items = projection
+        .items()
+        .values()
+        .map(|item| (item.id().to_string(), item.surface().to_string()))
+        .collect::<Vec<_>>();
+
+    for (item_id, surface) in items {
+        if surface != "tray" && surface != "launcher" {
+            continue;
+        }
+
+        if let Some(visible) =
+            config::surface_item_visibility_override(&surface, &manifest.name, &item_id)?
+        {
+            projection.set_visibility(&item_id, visible)?;
+        }
+    }
+
+    Ok(projection)
 }
 
 /*
@@ -2314,6 +2343,105 @@ pub fn module_running(name: &str) -> bool {
          */
         Err(_) => true,
     }
+}
+
+/*
+ * Prove physical ownership of a Module IPC peer.
+ *
+ * The kernel PID obtained through SO_PEERCRED is checked directly
+ * against the installed module entrypoint.
+ *
+ * Runtime registration and tracked-process lifecycle are deliberately
+ * independent authorities. This verifier therefore MUST NOT consult
+ * the tracked runtime marker.
+ */
+pub fn verify_module_runtime_process(name: &str, pid: u32) -> Result<(), String> {
+    if pid == 0 {
+        return Err(format!(
+            "module '{}' IPC peer reported invalid process id 0",
+            name
+        ));
+    }
+
+    let process_path = PathBuf::from(format!("/proc/{pid}"));
+
+    if !process_path.exists() {
+        return Err(format!(
+            "module '{}' IPC peer process {} does not exist",
+            name, pid
+        ));
+    }
+
+    let module_dir = find_module_dir(name).map_err(|error| {
+        format!(
+            "module '{}' IPC peer process {} exists, but its installation cannot be resolved: {}",
+            name, pid, error
+        )
+    })?;
+
+    let manifest = read_manifest(&module_dir.join("manifest.json")).map_err(|error| {
+        format!(
+            "module '{}' IPC peer process {} exists, but its manifest cannot be verified: {}",
+            name, pid, error
+        )
+    })?;
+
+    if manifest.name != name {
+        return Err(format!(
+            "module '{}' IPC peer process {} resolved installation for '{}'",
+            name, pid, manifest.name
+        ));
+    }
+
+    let expected = resolve_entrypoint(&module_dir, &manifest.entrypoint).map_err(|error| {
+        format!(
+            "module '{}' IPC peer process {} exists, but its entrypoint cannot be verified: {}",
+            name, pid, error
+        )
+    })?;
+
+    /*
+     * Native entrypoint.
+     */
+    let proc_exe = PathBuf::from(format!("/proc/{pid}/exe"));
+
+    if let Ok(actual_exe) = fs::read_link(&proc_exe) {
+        if let Ok(actual_exe) = actual_exe.canonicalize() {
+            if actual_exe == expected {
+                return Ok(());
+            }
+        }
+    }
+
+    /*
+     * Interpreted entrypoint.
+     *
+     * Python, Bash, Node and similar runtimes expose the interpreter
+     * through /proc/<pid>/exe. The installed module entrypoint must
+     * therefore appear as one exact argv entry.
+     */
+    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).map_err(|error| {
+        format!(
+            "could not inspect IPC peer process {} for module '{}': {error}",
+            pid, name
+        )
+    })?;
+
+    let expected_bytes = expected.as_os_str().as_bytes();
+
+    let matches_entrypoint = cmdline
+        .split(|byte| *byte == 0)
+        .filter(|argument| !argument.is_empty())
+        .any(|argument| argument == expected_bytes);
+
+    if matches_entrypoint {
+        return Ok(());
+    }
+
+    Err(format!(
+        "process {} is not the installed entrypoint declared by module '{}'",
+        pid, name
+    ))
 }
 
 fn stop_module(name: &str) -> Result<(), String> {

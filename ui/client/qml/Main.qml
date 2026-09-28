@@ -361,6 +361,102 @@ ApplicationWindow {
         return code.substring(0, 2).toUpperCase()
     }
 
+    /*
+     * Flatten canonical module SurfaceContent into presentation
+     * controls for Boss Config.
+     *
+     * One row == one projection item.
+     * A module may publish zero, one or many items on any surface.
+     */
+    function surfaceConfigItems(surfaceName) {
+        var result = []
+
+        if (
+            typeof boss === "undefined"
+            || !Array.isArray(boss.modules)
+        )
+            return result
+
+        for (
+            var moduleIndex = 0;
+            moduleIndex < boss.modules.length;
+            ++moduleIndex
+        ) {
+            var module = boss.modules[moduleIndex]
+
+            if (
+                !module
+                || !module.installed
+                || !Array.isArray(module.surface_content)
+            )
+                continue
+
+            for (
+                var itemIndex = 0;
+                itemIndex < module.surface_content.length;
+                ++itemIndex
+            ) {
+                var item =
+                    module.surface_content[itemIndex]
+
+                if (
+                    !item
+                    || item.surface !== surfaceName
+                    || !item.item_id
+                )
+                    continue
+
+                result.push({
+                    "moduleName": module.name,
+                    "moduleIcon": module.icon
+                        ? module.icon
+                        : "",
+                    "item": item
+                })
+            }
+        }
+
+        return result
+    }
+
+    function surfaceConfigLabel(entry) {
+        if (
+            !entry
+            || !entry.item
+        )
+            return ""
+
+        var data =
+            entry.item.data
+            ? entry.item.data
+            : ({})
+
+        if (
+            typeof data.label_key === "string"
+            && data.label_key.length > 0
+        ) {
+            var translated =
+                root.t(data.label_key)
+
+            if (
+                translated
+                && translated !== data.label_key
+            )
+                return translated
+        }
+
+        if (
+            typeof data.label === "string"
+            && data.label.length > 0
+        )
+            return data.label
+
+        return entry.moduleName
+            + " · "
+            + entry.item.item_id
+    }
+
+
     function saveConfigValue(key, value) {
         if (
             loadingConfig
@@ -932,12 +1028,7 @@ ApplicationWindow {
                                 Repeater {
                                     model:
                                         typeof boss !== "undefined"
-                                        ? boss.modules.filter(
-                                            function(module) {
-                                                return !!module.installed
-                                                    && !!module.tray
-                                            }
-                                        )
+                                        ? root.surfaceConfigItems("tray")
                                         : []
 
                                     delegate: RowLayout {
@@ -952,9 +1043,9 @@ ApplicationWindow {
                                             Layout.preferredHeight: 24
 
                                             source:
-                                                modelData.icon
-                                                && modelData.icon.length > 0
-                                                ? modelData.icon
+                                                modelData.moduleIcon
+                                                && modelData.moduleIcon.length > 0
+                                                ? modelData.moduleIcon
                                                 : root.asset(
                                                     "modules_icon.png"
                                                 )
@@ -969,7 +1060,10 @@ ApplicationWindow {
                                         Label {
                                             Layout.preferredWidth: 160
 
-                                            text: modelData.name
+                                            text:
+                                                root.surfaceConfigLabel(
+                                                    modelData
+                                                )
 
                                             color: "#67E8F9"
                                             font.pixelSize: 13
@@ -977,12 +1071,7 @@ ApplicationWindow {
 
                                         NeeblesSwitch {
                                             checked:
-                                                typeof boss === "undefined"
-                                                || boss.modules.length === 0
-                                                || boss.hiddenTrayModules
-                                                    .indexOf(
-                                                        modelData.name
-                                                    ) === -1
+                                                !!modelData.item.visible
 
                                             checkable: false
 
@@ -994,13 +1083,13 @@ ApplicationWindow {
                                                 if (
                                                     typeof boss
                                                     === "undefined"
-                                                    || boss.modules.length === 0
                                                 )
                                                     return
 
-                                                boss.setModuleVisibility(
+                                                boss.setSurfaceItemVisibility(
                                                     "tray",
-                                                    modelData.name,
+                                                    modelData.moduleName,
+                                                    modelData.item.item_id,
                                                     !checked
                                                 )
                                             }
@@ -1044,13 +1133,7 @@ ApplicationWindow {
                                 Repeater {
                                     model:
                                         typeof boss !== "undefined"
-                                        ? boss.modules.filter(
-                                            function(module) {
-                                                return !!module.installed
-                                                    && typeof module.launcher_action === "string"
-                                                    && module.launcher_action.length > 0
-                                            }
-                                        )
+                                        ? root.surfaceConfigItems("launcher")
                                         : []
 
                                     delegate: RowLayout {
@@ -1065,9 +1148,9 @@ ApplicationWindow {
                                             Layout.preferredHeight: 24
 
                                             source:
-                                                modelData.icon
-                                                && modelData.icon.length > 0
-                                                ? modelData.icon
+                                                modelData.moduleIcon
+                                                && modelData.moduleIcon.length > 0
+                                                ? modelData.moduleIcon
                                                 : root.asset(
                                                     "modules_icon.png"
                                                 )
@@ -1082,7 +1165,10 @@ ApplicationWindow {
                                         Label {
                                             Layout.preferredWidth: 160
 
-                                            text: modelData.name
+                                            text:
+                                                root.surfaceConfigLabel(
+                                                    modelData
+                                                )
 
                                             color: "#67E8F9"
                                             font.pixelSize: 13
@@ -1090,12 +1176,7 @@ ApplicationWindow {
 
                                         NeeblesSwitch {
                                             checked:
-                                                typeof boss === "undefined"
-                                                || boss.modules.length === 0
-                                                || boss.hiddenLauncherModules
-                                                    .indexOf(
-                                                        modelData.name
-                                                    ) === -1
+                                                !!modelData.item.visible
 
                                             checkable: false
 
@@ -1107,13 +1188,13 @@ ApplicationWindow {
                                                 if (
                                                     typeof boss
                                                     === "undefined"
-                                                    || boss.modules.length === 0
                                                 )
                                                     return
 
-                                                boss.setModuleVisibility(
+                                                boss.setSurfaceItemVisibility(
                                                     "launcher",
-                                                    modelData.name,
+                                                    modelData.moduleName,
+                                                    modelData.item.item_id,
                                                     !checked
                                                 )
                                             }

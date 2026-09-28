@@ -35,12 +35,6 @@ class BossEventClient : public QObject
         NOTIFY trayEnabledChanged
     )
 
-    Q_PROPERTY(
-        QStringList hiddenLauncherModules
-        READ hiddenLauncherModules
-        NOTIFY hiddenLauncherModulesChanged
-    )
-
 public:
     explicit BossEventClient(
         QObject *parent = nullptr
@@ -50,7 +44,6 @@ public:
     QString bossUiState() const;
     bool launcherEnabled() const;
     bool trayEnabled() const;
-    QStringList hiddenLauncherModules() const;
 
     Q_INVOKABLE void connectToBoss();
 
@@ -59,7 +52,7 @@ signals:
     void bossUiStateChanged();
     void launcherEnabledChanged();
     void trayEnabledChanged();
-    void hiddenLauncherModulesChanged();
+    void settingsChanged();
 
 private slots:
     void onConnected();
@@ -87,10 +80,6 @@ private:
         bool enabled
     );
 
-    void setHiddenLauncherModules(
-        const QStringList &modules
-    );
-
     void scheduleReconnect();
     void resetReconnect();
 
@@ -102,8 +91,6 @@ private:
 
     bool m_launcherEnabled = true;
     bool m_trayEnabled = true;
-
-    QStringList m_hiddenLauncherModules;
 
     QTimer m_reconnectTimer;
     int m_reconnectDelayMs = 500;

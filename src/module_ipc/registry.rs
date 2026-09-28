@@ -1,4 +1,4 @@
-use crate::module_ipc::protocol::{ModuleMessage, ModuleRuntimeState, MODULES_PROTOCOL_VERSION};
+use crate::module_ipc::protocol::{ModuleMessage, MODULES_PROTOCOL_VERSION};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -9,7 +9,6 @@ pub struct ModuleRuntimeRecord {
     pub module: String,
     pub session_id: String,
     pub protocol: u32,
-    pub state: ModuleRuntimeState,
 
     /*
      * contract -> runtime endpoints realmente disponibles.
@@ -220,7 +219,6 @@ pub struct ModuleRuntimeSnapshot {
     pub module: String,
     pub session_id: String,
     pub protocol: u32,
-    pub state: ModuleRuntimeState,
     pub endpoints: BTreeMap<String, Vec<String>>,
     pub subscriptions: BTreeSet<String>,
 }
@@ -233,8 +231,6 @@ impl From<ModuleRuntimeRecord> for ModuleRuntimeSnapshot {
             session_id: record.session_id,
 
             protocol: record.protocol,
-
-            state: record.state,
 
             endpoints: record.endpoints,
 
@@ -274,7 +270,6 @@ mod certification_tests {
                 module: module.to_string(),
                 session_id: session_id.to_string(),
                 protocol: MODULES_PROTOCOL_VERSION,
-                state: ModuleRuntimeState::Ready,
                 endpoints: BTreeMap::new(),
                 subscriptions: subscriptions
                     .iter()

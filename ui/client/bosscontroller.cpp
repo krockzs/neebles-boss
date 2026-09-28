@@ -651,16 +651,6 @@ void BossController::loadConfig()
         ).toBool();
 
 
-    m_hiddenTrayModules =
-        map.value(
-            QStringLiteral("hidden_tray_modules")
-        ).toList();
-
-    m_hiddenLauncherModules =
-        map.value(
-            QStringLiteral("hidden_launcher_modules")
-        ).toList();
-
     m_updateNotifications =
         map.value(
             QStringLiteral(
@@ -2572,9 +2562,10 @@ void BossController::setModuleEnabled(const QString &name, bool enabled)
     );
 }
 
-void BossController::setModuleVisibility(
+void BossController::setSurfaceItemVisibility(
     const QString &surface,
-    const QString &name,
+    const QString &module,
+    const QString &itemId,
     bool visible
 )
 {
@@ -2583,9 +2574,10 @@ void BossController::setModuleVisibility(
     run(
         {
             QStringLiteral("config"),
-            QStringLiteral("module-visibility"),
+            QStringLiteral("surface-item-visibility"),
             surface,
-            name,
+            module,
+            itemId,
             visible
                 ? QStringLiteral("true")
                 : QStringLiteral("false")
@@ -2598,8 +2590,13 @@ void BossController::setModuleVisibility(
     if (!ok)
         return;
 
-    loadConfig();
+    /*
+     * modules installed carries canonical SurfaceContent,
+     * including effective presentation visibility.
+     */
+    loadModules();
 }
+
 
 void BossController::setBusy(bool value)
 {

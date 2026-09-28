@@ -147,10 +147,6 @@ fn settings_target(target: &str) -> Result<(std::path::PathBuf, Value), String> 
         return Err("settings target cannot be empty".to_string());
     }
 
-    if target == "boss" {
-        return Ok((config::config_path()?, config::default_json()?));
-    }
-
     let default = modules::installed_module_settings_default(target)?;
 
     Ok((
@@ -159,7 +155,107 @@ fn settings_target(target: &str) -> Result<(std::path::PathBuf, Value), String> 
     ))
 }
 
+fn dispatch_boss_settings(request: ExecutionRequest) -> ExecutionResponse {
+    match request.action.as_deref() {
+        Some("show") => match config::settings_snapshot() {
+            Ok(value) => ExecutionResponse::ok(Some(value)),
+
+            Err(error) => ExecutionResponse::fail(1, "settings_read", error),
+        },
+
+        Some("get") => {
+            let Some(setting_path) = request.args.get(1) else {
+                return ExecutionResponse::fail(
+                    2,
+                    "missing_settings_path",
+                    "settings get requires a path",
+                );
+            };
+
+            match config::setting_value(setting_path) {
+                Ok(value) => ExecutionResponse::ok(Some(json!(value))),
+
+                Err(error) => ExecutionResponse::fail(1, "settings_path", error),
+            }
+        }
+
+        Some("set") => {
+            let Some(setting_path) = request.args.get(1) else {
+                return ExecutionResponse::fail(
+                    2,
+                    "missing_settings_path",
+                    "settings set requires a path",
+                );
+            };
+
+            let Some(value) = request.args.get(2) else {
+                return ExecutionResponse::fail(
+                    2,
+                    "missing_settings_value",
+                    "settings set requires a String value",
+                );
+            };
+
+            let previous = config::setting_value(setting_path);
+
+            match config::set_setting_value(setting_path, value.clone()) {
+                Ok(value) => {
+                    let changed = previous
+                        .as_ref()
+                        .map(|previous| previous != &value)
+                        .unwrap_or(true);
+
+                    if changed {
+                        if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
+                            "settings.boss",
+                            "changed",
+                            json!({
+                                "target": "boss",
+                                "path":
+                                    setting_path,
+                                "value":
+                                    value
+                            }),
+                        ) {
+                            eprintln!(
+                                "N.E.E.B.L.E.S.: Boss settings persisted but event broadcast failed: {}",
+                                error
+                            );
+                        }
+                    }
+
+                    ExecutionResponse::ok(Some(json!(value)))
+                }
+
+                Err(error) => ExecutionResponse::fail(1, "settings_write", error),
+            }
+        }
+
+        Some("has-state") | Some("module-update") => ExecutionResponse::fail(
+            2,
+            "invalid_settings_target",
+            "requested settings action requires a module target",
+        ),
+
+        Some(other) => ExecutionResponse::fail(
+            2,
+            "unknown_settings_action",
+            format!("unknown settings action: {other}"),
+        ),
+
+        None => ExecutionResponse::fail(
+            2,
+            "missing_settings_action",
+            "settings request requires an action",
+        ),
+    }
+}
+
 fn dispatch_settings(request: ExecutionRequest) -> ExecutionResponse {
+    if request.args.first().map(String::as_str) == Some("boss") {
+        return dispatch_boss_settings(request);
+    }
+
     let Some(target) = request.args.first() else {
         return ExecutionResponse::fail(
             2,

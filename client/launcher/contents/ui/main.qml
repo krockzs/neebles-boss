@@ -78,8 +78,8 @@ PlasmoidItem {
         Component.onCompleted:
             connectToBoss()
 
-        onHiddenLauncherModulesChanged:
-            root.applyModuleFilter()
+        onSettingsChanged:
+            root.refresh()
     }
 
     /*
@@ -170,9 +170,6 @@ PlasmoidItem {
                 return (
                     root.safeModuleId(module.name)
                     && root.launcherContent(module).length > 0
-                    && bossEvents.hiddenLauncherModules.indexOf(
-                        module.name
-                    ) === -1
                 )
             }
         )

@@ -8,15 +8,6 @@ use std::collections::BTreeMap;
 
 pub const MODULES_PROTOCOL_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ModuleRuntimeState {
-    Starting,
-    Ready,
-    Stopping,
-    Dead,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleError {
     pub kind: String,

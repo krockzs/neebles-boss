@@ -789,8 +789,15 @@ fn process_message(
 
             modules::resolved_tray_contract(&tray_id)?;
 
-            config::set_module_visibility("tray", &tray_id, visible)?;
-
+            /*
+             * This command controls the live provider record only.
+             *
+             * It must not persist module-level presentation state.
+             * Durable Boss presentation visibility belongs to
+             * SurfaceProjectionItem identity:
+             *
+             * owner_module + item_id + surface.
+             */
             let updated = {
                 let manager = manager::global();
 

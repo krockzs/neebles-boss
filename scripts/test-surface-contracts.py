@@ -52,6 +52,72 @@ def forbid(relative, fragment, description):
 
 
 checks = [
+    forbid(
+        "ui/client/bosscontroller.h",
+        "hiddenTrayModules",
+        "Boss UI controller has no legacy Tray module visibility list",
+    ),
+
+    forbid(
+        "ui/client/bosscontroller.h",
+        "hiddenLauncherModules",
+        "Boss UI controller has no legacy Launcher module visibility list",
+    ),
+
+    forbid(
+        "ui/client/bosscontroller.cpp",
+        "module-visibility",
+        "Boss UI controller has no legacy module visibility command",
+    ),
+
+    require(
+        "ui/client/bosscontroller.h",
+        "setSurfaceItemVisibility",
+        "Boss UI exposes projection-item visibility mutation",
+    ),
+
+    require(
+        "ui/client/bosscontroller.cpp",
+        'QStringLiteral("surface-item-visibility")',
+        "Boss UI writes projection-item visibility through canonical CLI",
+    ),
+
+    require(
+        "ui/client/qml/Main.qml",
+        'root.surfaceConfigItems("tray")',
+        "Boss Config dynamically enumerates Tray projection items",
+    ),
+
+    require(
+        "ui/client/qml/Main.qml",
+        'root.surfaceConfigItems("launcher")',
+        "Boss Config dynamically enumerates Launcher projection items",
+    ),
+
+    require(
+        "ui/client/qml/Main.qml",
+        "modelData.item.item_id",
+        "Boss Config identifies visibility by projection item id",
+    ),
+
+    require(
+        "ui/client/qml/Main.qml",
+        "modelData.item.visible",
+        "Boss Config reads effective projection visibility",
+    ),
+
+    forbid(
+        "ui/client/qml/Main.qml",
+        "hiddenTrayModules",
+        "Boss Config has no legacy Tray module visibility truth",
+    ),
+
+    forbid(
+        "ui/client/qml/Main.qml",
+        "hiddenLauncherModules",
+        "Boss Config has no legacy Launcher module visibility truth",
+    ),
+
     require(
         "client/launcher/contents/ui/main.qml",
         "bossEvents.launcherEnabled",
@@ -132,26 +198,26 @@ checks = [
 
     require(
         "client/shared/bosseventclient.h",
-        "hiddenLauncherModules",
-        "Shared Boss listener exposes module Launcher visibility",
+        "settingsChanged",
+        "Shared Boss listener exposes generic Boss settings changes",
     ),
 
     require(
         "client/shared/bosseventclient.cpp",
-        '"hidden_launcher_modules"',
-        "Shared Boss listener consumes hidden Launcher modules",
+        "emit settingsChanged();",
+        "Shared Boss listener publishes generic settings refresh",
     ),
 
     require(
         "client/launcher/contents/ui/main.qml",
-        "bossEvents.hiddenLauncherModules",
-        "Launcher module visibility comes from live Boss events",
+        "onSettingsChanged:",
+        "Launcher reloads canonical SurfaceContent after settings changes",
     ),
 
-    require(
+    forbid(
         "client/launcher/contents/ui/main.qml",
-        "onHiddenLauncherModulesChanged",
-        "Launcher reacts immediately to module visibility events",
+        "hiddenLauncherModules",
+        "Launcher has no legacy module-level visibility truth",
     ),
 
     forbid(

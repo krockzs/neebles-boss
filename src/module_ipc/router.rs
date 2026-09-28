@@ -1,5 +1,5 @@
 use crate::module_ipc::client;
-use crate::module_ipc::protocol::{ModuleMessage, ModuleRuntimeState};
+use crate::module_ipc::protocol::ModuleMessage;
 use crate::module_ipc::server::runtime_registry;
 
 use crate::{modules, privileges};
@@ -79,13 +79,6 @@ pub fn invoke_declared(
             module, contract_type, endpoint_name
         )
     })?;
-
-    if runtime.state != ModuleRuntimeState::Ready {
-        return Err(format!(
-            "module '{}' runtime session '{}' is not ready",
-            module, runtime.session_id
-        ));
-    }
 
     let advertised = runtime
         .endpoints

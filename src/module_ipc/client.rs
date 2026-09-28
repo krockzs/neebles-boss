@@ -1,6 +1,6 @@
 use crate::contracts::{InvocationLifecycle, StateMode};
 
-use crate::module_ipc::protocol::{ModuleMessage, ModuleRuntimeState};
+use crate::module_ipc::protocol::ModuleMessage;
 
 use crate::module_ipc::server::{pending_registry, runtime_registry};
 
@@ -43,16 +43,10 @@ pub fn invoke(
         .get(module)?
         .ok_or_else(|| format!("module '{}' has no registered runtime", module))?;
 
-    if runtime.state != ModuleRuntimeState::Ready {
-        return Err(format!(
-            "module '{}' runtime session '{}' is not ready",
-            module, runtime.session_id
-        ));
-    }
-
     let id = next_request_id();
 
-    let receiver = pending_registry().register(&id, module, &runtime.session_id)?;
+    let receiver =
+        pending_registry().register(&id, module, &runtime.session_id, contract, endpoint)?;
 
     /*
      * Close the race between taking the initial runtime
@@ -62,7 +56,7 @@ pub fn invoke(
      * register(), server cleanup may already have executed
      * fail_session(). Re-check the exact session now:
      *
-     * - if it is still the same Ready session, sending is safe;
+     * - if it is still the same registered session, sending is safe;
      * - if it disappeared or was replaced, cancel immediately.
      *
      * If the runtime dies after this check, server-side
@@ -70,14 +64,13 @@ pub fn invoke(
      */
     let current_runtime = runtime_registry().get(module)?;
 
-    let session_still_ready = matches!(
+    let session_still_registered = matches!(
         current_runtime,
         Some(ref current)
             if current.session_id == runtime.session_id
-                && current.state == ModuleRuntimeState::Ready
     );
 
-    if !session_still_ready {
+    if !session_still_registered {
         let _ = pending_registry().cancel(&id);
 
         return Err(format!(

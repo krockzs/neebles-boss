@@ -513,6 +513,45 @@ fn remove_local_path(current: &mut Value, parts: &[&str]) -> Result<bool, String
     Ok(object.is_empty())
 }
 
+pub fn validate_local_against_default(local: &Value, default: &Value) -> Result<(), String> {
+    validate_default(default)?;
+    validate_local(local, default)
+}
+
+pub fn set_local_path(
+    file: &Path,
+    schema: &Value,
+    path: &str,
+    new_value: String,
+) -> Result<String, String> {
+    validate_default(schema)?;
+
+    let parts = split_setting_path(path)?;
+
+    if parts.first().copied() == Some("hardcoded") {
+        return Err(
+            "hardcoded values are declared by the module and cannot be overridden locally"
+                .to_string(),
+        );
+    }
+
+    get_path_ref(schema, path)?
+        .as_str()
+        .ok_or_else(|| format!("settings path '{}' does not point to a String", path))?;
+
+    let mut local = load(file)?;
+
+    validate_local(&local, schema)?;
+
+    insert_local_string(&mut local, &parts, new_value.clone(), path)?;
+
+    validate_local(&local, schema)?;
+
+    write_json(file, &local)?;
+
+    Ok(new_value)
+}
+
 pub fn set_path(
     file: &Path,
     default: &Value,

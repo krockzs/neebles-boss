@@ -7,9 +7,7 @@ use crate::module_ipc::framing::{read_message, write_message};
 
 use crate::module_ipc::pending::PendingRegistry;
 
-use crate::module_ipc::protocol::{
-    ModuleError, ModuleMessage, ModuleRuntimeState, MODULES_PROTOCOL_VERSION,
-};
+use crate::module_ipc::protocol::{ModuleError, ModuleMessage, MODULES_PROTOCOL_VERSION};
 
 use crate::module_ipc::registry::{ModuleRuntimeRecord, RuntimeRegistry};
 
@@ -17,6 +15,7 @@ use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 
+use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 
 use std::path::PathBuf;
@@ -145,6 +144,84 @@ pub fn start_background() -> Result<std::thread::JoinHandle<Result<(), String>>,
  * A runtime may advertise a subset of declared endpoints,
  * but it may never advertise an undeclared contract or endpoint.
  */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ModulePeerCredentials {
+    pid: u32,
+    uid: u32,
+}
+
+fn authorize_module_peer_uid(
+    peer_uid: libc::uid_t,
+    desktop_uid: libc::uid_t,
+) -> Result<(), String> {
+    if peer_uid == 0 || peer_uid == desktop_uid {
+        return Ok(());
+    }
+
+    Err(format!(
+        "module IPC rejected unauthorized peer uid {peer_uid}; expected root or desktop uid {desktop_uid}"
+    ))
+}
+
+fn module_peer_credentials(stream: &UnixStream) -> Result<ModulePeerCredentials, String> {
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut credentials as *mut libc::ucred as *mut libc::c_void,
+            &mut length,
+        )
+    };
+
+    if result != 0 {
+        return Err(format!(
+            "could not read module IPC peer credentials: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    if credentials.pid <= 0 {
+        return Err("module IPC peer reported an invalid pid".to_string());
+    }
+
+    let (desktop_uid, _) = crate::runtime_identity::desktop_identity()?;
+
+    authorize_module_peer_uid(credentials.uid, desktop_uid)?;
+
+    Ok(ModulePeerCredentials {
+        pid: credentials.pid as u32,
+        uid: credentials.uid,
+    })
+}
+
+#[cfg(test)]
+mod module_peer_uid_tests {
+    use super::authorize_module_peer_uid;
+
+    #[test]
+    fn module_peer_policy_allows_root() {
+        authorize_module_peer_uid(0, 1000).expect("root must be allowed to connect to module IPC");
+    }
+
+    #[test]
+    fn module_peer_policy_allows_desktop_uid() {
+        authorize_module_peer_uid(1000, 1000)
+            .expect("desktop uid must be allowed to connect to module IPC");
+    }
+
+    #[test]
+    fn module_peer_policy_rejects_unrelated_uid() {
+        let error =
+            authorize_module_peer_uid(2000, 1000).expect_err("unrelated uid must be rejected");
+
+        assert!(error.contains("unauthorized peer uid 2000"));
+    }
+}
+
 fn validate_registration(
     module: &str,
     session_id: &str,
@@ -273,6 +350,14 @@ fn validate_registration(
 
 fn handle_client(mut stream: UnixStream) -> Result<(), String> {
     /*
+     * Kernel-authenticated identity of this Unix peer.
+     *
+     * module/session values carried by the protocol remain logical
+     * transport identity only. They are not physical ownership proof.
+     */
+    let peer = module_peer_credentials(&stream)?;
+
+    /*
      * Primer mensaje obligatorio:
      * Register.
      */
@@ -336,7 +421,9 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
      * enabled installation and that every advertised endpoint
      * exists in that module's dynamic contracts.
      */
-    if let Err(error) = validate_registration(&module, &session_id, &endpoints) {
+    if let Err(error) = validate_registration(&module, &session_id, &endpoints)
+        .and_then(|_| modules::verify_module_runtime_process(&module, peer.pid))
+    {
         let response = ModuleMessage::Error {
             id: None,
 
@@ -391,8 +478,6 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         session_id: session_id.clone(),
 
         protocol,
-
-        state: ModuleRuntimeState::Ready,
 
         endpoints,
 
@@ -883,15 +968,22 @@ fn client_loop(
 
                     session_id: response_session,
 
-                    contract,
-                    endpoint,
+                    contract: contract.clone(),
+                    endpoint: endpoint.clone(),
                     ok,
                     code,
                     result,
                     error,
                 };
 
-                let resolved = pending_registry().resolve(&request_id, response)?;
+                let resolved = pending_registry().resolve_response(
+                    &request_id,
+                    module,
+                    session_id,
+                    &contract,
+                    &endpoint,
+                    response,
+                )?;
 
                 if !resolved {
                     eprintln!(
@@ -922,7 +1014,12 @@ fn client_loop(
                         error,
                     };
 
-                    let resolved = pending_registry().resolve(&request_id, response)?;
+                    let resolved = pending_registry().resolve_error(
+                        &request_id,
+                        module,
+                        session_id,
+                        response,
+                    )?;
 
                     if !resolved {
                         eprintln!(
@@ -980,6 +1077,239 @@ fn client_loop(
                     })?;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod transport_semantics_tests {
+    use super::*;
+    use std::os::unix::net::UnixStream;
+    use std::sync::mpsc;
+
+    fn spawn_loop(
+        module: &str,
+        session_id: &str,
+    ) -> (
+        UnixStream,
+        mpsc::Receiver<ModuleMessage>,
+        std::thread::JoinHandle<Result<(), String>>,
+    ) {
+        let (boss_stream, runtime_stream) =
+            UnixStream::pair().expect("UnixStream pair must be available");
+
+        let (writer, receiver) = mpsc::channel();
+
+        let module = module.to_string();
+        let session_id = session_id.to_string();
+
+        let handle = std::thread::spawn(move || {
+            let mut boss_stream = boss_stream;
+
+            client_loop(&mut boss_stream, &writer, &module, &session_id)
+        });
+
+        (runtime_stream, receiver, handle)
+    }
+
+    #[test]
+    fn ping_returns_pong_for_exact_session() {
+        let (mut runtime_stream, receiver, handle) = spawn_loop("alpha", "session-a");
+
+        write_message(
+            &mut runtime_stream,
+            &ModuleMessage::Ping {
+                module: "alpha".to_string(),
+                session_id: "session-a".to_string(),
+            },
+        )
+        .unwrap();
+
+        match receiver.recv().unwrap() {
+            ModuleMessage::Pong { module, session_id } => {
+                assert_eq!(module, "alpha");
+                assert_eq!(session_id, "session-a");
+            }
+
+            other => {
+                panic!("expected Pong, got {:?}", other);
+            }
+        }
+
+        write_message(
+            &mut runtime_stream,
+            &ModuleMessage::Unregister {
+                module: "alpha".to_string(),
+                session_id: "session-a".to_string(),
+                reason: Some("test complete".to_string()),
+            },
+        )
+        .unwrap();
+
+        assert!(handle.join().unwrap().is_ok());
+    }
+
+    #[test]
+    fn ping_with_wrong_session_terminates_connection_semantics() {
+        let (mut runtime_stream, _receiver, handle) = spawn_loop("alpha", "session-a");
+
+        write_message(
+            &mut runtime_stream,
+            &ModuleMessage::Ping {
+                module: "alpha".to_string(),
+                session_id: "session-b".to_string(),
+            },
+        )
+        .unwrap();
+
+        let error = handle
+            .join()
+            .unwrap()
+            .expect_err("wrong-session Ping must fail client_loop");
+
+        assert!(error.contains("session mismatch"));
+    }
+
+    #[test]
+    fn pong_with_wrong_module_is_rejected() {
+        let (mut runtime_stream, _receiver, handle) = spawn_loop("alpha", "session-a");
+
+        write_message(
+            &mut runtime_stream,
+            &ModuleMessage::Pong {
+                module: "beta".to_string(),
+                session_id: "session-a".to_string(),
+            },
+        )
+        .unwrap();
+
+        let error = handle
+            .join()
+            .unwrap()
+            .expect_err("wrong-module Pong must fail client_loop");
+
+        assert!(error.contains("identity mismatch"));
+    }
+
+    #[test]
+    fn unregister_requires_exact_session_and_closes_cleanly() {
+        let (mut runtime_stream, _receiver, handle) = spawn_loop("alpha", "session-a");
+
+        write_message(
+            &mut runtime_stream,
+            &ModuleMessage::Unregister {
+                module: "alpha".to_string(),
+                session_id: "session-a".to_string(),
+                reason: Some("normal exit".to_string()),
+            },
+        )
+        .unwrap();
+
+        assert!(handle.join().unwrap().is_ok());
+    }
+
+    #[test]
+    fn stale_unregister_is_rejected() {
+        let (mut runtime_stream, _receiver, handle) = spawn_loop("alpha", "session-current");
+
+        write_message(
+            &mut runtime_stream,
+            &ModuleMessage::Unregister {
+                module: "alpha".to_string(),
+                session_id: "session-old".to_string(),
+                reason: Some("stale runtime".to_string()),
+            },
+        )
+        .unwrap();
+
+        let error = handle
+            .join()
+            .unwrap()
+            .expect_err("stale Unregister must fail client_loop");
+
+        assert!(error.contains("session mismatch"));
+    }
+
+    #[test]
+    fn shutdown_ack_requires_exact_session_and_closes_cleanly() {
+        let (mut runtime_stream, _receiver, handle) = spawn_loop("alpha", "session-a");
+
+        write_message(
+            &mut runtime_stream,
+            &ModuleMessage::ShutdownAck {
+                module: "alpha".to_string(),
+                session_id: "session-a".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert!(handle.join().unwrap().is_ok());
+    }
+
+    #[test]
+    fn stale_shutdown_ack_is_rejected() {
+        let (mut runtime_stream, _receiver, handle) = spawn_loop("alpha", "session-current");
+
+        write_message(
+            &mut runtime_stream,
+            &ModuleMessage::ShutdownAck {
+                module: "alpha".to_string(),
+                session_id: "session-old".to_string(),
+            },
+        )
+        .unwrap();
+
+        let error = handle
+            .join()
+            .unwrap()
+            .expect_err("stale ShutdownAck must fail client_loop");
+
+        assert!(error.contains("session mismatch"));
+    }
+
+    #[test]
+    fn runtime_cannot_command_boss_shutdown() {
+        let (mut runtime_stream, receiver, handle) = spawn_loop("alpha", "session-a");
+
+        write_message(
+            &mut runtime_stream,
+            &ModuleMessage::Shutdown {
+                module: "alpha".to_string(),
+                session_id: "session-a".to_string(),
+                reason: Some("runtime tried authority inversion".to_string()),
+            },
+        )
+        .unwrap();
+
+        match receiver.recv().unwrap() {
+            ModuleMessage::Error { error, .. } => {
+                assert_eq!(error.kind, "unexpected_message");
+            }
+
+            other => {
+                panic!("expected protocol Error, got {:?}", other);
+            }
+        }
+
+        write_message(
+            &mut runtime_stream,
+            &ModuleMessage::Unregister {
+                module: "alpha".to_string(),
+                session_id: "session-a".to_string(),
+                reason: Some("test complete".to_string()),
+            },
+        )
+        .unwrap();
+
+        assert!(handle.join().unwrap().is_ok());
+    }
+
+    #[test]
+    fn eof_closes_client_loop_cleanly() {
+        let (runtime_stream, _receiver, handle) = spawn_loop("alpha", "session-a");
+
+        drop(runtime_stream);
+
+        assert!(handle.join().unwrap().is_ok());
     }
 }
 

@@ -331,7 +331,32 @@ printf '{"test-module":{"resources":["runtime","tray"]}}\n' > "$ROOT/opt/neebles
 # was left with permissions that are too broad.
 chmod 0755 "$ROOT/opt/neebles/shared/settings"
 
+BOSS_SETTINGS="$ROOT/opt/neebles/shared/settings/local_settings_boss.json"
+BOSS_SETTINGS_EXPECTED="$ROOT/boss-settings.expected"
+
+cat > "$BOSS_SETTINGS" <<'JSON'
+{
+  "launcher": {"enabled": "false"},
+  "tray": {"enabled": "false"},
+  "telemetry": {"enabled": "true"},
+  "ui": {
+    "language": "en_US",
+    "normal_notifications": "false"
+  }
+}
+JSON
+
+chmod 0600 "$BOSS_SETTINGS"
+cp "$BOSS_SETTINGS" "$BOSS_SETTINGS_EXPECTED"
+
 run_install_directory
+
+cmp -s "$BOSS_SETTINGS_EXPECTED" "$BOSS_SETTINGS" || {
+    echo "PACKAGING TEST INVALID: reinstall overwrote local_settings_boss.json" >&2
+    exit 1
+}
+
+assert_mode 600 "$BOSS_SETTINGS"
 
 assert_mode 700 "$ROOT/opt/neebles/shared/settings"
 
