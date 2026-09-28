@@ -4,6 +4,8 @@
 
 Current source line: **1.0.15**
 
+Latest Lifecycle closure commit: **`aa5646d` — `Close Lifecycle and generic Boss surfaces`**
+
 N.E.E.B.L.E.S. Boss is the governance and orchestration layer of the N.E.E.B.L.E.S. ecosystem.
 
 Boss owns contracts, state transitions, privilege boundaries, authority transport, module transactions, runtime IPC and desktop integration.
@@ -11,6 +13,41 @@ Boss owns contracts, state transitions, privilege boundaries, authority transpor
 Technology-specific implementation remains outside the Boss core whenever a generic contract can describe the requirement.
 
 > **Boss governs. Consumers declare. Execution receives explicit authority.**
+
+---
+
+## Current status
+
+The Lifecycle front is **GREEN / CLOSED**.
+
+The completed closure includes:
+
+- generic Lifecycle contract and execution;
+- Governor → Lifecycle integration;
+- productive AVAILABLE capability consumption;
+- inter-module `require`;
+- transaction, rollback and compensation semantics;
+- normalized result, failure, event and telemetry flow;
+- object transitions and canonical object state;
+- generic SurfaceContent projection;
+- productive Boss UI controls;
+- productive Boss Launcher controls;
+- productive Boss Tray controls;
+- removal of the obsolete `lifecycle_open_close` specialization;
+- final global certification.
+
+The final certification closed with:
+
+```text
+PASS - 1.7 GLOBAL CERTIFICATION GREEN
+PASS - 1.X SURFACE/LIFECYCLE FRONT CLOSED
+```
+
+`launcher_action` historical material remains only where it belongs to the later **Settings / compatibility reconciliation** front. It is not a missing Lifecycle implementation.
+
+Test Module remains **frozen** until **BOSS CONTRACT CLOSED**.
+
+---
 
 ## Architectural law
 
@@ -40,6 +77,10 @@ N.E.E.B.L.E.S. CUSTOM owns the certified domestic runtime corpus.
 
 Boss consumes supplied authority. It does not derive authority from arbitrary host state.
 
+The Stage 8 host-independence law is permanent.
+
+---
+
 ## Runtime authority
 
 The installed Boss client keeps its permanent domestic runtime below:
@@ -49,6 +90,8 @@ The installed Boss client keeps its permanent domestic runtime below:
 ```
 
 The runtime contains the resolver contract and manifest required by Boss clients.
+
+---
 
 ## Platform AuthoritySupply
 
@@ -65,6 +108,8 @@ AuthoritySupply enters the Boss process before normal dispatch.
 
 Boss validates, registers and grants supplied authority without manufacturing platform credentials.
 
+---
+
 ## Domestic execution
 
 The domestic execution layer resolves executable and library requirements inside explicit worlds and search authorities.
@@ -72,6 +117,8 @@ The domestic execution layer resolves executable and library requirements inside
 The ELF machinery models interpreter observation, dependency observation, search authority, recursive closure and execution grants.
 
 Host executable availability is not treated as implicit authority.
+
+---
 
 ## Esbirro
 
@@ -93,6 +140,18 @@ testings/domesticacion/
 
 N.E.E.B.L.E.S. CUSTOM supplies the controlled material world used by that certification system.
 
+Lifecycle does **not** talk to Esbirro.
+
+Lifecycle does **not** domesticate runtimes.
+
+Lifecycle does **not** validate module technology.
+
+The future `world Modules` belongs to CUSTOM v2 / Esbirro.
+
+Boss receives material already built, domesticated and certified.
+
+---
+
 ## Module transactions
 
 Module installation and update use governed staging and publication semantics.
@@ -101,19 +160,25 @@ An incomplete candidate does not become active module state.
 
 Install and update staging are provided as explicit writable authorities.
 
-## Lifecycle
+Update preserves recovery material until the governed operation succeeds.
 
-Boss now includes the complete generic Lifecycle execution architecture.
+Failure restores the previous valid state when required by the transaction.
+
+---
+
+# Lifecycle
+
+Boss now includes the complete generic Lifecycle architecture.
 
 Lifecycle is the communication and execution contract between a module and Boss. It describes **what** must happen without teaching Boss the technology, framework or implementation details of the module.
 
-The architectural boundary is:
-
 > **Boss interprets and governs. Modules own intent and implementation.**
 
-Lifecycle does not perform Esbirro certification, runtime domestication or technology validation. Those concerns belong to the module-construction flow in N.E.E.B.L.E.S. CUSTOM. By the time a module reaches Boss, Lifecycle only needs to interpret and execute the declared contract.
+Lifecycle is not Esbirro, module construction or domestic certification.
 
-### Lifecycle contract
+---
+
+## Lifecycle contract
 
 A module may provide a Lifecycle contract containing:
 
@@ -127,11 +192,15 @@ A module may provide a Lifecycle contract containing:
 
 Boss does not prescribe transition vocabulary.
 
-`install`, `update`, `uninstall`, `enable`, `disable`, `open`, `close` or any future action are not universal Lifecycle laws. They are only names when a consumer chooses to use them.
+Names such as `install`, `update`, `uninstall`, `enable`, `disable`, `open`, `close` or any future action are not universal Lifecycle laws.
+
+They are only consumer vocabulary.
 
 Operation values remain declarative until execution preparation, where they are resolved against the current Battlefield.
 
-### Execution architecture
+---
+
+## Execution architecture
 
 The productive execution path is:
 
@@ -177,19 +246,31 @@ The capability states are intentionally distinct:
 AVAILABLE != REQUESTED != REGISTERED != USED
 ```
 
-A capability may exist in Boss without being requested by a module. A requested capability is registered only for the operation that needs it. Registration does not imply successful execution.
+A capability may exist in Boss without being requested by a module.
 
-### AVAILABLE arsenal
+A requested capability is registered only for the operation that needs it.
+
+Registration does not imply successful execution.
+
+---
+
+## AVAILABLE arsenal
 
 Boss exposes a productive AVAILABLE capability catalog to Lifecycle.
 
-Governor execution consumes that catalog through `GovernorLifecycleRuntime::from_available(...)`; module operations no longer depend on an empty prebuilt Lifecycle arsenal.
+Governor execution consumes that catalog through the productive runtime path instead of depending on an empty prebuilt arsenal.
 
-The catalog is the stable expansion point for Rust capability adapters. Adding new Rust capabilities does not require redesigning Lifecycle, Governor, the DAG executor, FireControl or module contracts.
+The catalog is the stable expansion point for Rust capability adapters.
 
-Rust APIs remain compiled and typed. The adapter layer translates the generic Lifecycle `PreparedOperation` into the concrete Rust implementation while Lifecycle itself remains technology-agnostic.
+Adding new Rust capabilities must not require redesigning Lifecycle, Governor, DAG execution, FireControl or module contracts.
 
-### FireControl and CapabilityRegistry
+Rust APIs remain compiled and typed.
+
+The adapter layer translates generic Lifecycle operations into concrete Rust implementations while Lifecycle remains technology-agnostic.
+
+---
+
+## FireControl and CapabilityRegistry
 
 FireControl resolves the requested `(artillery, objective)` pair to a registered implementation.
 
@@ -197,13 +278,17 @@ CapabilityRegistry owns the executable Rust handler.
 
 Neither layer infers module intent.
 
-The same implementation may receive arbitrary objectives, and Lifecycle does not require artillery or objective names to belong to a fixed vocabulary.
+Neither layer fabricates routes, handlers or grants.
 
-Missing routes, missing implementations and capability failures become normalized technical failures instead of bypassing the Lifecycle result model.
+The same implementation may receive arbitrary objectives.
 
-### Governor binding
+Missing routes, missing implementations and capability failures become normalized failures instead of bypassing Lifecycle semantics.
 
-Governor actions bind to module-owned transitions through the existing generic `hardcoded` map:
+---
+
+## Governor binding
+
+Governor actions bind to module-owned transitions through the generic `hardcoded` map:
 
 ```text
 governor.<action> -> <module-owned transition id>
@@ -217,11 +302,15 @@ The Governor action and transition do not need to share the same name.
 
 A missing binding is valid absence, not an error.
 
-This means future Governor actions can be introduced without modifying the Lifecycle binding engine.
+Future Governor actions can therefore be introduced without modifying the Lifecycle binding engine.
 
-### Governor integration
+---
 
-The Module Governor is adapted as a consumer of Lifecycle for its current operations:
+## Governor integration
+
+The Module Governor is a consumer of Lifecycle for its governed module operations.
+
+Current Governor vocabulary includes:
 
 ```text
 install
@@ -231,29 +320,52 @@ enable
 disable
 ```
 
-These names belong to the Governor consumer; they are not hardcoded into the generic Lifecycle engine.
+Those names belong to the Governor consumer. They are not hardcoded into the generic Lifecycle engine.
 
-Boss first resolves the module-owned transition bound to the requested Governor action and then executes that transition through the same generic Lifecycle pipeline used by any other consumer.
+Boss resolves the module-owned transition bound to the requested Governor action and executes that transition through the same generic Lifecycle pipeline used by other consumers.
 
-The Test Module does not define or constrain this architecture. It must adapt to the Boss contract after the Boss contract is closed.
+The Test Module does not define this architecture.
 
-### Transactions, failure and rollback
+It must adapt to Boss after **BOSS CONTRACT CLOSED**.
+
+---
+
+## Require inter-module
+
+The `require` path is closed and includes:
+
+- recursive DFS;
+- cycle detection;
+- shared dependencies without losing parents or paths;
+- baseline preservation;
+- acquisition only for absent requirements;
+- dependency-first publication;
+- transaction journal;
+- reverse compensation;
+- compensation continuation even when one rollback action fails;
+- `RequireHumanContext` propagation into state, communication, failure and event data.
+
+Dependency state and execution remain governed by Boss.
+
+---
+
+## Transactions, failure and rollback
 
 Lifecycle execution is integrated with the existing transactional module machinery.
 
-The current Governor paths preserve transactional behavior across install, update, uninstall, enable and disable operations.
+Governor paths preserve transaction semantics across install, update, uninstall, enable and disable operations.
 
-Require acquisition keeps a transaction journal and compensates acquired requirements in reverse order on rollback.
+Require acquisition records a transaction journal and compensates acquired requirements in reverse order on rollback.
 
 Module staging does not publish incomplete candidates.
 
-Update keeps recovery material available until Lifecycle succeeds and restores the previous module state when execution fails.
+Lifecycle failure, infrastructure failure and cancellation remain distinct.
 
-Lifecycle failures are represented explicitly and remain distinct from infrastructure failures and cancellation.
+Rollback failure does not stop the remaining compensations from being attempted.
 
-Rollback failure does not prevent remaining compensations from being attempted.
+---
 
-### State, intelligence and communication
+## State, intelligence and communication
 
 Lifecycle maintains explicit runtime state for execution, transition, operation and object scope.
 
@@ -265,45 +377,184 @@ Communication snapshots expose dynamic progress, result and failure namespaces w
 
 Require context and object identity remain explicit throughout execution.
 
-### Objects and object transitions
+---
+
+## Objects and canonical state
 
 Objects are dynamic module-owned identities.
 
-Boss does not infer object state from the contract and does not prescribe object-transition names.
+Boss does not infer object state from transition names.
 
-Object transitions compile and execute through the same generic execution architecture while preserving object identity in runtime state, communication and failure context.
+State semantics are explicit.
 
-### Control and orchestration
-
-Lifecycle supports dependency graphs, independent operations, joins and dependency chains.
-
-Execution control supports explicit retry limits, deadlines and cancellation.
-
-A failed dependency blocks dependent work without destroying unrelated successful work.
-
-Runtime intelligence produced by one operation can feed later dependent operations before their values are materialized.
-
-### Result and failure model
-
-Every operation terminates through a normalized result model:
+A stateful object may declare:
 
 ```text
-success
-failure
-cancelled
+initial_active
+transition_active
+transitions
 ```
 
-Cancellation is explicit and is never inferred from error text.
+`initial_active` is optional because not every object is boolean-stateful.
 
-Capability failures, route failures and infrastructure failures remain distinguishable.
+`transition_active` may only reference declared transitions and requires an initial state.
 
-Transition failure produces structured failure context that can flow into events and optional telemetry.
+Transition names remain arbitrary.
 
-### Certification status
+The durable Boss authority for functional object state is the canonical module-state configuration.
 
-The complete Lifecycle path has been exercised through focused tests, destructive module-transaction tests and the full Boss test suite.
+`ObjectStateStore` is the runtime projection of that authority.
 
-The current source line has certified:
+Reconciliation:
+
+- preserves known stateful object values;
+- initializes new stateful objects from `initial_active`;
+- removes state for objects that no longer exist;
+- removes module object state on uninstall.
+
+One functional object has one canonical state.
+
+UI, Launcher and Tray do not own separate functional state.
+
+---
+
+# Surface projection
+
+Lifecycle state is projected to Boss surfaces through generic SurfaceContent.
+
+The architecture is:
+
+```text
+module
+  └─ declares objects / capabilities / surfaces
+       ├─ content Boss UI can represent
+       ├─ content Boss Launcher can represent
+       └─ content Boss Tray can represent
+```
+
+A module may publish zero, one or many items to any surface.
+
+Surface names are generic.
+
+Presentation visibility is separate from functional state.
+
+UI, Launcher and Tray are consumers of the same canonical state and the same governed action path.
+
+```text
+UI ────────┐
+Launcher ──┼──► Boss control path ─► Governor / Lifecycle ─► canonical state
+Tray ──────┘                                            │
+                                                       ▼
+                                             Surface Projection
+                                               ┌──────┼──────┐
+                                               ▼      ▼      ▼
+                                               UI   Launcher Tray
+```
+
+Cross-surface law:
+
+```text
+UI change        -> Launcher + Tray reflect
+Launcher change  -> UI + Tray reflect
+Tray change      -> UI + Launcher reflect
+Lifecycle change -> all relevant surfaces reflect
+```
+
+There is no local boolean ownership in any presentation surface.
+
+---
+
+## Boss UI
+
+Boss UI consumes generic `surface_content`.
+
+Functional controls are rendered from module declarations.
+
+Stateful controls read canonical `active`.
+
+Actions flow through the Boss/Governor/Lifecycle path.
+
+The UI does not infer module technology or transition semantics.
+
+Existing N.E.E.B.L.E.S. visual controls, including the switch design, remain presentation components only.
+
+---
+
+## Boss Launcher
+
+Boss Launcher is permanent Boss infrastructure.
+
+Its existence is not controlled by module declarations.
+
+Modules may publish arbitrary Launcher content through `surface_content`.
+
+The productive Launcher:
+
+- filters `surface == "launcher"`;
+- renders generic buttons and switches;
+- reads canonical `active`;
+- routes module actions through the governed module-action path;
+- transports explicit object and transition targets;
+- preserves root Launcher enable/disable independently from module content;
+- keeps the root Boss-open action separate from module action semantics.
+
+The obsolete productive dependency on `launcher_action` has been removed from the Launcher.
+
+---
+
+## Boss Tray
+
+Boss Tray is permanent Boss infrastructure.
+
+Its root StatusNotifierItem / Plasma integration remains separate from module functional state.
+
+Modules may publish arbitrary Tray content through `surface_content`.
+
+The productive Tray:
+
+- filters `surface == "tray"`;
+- renders generic buttons and switches;
+- reads canonical `active`;
+- routes actions through the governed module-action path;
+- transports explicit object and transition targets;
+- does not use provider `Open` as generic module semantics;
+- preserves root Boss Tray infrastructure and root Boss-open behavior.
+
+`TrayMessage::Open` / `TrayMessage::Close` remain legitimate provider/SNI infrastructure where required. They are not Lifecycle semantics.
+
+---
+
+## Legacy reconciliation
+
+The obsolete specialized Lifecycle `open/close` layer was removed.
+
+Deleted:
+
+```text
+src/lifecycle_open_close.rs
+```
+
+The generic Lifecycle engine no longer depends on a privileged `open` / `close` transition pair.
+
+The productive Launcher and Tray no longer depend on `launcher_action`.
+
+Historical `launcher_action` material that still belongs to Settings/model compatibility is deferred to the Settings front rather than being mixed back into Lifecycle.
+
+Do not revive:
+
+- Construct;
+- Stage0 as an application architecture;
+- `dependencies.rs` as the old dependency architecture;
+- Local Installer;
+- apt/dpkg application semantics;
+- private runtime architectures;
+- fixed `open/close` Lifecycle semantics.
+
+---
+
+## Certification status
+
+The closed Lifecycle front has certified:
 
 - generic contract validation;
 - arbitrary transition and operation vocabulary;
@@ -319,80 +570,94 @@ The current source line has certified:
 - require rollback;
 - module transaction rollback;
 - object transitions;
+- canonical object state;
 - cancellation, retry and deadlines;
 - event generation;
 - telemetry packaging;
-- install/update/uninstall/enable/disable Governor integration.
+- install/update/uninstall/enable/disable Governor integration;
+- generic SurfaceContent;
+- Boss UI generic controls;
+- Boss Launcher generic controls;
+- Boss Tray generic controls;
+- legacy `lifecycle_open_close` removal;
+- global regressions and architecture assertions.
 
-Lifecycle is therefore implemented in the current Boss `1.0.15` source line.
+Final closure:
 
-## Pending roadmap
+```text
+PASS - 1.7 GLOBAL CERTIFICATION GREEN
+PASS - 1.X SURFACE/LIFECYCLE FRONT CLOSED
+```
 
-Lifecycle backend/governance is closed. The remaining work now starts from the UI surface and then continues through the remaining Boss layers.
+The source tree was committed and pushed as:
 
-1. **Lifecycle UI**
-   - consume existing `RuntimeState` and Lifecycle Communication;
-   - expose `state`, `progress`, `result`, `failure` and `human`;
-   - display transitions, operations and objects without adding module-specific semantics;
-   - do not create a second semantic channel beside Lifecycle.
+```text
+aa5646d Close Lifecycle and generic Boss surfaces
+```
 
-2. **Contracts + Module IPC**
-   - close the runtime boundary between modules and Boss;
-   - cover session, registration, ownership, endpoints and invoke/response;
+---
+
+# Pending roadmap
+
+Lifecycle implementation is closed.
+
+Settings is a separate front.
+
+The remaining Boss work is:
+
+1. **Contracts + Module IPC**
+   - close session, registration, ownership, endpoints and invoke/response;
    - preserve ping/pong, shutdown and unregister as transport infrastructure;
-   - IPC transports; Lifecycle governs execution and runtime semantics.
+   - IPC transports; Lifecycle governs execution and runtime semantics;
+   - remove any remaining duplication where IPC attempts to become a second Lifecycle.
 
-3. **Settings + symbols / hardcoded**
-   - separate Boss settings infrastructure from module-declared settings;
+2. **Settings + symbols / hardcoded**
+   - separate Boss Settings infrastructure from module-declared settings;
    - Boss owns generic persistence, overrides, resolution, ownership, validation and access;
    - modules declare and consume their settings;
-   - reuse existing `hardcoded` / symbols semantics instead of introducing a parallel symbol system.
+   - reconcile historical `launcher_action` compatibility here where appropriate;
+   - reuse existing `hardcoded` / symbols semantics instead of creating a parallel symbol system.
 
-4. **Nightmare + Critical Update**
+3. **Nightmare + Critical Update**
    - preserve Nightmare as a transversal declarative transformation engine;
    - integrate Critical Update as a real consumer;
    - close publication, failure and rollback semantics for persistent transformations.
 
-5. **Boss Tray + Plasma**
-   - reconcile Tray Manager, tray socket, Tray Host, StatusNotifierItem and Plasma;
-   - consume Lifecycle, Settings and IPC where appropriate;
-   - do not duplicate state or execution semantics.
-
-6. **Notifications**
+4. **Notifications**
    - close the generic notification contract and ownership model;
    - define emission, transport, state and capabilities;
    - do not turn Notifications into a parallel control channel.
 
-7. **Auth / privileges**
+5. **Auth / privileges**
    - close `requires_root`, auth-agent and privilege escalation semantics;
    - align Lifecycle, IPC, Settings and sensitive operations with explicit authority;
-   - keep the Stage 8 law: physical availability never implies permission.
+   - preserve the Stage 8 law: physical availability never implies permission.
 
-8. **Registry / module catalog**
+6. **Registry / module catalog**
    - close metadata, version, installed state, enable/disable state and contract references;
    - align Registry with Governor, Lifecycle, Settings and IPC;
    - the catalog describes and governs identity/state; it does not execute module technology.
 
-9. **CUSTOM v2 integration into Boss**
+7. **CUSTOM v2 integration into Boss**
    - integrate certified CUSTOM v2 output without making Boss understand module technologies;
    - keep Esbirro outside Lifecycle;
-   - the future `world Modules` belongs to CUSTOM v2 / Esbirro;
+   - keep `world Modules` in CUSTOM v2 / Esbirro;
    - preserve Stage 8 host independence.
 
-10. **Final Boss integration and certification**
-    - cross-certify Lifecycle UI, Module IPC, Settings, Nightmare/Critical Update, Tray, Notifications, Auth, Registry and CUSTOM v2;
-    - run the real Boss E2E;
-    - remove any remaining duplicate or diverging contracts;
-    - declare **BOSS CONTRACT CLOSED** only after global GREEN.
+8. **Final Boss integration and certification**
+   - cross-certify Module IPC, Settings, Nightmare/Critical Update, Notifications, Auth, Registry and CUSTOM v2 against the already-closed Lifecycle/surface architecture;
+   - run the real Boss E2E;
+   - remove any remaining duplicate or diverging contracts;
+   - declare **BOSS CONTRACT CLOSED** only after global GREEN.
 
-11. **Adapt Test Module to what Boss dictates**
-    - unfreeze Test Module only after **BOSS CONTRACT CLOSED**;
-    - adapt manifest, contracts, Lifecycle, Module IPC, Settings, Tray, Notifications and Auth;
-    - use CUSTOM v2 + Esbirro for module construction/domestication/certification;
-    - Test Module demonstrates the final Boss contract and never drives Boss architecture.
+9. **Adapt Test Module to what Boss dictates**
+   - unfreeze Test Module only after **BOSS CONTRACT CLOSED**;
+   - adapt manifest, contracts, Lifecycle, IPC, Settings, Tray, Notifications and Auth;
+   - use CUSTOM v2 + Esbirro for module construction, domestication and certification;
+   - Test Module demonstrates the final Boss contract and never drives Boss architecture.
 
-12. **Full Test Module certification**
-    - certify the complete matrix:
+10. **Full Test Module certification**
+   - certify the complete matrix:
 
 ```text
 install
@@ -413,6 +678,8 @@ install
 
 > **Order law:** Boss is completed first. Test Module adapts afterward. Test Module never defines Boss.
 
+---
+
 ## Recovery boundary
 
 Recovery is external to Boss.
@@ -420,6 +687,8 @@ Recovery is external to Boss.
 N.E.E.B.L.E.S. BUILD owns the independent `neebles-check` recovery environment.
 
 Boss normal startup does not depend on invoking the recovery engine.
+
+---
 
 ## Telemetry
 
@@ -429,11 +698,31 @@ It is not a dependency engine, readiness gate or recovery engine.
 
 Normal Boss operation does not require a remote telemetry endpoint.
 
+---
+
 ## Nightmare
 
 Nightmare is the declarative transformation engine for persistent state.
 
 Its role is transversal: formulas describe transformations without forcing Boss to gain technology-specific branches for every consumer.
+
+---
+
+## Work protocol
+
+For the current N.E.E.B.L.E.S. workflow:
+
+- commands/casters must not contain the shell prompt character;
+- do not use shell `set`;
+- one implementation step should produce one consolidated validation artifact when evidence is required;
+- GREEN advances immediately;
+- RED is repaired and recertified before advancing;
+- never claim a path was tested without current evidence;
+- current source plus the latest certification evidence are the source of truth;
+- historical documents do not override current source;
+- Test Module stays frozen as an architecture driver until **BOSS CONTRACT CLOSED**.
+
+---
 
 ## Version policy
 
