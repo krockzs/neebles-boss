@@ -266,6 +266,9 @@ mod tests {
             objects: BTreeMap::from([(
                 "future-object".to_string(),
                 ObjectContract {
+                    initial_active: None,
+                    transition_active: Default::default(),
+
                     transitions: BTreeMap::from([(
                         "future-transition".to_string(),
                         Battleplan {

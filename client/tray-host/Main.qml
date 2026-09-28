@@ -6,11 +6,7 @@ import QtQuick.Window
 Window {
     id: root
 
-    readonly property int collapsedWidth: 210
-    readonly property int expandedWidth: 390
-
-    width: expandedWidth
-
+    width: 390
     height: shell.implicitHeight
 
     visible: false
@@ -19,24 +15,7 @@ Window {
     flags: Qt.FramelessWindowHint
     color: "transparent"
 
-    property string selectedTrayId: ""
-    property var activeByTray: ({})
-
-    function trayActive(trayId) {
-        if (trayId.length === 0)
-            return false
-
-        return activeByTray[trayId] === true
-    }
-
-    function setTrayActive(trayId, active) {
-        if (trayId.length === 0)
-            return
-
-        var next = Object.assign({}, activeByTray)
-        next[trayId] = active
-        activeByTray = next
-    }
+    property string selectedModule: ""
 
     function t(key) {
         if (
@@ -48,11 +27,116 @@ Window {
         return key
     }
 
+    function trayContent(module) {
+        if (
+            !module
+            || !Array.isArray(
+                module.surface_content
+            )
+        )
+            return []
+
+        return module.surface_content.filter(
+            function(item) {
+                return (
+                    item
+                    && item.surface === "tray"
+                    && item.visible
+                )
+            }
+        )
+    }
+
+    function trayModules() {
+        if (
+            typeof bossCommands === "undefined"
+            || !Array.isArray(
+                bossCommands.installedModules
+            )
+        )
+            return []
+
+        return bossCommands.installedModules.filter(
+            function(module) {
+                return (
+                    module
+                    && module.enabled
+                    && root.trayContent(module).length > 0
+                )
+            }
+        )
+    }
+
+    function selectedModuleObject() {
+        const modules =
+            root.trayModules()
+
+        for (
+            var index = 0;
+            index < modules.length;
+            ++index
+        ) {
+            if (
+                modules[index].name
+                === root.selectedModule
+            )
+                return modules[index]
+        }
+
+        return null
+    }
+
+    function selectedContent() {
+        return root.trayContent(
+            root.selectedModuleObject()
+        )
+    }
+
+    function selectedButtons() {
+        return root.selectedContent().filter(
+            function(item) {
+                const data =
+                    item.data
+                    ? item.data
+                    : ({})
+
+                return (
+                    data.control === "button"
+                    && data.action
+                    && data.label_key
+                )
+            }
+        )
+    }
+
+    function selectedSwitches() {
+        return root.selectedContent().filter(
+            function(item) {
+                const data =
+                    item.data
+                    ? item.data
+                    : ({})
+
+                return (
+                    data.control === "switch"
+                    && item.object_id
+                    && item.active !== undefined
+                    && item.active !== null
+                    && data.action_on
+                    && data.action_off
+                    && data.transition_on
+                    && data.transition_off
+                    && data.label_key
+                )
+            }
+        )
+    }
 
     component NeeblesButton: Button {
         id: control
 
-        implicitHeight: 26
+        implicitHeight: 28
+        hoverEnabled: true
 
         font.pixelSize: 11
         font.bold: true
@@ -63,267 +147,411 @@ Window {
 
             color:
                 control.enabled
-                ? "#ffffff"
-                : "#8c8c8c"
+                ? "#67E8F9"
+                : "#71717A"
 
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+            horizontalAlignment:
+                Text.AlignHCenter
+
+            verticalAlignment:
+                Text.AlignVCenter
+
+            elide:
+                Text.ElideRight
         }
 
         background: Rectangle {
-            radius: 6
+            radius: 7
 
             color:
                 !control.enabled
-                ? "#000000"
+                ? "#09090B"
                 : control.down
-                    ? "#4d1670"
-                    : control.hovered
-                        ? "#6f2699"
-                        : "#000000"
+                  ? "#15101E"
+                  : control.hovered
+                    ? "#1D1430"
+                    : "#09090D"
 
-            border.width: 1
+            border.width:
+                control.activeFocus
+                ? 3
+                : 2
 
             border.color:
-                !control.enabled
-                ? "#50345f"
-                : control.hovered || control.down
-                    ? "#c26cff"
-                    : "#8746ad"
-
-            opacity:
                 control.enabled
-                ? 1.0
-                : 0.55
+                ? (
+                    control.hovered
+                    || control.activeFocus
+                    ? "#67E8F9"
+                    : "#7E22CE"
+                )
+                : "#3F3F46"
         }
     }
 
-    readonly property int outerMargin: 8
-    readonly property int headerHeight: 24
+    component NeeblesSwitch: Switch {
+        id: control
 
-    readonly property int fixedWidth: 178
-    readonly property int actionsWidth: 170
+        implicitWidth: 42
+        implicitHeight: 24
 
-    readonly property int moduleRowHeight: 40
-    readonly property int moduleSpacing: 4
-    readonly property int moduleMaximumRows: 3
+        hoverEnabled: true
 
-    readonly property int moduleMaximumHeight:
-        moduleRowHeight * moduleMaximumRows
-        + moduleSpacing * (moduleMaximumRows - 1)
+        indicator: Rectangle {
+            anchors.centerIn: parent
 
-    readonly property int moduleListHeight:
-        Math.max(
-            moduleRowHeight,
-            Math.min(
-                trayList.contentHeight,
-                moduleMaximumHeight
-            )
-        )
+            width: 36
+            height: 18
+            radius: 9
+
+            color:
+                control.checked
+                ? "#5B21B6"
+                : "#27272A"
+
+            border.width:
+                control.hovered
+                ? 2
+                : 1
+
+            border.color:
+                control.checked
+                ? "#A855F7"
+                : control.hovered
+                  ? "#67E8F9"
+                  : "#3F3F46"
+
+            Rectangle {
+                width: 14
+                height: 14
+                radius: 7
+
+                anchors.verticalCenter:
+                    parent.verticalCenter
+
+                x:
+                    control.checked
+                    ? parent.width - width - 2
+                    : 2
+
+                color:
+                    control.checked
+                    ? "#F5F3FF"
+                    : "#A1A1AA"
+
+                Behavior on x {
+                    NumberAnimation {
+                        duration: 100
+                    }
+                }
+            }
+        }
+
+        contentItem: Item {
+        }
+    }
+
+    onVisibleChanged: {
+        if (visible) {
+            bossCommands.refreshModules()
+        }
+    }
+
+    Connections {
+        target: bossCommands
+
+        function onInstalledModulesChanged() {
+            const modules =
+                root.trayModules()
+
+            if (
+                root.selectedModule.length > 0
+            ) {
+                const stillExists =
+                    modules.some(
+                        function(module) {
+                            return (
+                                module.name
+                                === root.selectedModule
+                            )
+                        }
+                    )
+
+                if (!stillExists)
+                    root.selectedModule = ""
+            }
+        }
+    }
 
     Rectangle {
         id: shell
 
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.right: parent.right
-
-        width:
-            root.selectedTrayId.length > 0
-            ? root.expandedWidth
-            : root.collapsedWidth
+        anchors.fill: parent
 
         radius: 10
         color: "#000000"
 
         border.width: 1
-        border.color: "#71449a"
+        border.color: "#71449A"
 
         implicitHeight:
-            outerMargin
-            + headerHeight
-            + 5
-            + Math.max(
-                fixedColumn.implicitHeight,
-                moduleActions.visible
-                ? moduleActions.implicitHeight
-                : 0
-            )
-            + outerMargin
+            header.implicitHeight
+            + body.implicitHeight
+            + 24
     }
 
     ColumnLayout {
         anchors.fill: shell
-        anchors.margins: outerMargin
+        anchors.margins: 8
 
-        spacing: 5
+        spacing: 7
 
         RowLayout {
+            id: header
+
             Layout.fillWidth: true
-            Layout.preferredHeight: headerHeight
 
             Image {
-                id: bossIcon
+                source:
+                    "qrc:/qt/qml/NEEBLES/TrayHost/neebles-boss-tray-icon.png"
 
-                source: "qrc:/qt/qml/NEEBLES/TrayHost/neebles-boss-tray-icon.png"
+                width: 22
+                height: 22
 
-                width: 20
-                height: 20
+                sourceSize.width: 22
+                sourceSize.height: 22
 
-                sourceSize.width: 20
-                sourceSize.height: 20
-
-                fillMode: Image.PreserveAspectFit
+                fillMode:
+                    Image.PreserveAspectFit
             }
 
-            Item {
+            Label {
+                text:
+                    "N.E.E.B.L.E.S."
+
+                color: "#D8B4FE"
+
+                font.pixelSize: 12
+                font.bold: true
+
                 Layout.fillWidth: true
             }
 
             Rectangle {
-                width: 6
-                height: 6
-                radius: 3
+                width: 7
+                height: 7
+                radius: 4
 
                 color:
                     trayClient.connected
-                    ? "#00e5ff"
-                    : "#6d6d6d"
-
-                border.width: 1
-
-                border.color:
-                    trayClient.connected
-                    ? "#ffffff"
-                    : "#6d6d6d"
+                    ? "#22D3EE"
+                    : "#52525B"
             }
         }
 
         Label {
             visible:
                 trayClient.error.length > 0
+                || bossCommands.error.length > 0
 
             text:
-                trayClient.error
+                bossCommands.error.length > 0
+                ? bossCommands.error
+                : trayClient.error
 
-            color: "#ff7b9c"
+            color: "#FB7185"
 
             font.pixelSize: 10
 
-            wrapMode: Text.Wrap
+            wrapMode:
+                Text.Wrap
 
             Layout.fillWidth: true
         }
 
         RowLayout {
+            id: body
+
             Layout.fillWidth: true
-            Layout.fillHeight: true
 
             spacing: 7
 
-            /*
-             * VARIABLE LEFT SIDE.
-             *
-             * Because the whole LayerShell window is anchored
-             * to the right edge, this area expands to the left.
-             */
             Rectangle {
-                id: moduleActions
+                Layout.preferredWidth: 178
+                Layout.minimumWidth: 178
+                Layout.maximumWidth: 178
 
-                implicitHeight:
-                    actionsContent.implicitHeight + 16
-
-                visible:
-                    root.selectedTrayId.length > 0
-
-                Layout.preferredWidth:
-                    visible
-                    ? actionsWidth
-                    : 0
-
-                Layout.minimumWidth:
-                    visible
-                    ? actionsWidth
-                    : 0
-
-                Layout.maximumWidth:
-                    visible
-                    ? actionsWidth
-                    : 0
-
-                Layout.fillHeight: true
+                Layout.preferredHeight: 220
 
                 radius: 7
 
-                color: "#000000"
+                color: "#09090D"
 
                 border.width: 1
-                border.color: "#71449a"
-
-                property bool selectedActive:
-                    root.trayActive(root.selectedTrayId)
-
-                property bool selectedOpened: false
-
-                function refreshSelected() {
-                    if (
-                        root.selectedTrayId.length === 0
-                    ) {
-                        selectedOpened = false
-                        return
-                    }
-
-                    if (
-                        !trayClient.model.containsTray(
-                            root.selectedTrayId
-                        )
-                    ) {
-                        root.selectedTrayId = ""
-                        selectedOpened = false
-                        return
-                    }
-
-                    selectedOpened =
-                        trayClient.model.openedForTray(
-                            root.selectedTrayId
-                        )
-                }
-
-                Connections {
-                    target: trayClient.model
-
-                    function onDataChanged() {
-                        moduleActions.refreshSelected()
-                    }
-
-                    function onModelReset() {
-                        moduleActions.refreshSelected()
-                    }
-
-                    function onRowsInserted() {
-                        moduleActions.refreshSelected()
-                    }
-
-                    function onRowsRemoved() {
-                        moduleActions.refreshSelected()
-                    }
-                }
-
-                Connections {
-                    target: root
-
-                    function onSelectedTrayIdChanged() {
-                        moduleActions.refreshSelected()
-                    }
-                }
-
-                onVisibleChanged:
-                    refreshSelected()
+                border.color: "#3F3F46"
 
                 ColumnLayout {
-                    id: actionsContent
+                    anchors.fill: parent
+                    anchors.margins: 7
 
+                    spacing: 5
+
+                    Label {
+                        text: "Modules"
+
+                        color: "#C4B5FD"
+
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+
+                    ListView {
+                        id: moduleList
+
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+
+                        clip: true
+
+                        spacing: 4
+
+                        model:
+                            root.trayModules()
+
+                        delegate: Rectangle {
+                            required property var modelData
+
+                            width:
+                                moduleList.width
+
+                            height: 38
+
+                            radius: 6
+
+                            readonly property bool selected:
+                                root.selectedModule
+                                === modelData.name
+
+                            color:
+                                selected
+                                ? "#211331"
+                                : "#111116"
+
+                            border.width:
+                                selected
+                                ? 2
+                                : 1
+
+                            border.color:
+                                selected
+                                ? "#A855F7"
+                                : "#3F3F46"
+
+                            MouseArea {
+                                anchors.fill:
+                                    parent
+
+                                cursorShape:
+                                    Qt.PointingHandCursor
+
+                                onClicked: {
+                                    root.selectedModule =
+                                        root.selectedModule
+                                        === modelData.name
+                                        ? ""
+                                        : modelData.name
+                                }
+                            }
+
+                            RowLayout {
+                                anchors.fill:
+                                    parent
+
+                                anchors.margins: 5
+
+                                spacing: 6
+
+                                Image {
+                                    source:
+                                        modelData.icon
+                                        ? "file://"
+                                            + modelData.icon
+                                        : ""
+
+                                    width: 25
+                                    height: 25
+
+                                    sourceSize.width: 25
+                                    sourceSize.height: 25
+
+                                    fillMode:
+                                        Image.PreserveAspectFit
+                                }
+
+                                Label {
+                                    text:
+                                        modelData.name
+
+                                    color:
+                                        selected
+                                        ? "#FFFFFF"
+                                        : "#67E8F9"
+
+                                    font.pixelSize: 11
+                                    font.bold: true
+
+                                    elide:
+                                        Text.ElideRight
+
+                                    Layout.fillWidth: true
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: "#3F3F46"
+                    }
+
+                    NeeblesButton {
+                        id: openBossButton
+
+                        Layout.fillWidth: true
+
+                        text:
+                            root.t(
+                                "tray.open_boss"
+                            )
+
+                        enabled:
+                            bossEvents.connected
+                            && bossEvents.bossUiState
+                                === "closed"
+
+                        onClicked: {
+                            bossCommands.startBoss()
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 220
+
+                visible:
+                    root.selectedModule.length > 0
+
+                radius: 7
+
+                color: "#09090D"
+
+                border.width: 1
+                border.color: "#71449A"
+
+                ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 8
 
@@ -331,129 +559,115 @@ Window {
 
                     Label {
                         text:
-                            root.selectedTrayId
+                            root.selectedModule
 
-                        color: "#d7b8ff"
+                        color: "#D8B4FE"
 
                         font.pixelSize: 12
                         font.bold: true
 
-                        elide: Text.ElideRight
-
                         Layout.fillWidth: true
+
+                        elide:
+                            Text.ElideRight
                     }
 
-                    RowLayout {
-                        Layout.fillWidth: true
+                    Repeater {
+                        model:
+                            root.selectedButtons()
 
-                        Label {
-                            text:
-                                root.t("tray.activate")
+                        delegate: NeeblesButton {
+                            required property var modelData
 
-                            color: "#ffffff"
+                            property var surfaceItem:
+                                modelData
 
-                            font.pixelSize: 11
+                            property var surfaceData:
+                                surfaceItem.data
+                                ? surfaceItem.data
+                                : ({})
 
                             Layout.fillWidth: true
-                        }
 
-                        Rectangle {
-                            width: 34
-                            height: 18
-                            radius: 9
+                            text:
+                                root.t(
+                                    surfaceData.label_key
+                                )
 
-                            color:
-                                moduleActions.selectedActive
-                                ? "#8d3ac7"
-                                : "#000000"
+                            enabled:
+                                !bossCommands.busy
 
-                            border.width: 1
-
-                            border.color:
-                                moduleActions.selectedActive
-                                ? "#c26cff"
-                                : "#8746ad"
-
-                            Rectangle {
-                                width: 14
-                                height: 14
-                                radius: 7
-
-                                anchors.verticalCenter:
-                                    parent.verticalCenter
-
-                                x:
-                                    moduleActions.selectedActive
-                                    ? parent.width - width - 2
-                                    : 2
-
-                                color: "#ffffff"
-
-                                Behavior on x {
-                                    NumberAnimation {
-                                        duration: 100
-                                    }
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-
-                                cursorShape:
-                                    Qt.PointingHandCursor
-
-                                onClicked: {
-                                    if (
-                                        root.selectedTrayId.length === 0
-                                    ) {
-                                        return
-                                    }
-
-                                    const trayId =
-                                        root.selectedTrayId
-
-                                    if (moduleActions.selectedActive) {
-                                        root.setTrayActive(
-                                            trayId,
-                                            false
-                                        )
-
-                                        if (
-                                            moduleActions.selectedOpened
-                                        ) {
-                                            trayClient.closeTray(
-                                                trayId
-                                            )
-                                        }
-
-                                        moduleActions.selectedOpened = false
-                                    } else {
-                                        root.setTrayActive(
-                                            trayId,
-                                            true
-                                        )
-                                    }
-                                }
+                            onClicked: {
+                                bossCommands.moduleAction(
+                                    surfaceItem.owner_module,
+                                    surfaceData.action,
+                                    surfaceItem.object_id
+                                        || "",
+                                    surfaceItem.transition
+                                        || ""
+                                )
                             }
                         }
                     }
 
-                    NeeblesButton {
-                        visible:
-                            moduleActions.selectedActive
+                    Repeater {
+                        model:
+                            root.selectedSwitches()
 
-                        enabled:
-                            !moduleActions.selectedOpened
+                        delegate: RowLayout {
+                            required property var modelData
 
-                        text:
-                            root.t("common.open")
+                            property var surfaceItem:
+                                modelData
 
-                        Layout.fillWidth: true
+                            property var surfaceData:
+                                surfaceItem.data
+                                ? surfaceItem.data
+                                : ({})
 
-                        onClicked: {
-                            trayClient.openTray(
-                                root.selectedTrayId
-                            )
+                            Layout.fillWidth: true
+
+                            Label {
+                                Layout.fillWidth: true
+
+                                text:
+                                    root.t(
+                                        surfaceData.label_key
+                                    )
+
+                                color: "#A78BFA"
+
+                                font.pixelSize: 11
+
+                                elide:
+                                    Text.ElideRight
+                            }
+
+                            NeeblesSwitch {
+                                checked:
+                                    !!surfaceItem.active
+
+                                checkable: false
+
+                                enabled:
+                                    !bossCommands.busy
+
+                                onClicked: {
+                                    const turnOn =
+                                        !surfaceItem.active
+
+                                    bossCommands.moduleAction(
+                                        surfaceItem.owner_module,
+                                        turnOn
+                                        ? surfaceData.action_on
+                                        : surfaceData.action_off,
+                                        surfaceItem.object_id,
+                                        turnOn
+                                        ? surfaceData.transition_on
+                                        : surfaceData.transition_off
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -462,216 +676,10 @@ Window {
                     }
                 }
             }
-
-            Rectangle {
-                visible:
-                    root.selectedTrayId.length > 0
-
-                width:
-                    visible
-                    ? 1
-                    : 0
-
-                Layout.fillHeight: true
-
-                color: "#3f334b"
-            }
-
-            /*
-             * FIXED RIGHT SIDE.
-             *
-             * This is always against the screen edge.
-             */
-            ColumnLayout {
-                id: fixedColumn
-
-                Layout.preferredWidth: fixedWidth
-                Layout.minimumWidth: fixedWidth
-                Layout.maximumWidth: fixedWidth
-
-                Layout.fillHeight: true
-
-                spacing: 5
-
-                Label {
-                    text: "Modules"
-
-                    color: "#c49be8"
-
-                    font.pixelSize: 11
-                    font.bold: true
-                }
-
-                ListView {
-                    id: trayList
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight:
-                        moduleListHeight
-
-                    clip: true
-
-                    interactive:
-                        contentHeight > height
-
-                    spacing:
-                        moduleSpacing
-
-                    model:
-                        trayClient.model
-
-                    delegate: Rectangle {
-                        id: trayRow
-
-                        required property string trayId
-                        required property string ownerModule
-                        required property string moduleVersion
-                        required property string icon
-                        required property bool trayVisible
-                        required property bool opened
-
-                        width:
-                            trayList.width
-
-                        height:
-                            trayVisible
-                            ? moduleRowHeight
-                            : 0
-
-                        visible:
-                            trayVisible
-
-                        radius: 6
-
-                        readonly property bool selected:
-                            root.selectedTrayId === trayId
-
-                        color:
-                            selected
-                            ? "#3a2050"
-                            : "#19151f"
-
-                        border.width:
-                            selected
-                            ? 2
-                            : 1
-
-                        border.color:
-                            selected
-                            ? "#c27cff"
-                            : "#3f334b"
-
-                        MouseArea {
-                            anchors.fill: parent
-
-                            preventStealing: true
-                            acceptedButtons: Qt.LeftButton
-
-                            cursorShape:
-                                Qt.PointingHandCursor
-
-                            onClicked: {
-                                root.selectedTrayId =
-                                    root.selectedTrayId === trayId
-                                    ? ""
-                                    : trayId
-                            }
-                        }
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.margins: 5
-
-                            spacing: 6
-
-                            Image {
-                                source:
-                                    icon.length > 0
-                                    ? "file://" + icon
-                                    : ""
-
-                                width: 26
-                                height: 26
-
-                                sourceSize.width: 26
-                                sourceSize.height: 26
-
-                                fillMode:
-                                    Image.PreserveAspectFit
-                            }
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-
-                                spacing: 0
-
-                                Label {
-                                    text:
-                                        ownerModule
-
-                                    color:
-                                        selected
-                                        ? "#ffffff"
-                                        : "#00e5ff"
-
-                                    font.pixelSize: 11
-                                    font.bold: true
-
-                                    elide: Text.ElideRight
-
-                                    Layout.fillWidth: true
-                                }
-
-                                Label {
-                                    text:
-                                        moduleVersion.length > 0
-                                        ? "v" + moduleVersion
-                                        : ""
-
-                                    color: "#a987c5"
-
-                                    font.pixelSize: 8
-                                }
-                            }
-
-                            Rectangle {
-                                width: 6
-                                height: 6
-                                radius: 3
-
-                                color:
-                                    opened
-                                    ? "#9a58d0"
-                                    : "#55505a"
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 1
-
-                    color: "#3f334b"
-                }
-
-                NeeblesButton {
-                    id: openBossButton
-
-                    text:
-                        root.t("tray.open_boss")
-
-                    Layout.fillWidth: true
-
-                    enabled:
-                        bossEvents.connected
-                        && bossEvents.bossUiState === "closed"
-
-                    onClicked: {
-                        bossCommands.startBoss()
-                    }
-                }
-            }
         }
+    }
+
+    Component.onCompleted: {
+        bossCommands.refreshModules()
     }
 }

@@ -159,6 +159,77 @@ fn module_states(
         .map_err(|error| format!("Boss setting modules contains invalid String data: {error}"))
 }
 
+fn write_module_states(
+    modules: &BTreeMap<String, BTreeMap<String, bool>>,
+) -> Result<BossConfig, String> {
+    let (_, default) = local_settings()?;
+
+    let encoded = serde_json::to_string(modules)
+        .map_err(|error| format!("could not serialize Boss module object states: {error}"))?;
+
+    settings::set_path(&config_path()?, &default, "modules", encoded)?;
+
+    load_or_initialize()
+}
+
+pub fn reconcile_module_object_states(
+    name: &str,
+    contract: &crate::lifecycle::LifecycleContract,
+) -> Result<BTreeMap<String, bool>, String> {
+    let config = load_or_initialize()?;
+
+    let mut modules = config.modules.clone();
+
+    let previous = modules.remove(name).unwrap_or_default();
+
+    let mut canonical = BTreeMap::<String, bool>::new();
+
+    for (object_id, object) in &contract.objects {
+        let Some(initial_active) = object.initial_active else {
+            continue;
+        };
+
+        canonical.insert(
+            object_id.clone(),
+            previous.get(object_id).copied().unwrap_or(initial_active),
+        );
+    }
+
+    if !canonical.is_empty() {
+        modules.insert(name.to_string(), canonical.clone());
+    }
+
+    if modules != config.modules {
+        write_module_states(&modules)?;
+    }
+
+    Ok(canonical)
+}
+
+pub fn update_module_object_state(
+    name: &str,
+    object_id: &str,
+    active: bool,
+) -> Result<BossConfig, String> {
+    let config = load_or_initialize()?;
+
+    let mut modules = config.modules;
+
+    let states = modules
+        .get_mut(name)
+        .ok_or_else(|| format!("module '{name}' has no canonical object state"))?;
+
+    if !states.contains_key(object_id) {
+        return Err(format!(
+            "module '{name}' object '{object_id}' has no canonical state"
+        ));
+    }
+
+    states.insert(object_id.to_string(), active);
+
+    write_module_states(&modules)
+}
+
 pub fn load_or_initialize() -> Result<BossConfig, String> {
     let (local, default) = local_settings()?;
 
@@ -334,13 +405,26 @@ pub fn remove_module_transient_state(name: &str) -> Result<BossConfig, String> {
 
     let mut notifications = boss_map(&local, &default, "ui.module_update_notifications")?;
 
+    let mut object_states = module_states(&local, &default)?;
+
     notifications.remove(name);
+    object_states.remove(name);
+
+    let path = config_path()?;
 
     settings::set_path(
-        &config_path()?,
+        &path,
         &default,
         "ui.module_update_notifications",
         string_map(&notifications)?,
+    )?;
+
+    settings::set_path(
+        &path,
+        &default,
+        "modules",
+        serde_json::to_string(&object_states)
+            .map_err(|error| format!("could not serialize Boss module object states: {error}"))?,
     )?;
 
     load_or_initialize()
@@ -357,6 +441,8 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
 
     let mut notifications = boss_map(&local, &default, "ui.module_update_notifications")?;
 
+    let mut object_states = module_states(&local, &default)?;
+
     disabled.retain(|item| item != name);
 
     hidden_tray.retain(|item| item != name);
@@ -364,6 +450,7 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
     hidden_launcher.retain(|item| item != name);
 
     notifications.remove(name);
+    object_states.remove(name);
 
     let path = config_path()?;
 
@@ -393,6 +480,14 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
         &default,
         "ui.module_update_notifications",
         string_map(&notifications)?,
+    )?;
+
+    settings::set_path(
+        &path,
+        &default,
+        "modules",
+        serde_json::to_string(&object_states)
+            .map_err(|error| format!("could not serialize Boss module object states: {error}"))?,
     )?;
 
     load_or_initialize()

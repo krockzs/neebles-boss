@@ -11,7 +11,8 @@ use crate::lifecycle_dag_executor::{self, DagExecutionReport, LifecycleDependenc
 use crate::lifecycle_failure::FailureContext;
 use crate::lifecycle_fire_control::FireControl;
 use crate::lifecycle_ir::{self, BattleplanIr};
-use crate::lifecycle_result::NormalizedStatus;
+use crate::lifecycle_observer::LifecycleObserver;
+use crate::lifecycle_result::{NormalizedResult, NormalizedStatus};
 use crate::lifecycle_state::LifecycleRuntimeState;
 
 /*
@@ -149,6 +150,48 @@ fn progress_values(report: &DagExecutionReport) -> BTreeMap<String, String> {
     ])
 }
 
+fn live_progress_values(
+    operation_total: usize,
+    last_operation: &str,
+    results: &BTreeMap<String, NormalizedResult>,
+) -> BTreeMap<String, String> {
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+    let mut cancelled = 0usize;
+
+    for result in results.values() {
+        match result.status() {
+            NormalizedStatus::Succeeded => {
+                succeeded += 1;
+            }
+
+            NormalizedStatus::Failed => {
+                failed += 1;
+            }
+
+            NormalizedStatus::Cancelled => {
+                cancelled += 1;
+            }
+        }
+    }
+
+    let last_status = results
+        .get(last_operation)
+        .map(|result| normalized_status_text(result.status()))
+        .unwrap_or("unknown");
+
+    BTreeMap::from([
+        ("total".to_string(), operation_total.to_string()),
+        ("completed".to_string(), results.len().to_string()),
+        ("succeeded".to_string(), succeeded.to_string()),
+        ("failed".to_string(), failed.to_string()),
+        ("cancelled".to_string(), cancelled.to_string()),
+        ("unit".to_string(), "operations".to_string()),
+        ("last.operation".to_string(), last_operation.to_string()),
+        ("last.status".to_string(), last_status.to_string()),
+    ])
+}
+
 fn result_values(
     transition_id: &str,
     phase: &str,
@@ -184,6 +227,33 @@ fn result_values(
     }
 
     values
+}
+
+fn live_dag_observer(
+    communication: &LifecycleCommunication,
+    observer: &LifecycleObserver,
+    operation_total: usize,
+) -> lifecycle_dag_executor::LifecycleDagObserver {
+    let base = communication.clone();
+
+    let observer = observer.clone();
+
+    lifecycle_dag_executor::LifecycleDagObserver::observing(move |operation_id, results| {
+        let mut snapshot = base.clone();
+
+        let progress = live_progress_values(operation_total, operation_id, results);
+
+        /*
+         * Observation cannot fail execution.
+         *
+         * These keys are generated internally and validated by
+         * tests. If an impossible communication construction
+         * failure occurs, that snapshot is simply not emitted.
+         */
+        if snapshot.replace_progress(&progress).is_ok() {
+            observer.publish(&snapshot);
+        }
+    })
 }
 
 fn enter_running_state(
@@ -239,7 +309,32 @@ pub async fn execute(
     fire_control: Arc<FireControl>,
     capabilities: Arc<CapabilityRegistry>,
 ) -> Result<TransitionExecutionReport, String> {
-    execute_controlled(
+    execute_observed(
+        contract,
+        transition_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        fire_control,
+        capabilities,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_observed(
+    contract: &LifecycleContract,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    fire_control: Arc<FireControl>,
+    capabilities: Arc<CapabilityRegistry>,
+    observer: LifecycleObserver,
+) -> Result<TransitionExecutionReport, String> {
+    execute_controlled_observed(
         contract,
         transition_id,
         dependencies,
@@ -250,6 +345,7 @@ pub async fn execute(
         capabilities,
         BTreeMap::new(),
         CancellationToken::new(),
+        observer,
     )
     .await
 }
@@ -263,7 +359,30 @@ pub async fn execute_from_available(
     communication: &mut LifecycleCommunication,
     available: Arc<AvailableCapabilityCatalog>,
 ) -> Result<TransitionExecutionReport, String> {
-    execute_controlled_from_available(
+    execute_from_available_observed(
+        contract,
+        transition_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        available,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_from_available_observed(
+    contract: &LifecycleContract,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    available: Arc<AvailableCapabilityCatalog>,
+    observer: LifecycleObserver,
+) -> Result<TransitionExecutionReport, String> {
+    execute_controlled_from_available_observed(
         contract,
         transition_id,
         dependencies,
@@ -273,6 +392,7 @@ pub async fn execute_from_available(
         available,
         BTreeMap::new(),
         CancellationToken::new(),
+        observer,
     )
     .await
 }
@@ -292,9 +412,40 @@ pub async fn execute_controlled_from_available(
         return Err("lifecycle transition executor transition id cannot be empty".to_string());
     }
 
+    execute_controlled_from_available_observed(
+        contract,
+        transition_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        available,
+        controls,
+        cancellation,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_controlled_from_available_observed(
+    contract: &LifecycleContract,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    available: Arc<AvailableCapabilityCatalog>,
+    controls: BTreeMap<String, ExecutionControl>,
+    cancellation: CancellationToken,
+    observer: LifecycleObserver,
+) -> Result<TransitionExecutionReport, String> {
+    if transition_id.trim().is_empty() {
+        return Err("lifecycle transition executor transition id cannot be empty".to_string());
+    }
+
     let ir = lifecycle_ir::compile_transition(contract, transition_id, battlefield)?;
 
-    execute_ir_from_available(
+    execute_ir_from_available_observed(
         ir,
         transition_id,
         None,
@@ -305,6 +456,7 @@ pub async fn execute_controlled_from_available(
         available,
         controls,
         cancellation,
+        observer,
     )
     .await
 }
@@ -321,19 +473,53 @@ pub(crate) async fn execute_ir_from_available(
     controls: BTreeMap<String, ExecutionControl>,
     cancellation: CancellationToken,
 ) -> Result<TransitionExecutionReport, String> {
+    execute_ir_from_available_observed(
+        ir,
+        transition_id,
+        object_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        available,
+        controls,
+        cancellation,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub(crate) async fn execute_ir_from_available_observed(
+    ir: BattleplanIr,
+    transition_id: &str,
+    object_id: Option<&str>,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    available: Arc<AvailableCapabilityCatalog>,
+    controls: BTreeMap<String, ExecutionControl>,
+    cancellation: CancellationToken,
+    observer: LifecycleObserver,
+) -> Result<TransitionExecutionReport, String> {
     if transition_id.trim().is_empty() {
         return Err("lifecycle transition executor transition id cannot be empty".to_string());
     }
 
     enter_running_state(transition_id, state, communication, ir.len())?;
 
-    let report = match lifecycle_dag_executor::execute_controlled_from_available(
+    observer.publish(communication);
+
+    let dag_observer = live_dag_observer(communication, &observer, ir.len());
+
+    let report = match lifecycle_dag_executor::execute_controlled_from_available_observed(
         Arc::new(ir),
         dependencies,
         battlefield,
         available,
         controls,
         cancellation,
+        dag_observer,
     )
     .await
     {
@@ -341,6 +527,8 @@ pub(crate) async fn execute_ir_from_available(
 
         Err(error) => {
             enter_infrastructure_failure(transition_id, object_id, &error, state, communication)?;
+
+            observer.publish(communication);
 
             return Err(format!(
                 "lifecycle transition '{transition_id}' execution infrastructure failed: {error}"
@@ -374,6 +562,8 @@ pub(crate) async fn execute_ir_from_available(
     } else {
         None
     };
+
+    observer.publish(communication);
 
     Ok(TransitionExecutionReport {
         transition_id: transition_id.to_string(),
@@ -399,13 +589,48 @@ pub(crate) async fn execute_ir_controlled(
     controls: BTreeMap<String, ExecutionControl>,
     cancellation: CancellationToken,
 ) -> Result<TransitionExecutionReport, String> {
+    execute_ir_controlled_observed(
+        ir,
+        transition_id,
+        object_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        fire_control,
+        capabilities,
+        controls,
+        cancellation,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub(crate) async fn execute_ir_controlled_observed(
+    ir: BattleplanIr,
+    transition_id: &str,
+    object_id: Option<&str>,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    fire_control: Arc<FireControl>,
+    capabilities: Arc<CapabilityRegistry>,
+    controls: BTreeMap<String, ExecutionControl>,
+    cancellation: CancellationToken,
+    observer: LifecycleObserver,
+) -> Result<TransitionExecutionReport, String> {
     if transition_id.trim().is_empty() {
         return Err("lifecycle transition executor transition id cannot be empty".to_string());
     }
 
     enter_running_state(transition_id, state, communication, ir.len())?;
 
-    let report = match lifecycle_dag_executor::execute_controlled(
+    observer.publish(communication);
+
+    let dag_observer = live_dag_observer(communication, &observer, ir.len());
+
+    let report = match lifecycle_dag_executor::execute_controlled_observed(
         Arc::new(ir),
         dependencies,
         battlefield,
@@ -413,6 +638,7 @@ pub(crate) async fn execute_ir_controlled(
         capabilities,
         controls,
         cancellation,
+        dag_observer,
     )
     .await
     {
@@ -420,6 +646,8 @@ pub(crate) async fn execute_ir_controlled(
 
         Err(error) => {
             enter_infrastructure_failure(transition_id, object_id, &error, state, communication)?;
+
+            observer.publish(communication);
 
             return Err(format!(
                 "lifecycle transition '{transition_id}' execution infrastructure failed: {error}"
@@ -453,6 +681,8 @@ pub(crate) async fn execute_ir_controlled(
     } else {
         None
     };
+
+    observer.publish(communication);
 
     Ok(TransitionExecutionReport {
         transition_id: transition_id.to_string(),
@@ -489,9 +719,52 @@ pub async fn execute_controlled(
      * Actual execution authority lives in execute_ir_controlled so
      * object-scoped transitions can consume exactly the same engine.
      */
+    execute_controlled_observed(
+        contract,
+        transition_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        fire_control,
+        capabilities,
+        controls,
+        cancellation,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_controlled_observed(
+    contract: &LifecycleContract,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    fire_control: Arc<FireControl>,
+    capabilities: Arc<CapabilityRegistry>,
+    controls: BTreeMap<String, ExecutionControl>,
+    cancellation: CancellationToken,
+    observer: LifecycleObserver,
+) -> Result<TransitionExecutionReport, String> {
+    if transition_id.trim().is_empty() {
+        return Err("lifecycle transition executor transition id cannot be empty".to_string());
+    }
+
+    /*
+     * Compile before Runtime State mutation.
+     *
+     * The generic transition entry remains responsible only for
+     * selecting the top-level Lifecycle transition.
+     *
+     * Actual execution authority lives in
+     * execute_ir_controlled_observed so object-scoped
+     * transitions consume exactly the same engine.
+     */
     let ir = lifecycle_ir::compile_transition(contract, transition_id, battlefield)?;
 
-    execute_ir_controlled(
+    execute_ir_controlled_observed(
         ir,
         transition_id,
         None,
@@ -503,6 +776,7 @@ pub async fn execute_controlled(
         capabilities,
         controls,
         cancellation,
+        observer,
     )
     .await
 }
@@ -1047,5 +1321,99 @@ mod tests {
         assert_eq!(report.failure(), None);
 
         assert_eq!(communication.get("failure.status"), None);
+    }
+
+    #[test]
+    fn observed_execution_publishes_incremental_operation_progress() {
+        let transition_id = "deploy-live";
+
+        let lifecycle = contract(
+            transition_id,
+            BTreeMap::from([
+                (
+                    "first".to_string(),
+                    operation("first", BTreeMap::new(), BTreeMap::new()),
+                ),
+                (
+                    "second".to_string(),
+                    operation("second", BTreeMap::new(), BTreeMap::new()),
+                ),
+            ]),
+        );
+
+        let mut battlefield = Battlefield::new();
+
+        let ir = lifecycle_ir::compile_transition(&lifecycle, transition_id, &battlefield).unwrap();
+
+        let (mut state, mut communication) = runtime(transition_id);
+
+        let snapshots = Arc::new(std::sync::Mutex::new(Vec::<LifecycleCommunication>::new()));
+
+        let sink = Arc::clone(&snapshots);
+
+        let observer = LifecycleObserver::observing(move |snapshot| {
+            sink.lock().unwrap().push(snapshot);
+        });
+
+        let report = futures_lite::future::block_on(execute_ir_controlled_observed(
+            ir,
+            transition_id,
+            None,
+            BTreeMap::new(),
+            &mut battlefield,
+            &mut state,
+            &mut communication,
+            fire_control(),
+            capabilities(),
+            BTreeMap::new(),
+            CancellationToken::new(),
+            observer,
+        ))
+        .unwrap();
+
+        assert_eq!(report.terminal_phase(), "succeeded");
+
+        let snapshots = snapshots.lock().unwrap();
+
+        assert!(snapshots.len() >= 4);
+
+        assert_eq!(
+            snapshots.first().unwrap().get("progress.completed"),
+            Some("0")
+        );
+
+        assert!(snapshots
+            .iter()
+            .any(|snapshot| { snapshot.get("progress.completed") == Some("1") }));
+
+        assert!(snapshots.iter().any(|snapshot| {
+            snapshot.get("progress.last.operation").is_some()
+                && snapshot.get("progress.last.status") == Some("succeeded")
+        }));
+
+        assert_eq!(
+            snapshots.last().unwrap().get("progress.completed"),
+            Some("2")
+        );
+
+        assert_eq!(
+            snapshots.last().unwrap().get("state.phase"),
+            Some("succeeded")
+        );
+
+        for snapshot in snapshots.iter() {
+            assert_eq!(snapshot.get("state.operation.id"), None);
+        }
+
+        let completed = snapshots
+            .iter()
+            .filter_map(|snapshot| {
+                snapshot
+                    .get("progress.completed")
+                    .and_then(|value| value.parse::<usize>().ok())
+            })
+            .collect::<Vec<_>>();
+
+        assert!(completed.windows(2).all(|pair| { pair[0] <= pair[1] }));
     }
 }

@@ -23,7 +23,7 @@ class BossController final : public QObject
     Q_PROPERTY(QVariantList modules READ modules NOTIFY modulesChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
-    Q_PROPERTY(QVariantMap moduleOperations READ moduleOperations NOTIFY moduleOperationsChanged)
+    Q_PROPERTY(QVariantMap transactionOperation READ transactionOperation NOTIFY transactionOperationChanged)
     Q_PROPERTY(int translationsRevision READ translationsRevision NOTIFY translationsChanged)
 
 public:
@@ -40,7 +40,7 @@ public:
     QVariantList modules() const { return m_modules; }
     bool busy() const { return m_busy; }
     QString statusText() const { return m_statusText; }
-    QVariantMap moduleOperations() const { return m_moduleOperations; }
+    QVariantMap transactionOperation() const { return m_transactionOperation; }
     int translationsRevision() const { return m_translationsRevision; }
 
     Q_INVOKABLE QString text(const QString &key) const;
@@ -71,7 +71,16 @@ public:
         const QString &name,
         bool removeSettings
     );
-    Q_INVOKABLE void openModule(const QString &name);
+    Q_INVOKABLE void requestModuleAction(
+        const QString &name,
+        const QString &action,
+        const QString &objectId,
+        const QString &transition
+    );
+    Q_INVOKABLE QVariantMap dependencyPreflight(
+        const QString &action,
+        const QString &name
+    );
     Q_INVOKABLE void setModuleEnabled(const QString &name, bool enabled);
     Q_INVOKABLE void setModuleVisibility(const QString &surface,
                                          const QString &name,
@@ -83,7 +92,7 @@ signals:
     void modulesChanged();
     void busyChanged();
     void statusTextChanged();
-    void moduleOperationsChanged();
+    void transactionOperationChanged();
     void translationsChanged();
 
 private:
@@ -106,12 +115,18 @@ private:
                             bool privileged,
                             const QStringList &extraArguments = {});
 
-    void appendModuleOperationLog(const QString &name,
-                                  const QString &line);
+    void appendTransactionOperationLog(
+        const QString &line
+    );
 
-    void setModuleOperationField(const QString &name,
-                                 const QString &key,
-                                 const QVariant &value);
+    void setTransactionOperationField(
+        const QString &key,
+        const QVariant &value
+    );
+
+    bool consumeLifecycleProcessEvent(
+        const QString &line
+    );
 
     void consumeModuleProcessOutput();
     void setBusy(bool value);
@@ -134,7 +149,8 @@ private:
     bool m_busy = false;
     QString m_statusText;
 
-    QVariantMap m_moduleOperations;
+    QVariantMap m_transactionOperation;
+    int m_transactionSequence = 0;
 
     QProcess *m_moduleOperationProcess = nullptr;
 

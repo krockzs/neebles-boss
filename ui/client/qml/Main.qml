@@ -85,10 +85,246 @@ ApplicationWindow {
     property bool loadingConfig: true
 
     /*
-     * Única instancia global del diálogo de desinstalación.
+     * Generic dependency warning state.
+     *
+     * Boss computes consequences.
+     * QML only presents and confirms them.
      */
-    property string pendingUninstallModule: ""
-    property bool pendingUninstallHasLocalState: false
+    property string pendingDependencyAction: ""
+    property string pendingDependencyModule: ""
+    property bool pendingDependencyAllowed: false
+    property bool pendingDependencyHasLocalState: false
+    property var pendingDependencyAffected: []
+    property var pendingDependencyBlockers: []
+
+    /*
+     * Presentation cursor only.
+     *
+     * It prevents log/progress updates from reopening
+     * a transaction dialog that the user deliberately
+     * hid while execution continues.
+     */
+    property string lastPresentedTransactionId: ""
+
+
+    function resetDependencyWarning() {
+        pendingDependencyAction = ""
+        pendingDependencyModule = ""
+        pendingDependencyAllowed = false
+        pendingDependencyHasLocalState = false
+        pendingDependencyAffected = []
+        pendingDependencyBlockers = []
+    }
+
+    function dependencyAdditionalAffected() {
+        const result = []
+
+        for (
+            let index = 0;
+            index < pendingDependencyAffected.length;
+            ++index
+        ) {
+            const item =
+                pendingDependencyAffected[index]
+
+            if (item !== pendingDependencyModule)
+                result.push(item)
+        }
+
+        return result
+    }
+
+    function dependencyPreflightFailed() {
+        return (
+            !pendingDependencyAllowed
+            && pendingDependencyBlockers.length === 0
+        )
+    }
+
+    function requestDependencyConfirmation(
+        action,
+        moduleName,
+        hasLocalState
+    ) {
+        if (
+            typeof boss === "undefined"
+            || moduleName.length === 0
+        ) {
+            return
+        }
+
+        const preflight =
+            boss.dependencyPreflight(
+                action,
+                moduleName
+            )
+
+        pendingDependencyAction =
+            action
+
+        pendingDependencyModule =
+            moduleName
+
+        pendingDependencyAllowed =
+            !!preflight.allowed
+
+        pendingDependencyHasLocalState =
+            !!hasLocalState
+
+        pendingDependencyAffected =
+            preflight.affected
+            ? preflight.affected
+            : []
+
+        pendingDependencyBlockers =
+            preflight.blockers
+            ? preflight.blockers
+            : []
+
+        /*
+         * A simple enable/disable affecting only the
+         * requested module does not need a warning.
+         *
+         * Cascades require explicit confirmation.
+         * Uninstall always remains explicitly confirmed.
+         */
+        if (
+            (
+                action === "enable"
+                || action === "disable"
+            )
+            && pendingDependencyAllowed
+            && pendingDependencyAffected.length <= 1
+        ) {
+            boss.setModuleEnabled(
+                moduleName,
+                action === "enable"
+            )
+
+            resetDependencyWarning()
+            return
+        }
+
+        dependencyWarningDialog.open()
+        dependencyWarningDialog.forceActiveFocus()
+    }
+
+    function executeDependencyConfirmation() {
+        if (
+            typeof boss === "undefined"
+            || !pendingDependencyAllowed
+            || pendingDependencyModule.length === 0
+        ) {
+            return
+        }
+
+        const action =
+            pendingDependencyAction
+
+        const moduleName =
+            pendingDependencyModule
+
+        const removeLocalState =
+            dependencyRemoveLocalState.checked
+
+        /*
+         * Explicit Accept is the only path that starts
+         * the actual transaction.
+         */
+        dependencyWarningDialog.close()
+
+        if (action === "enable") {
+            boss.setModuleEnabled(
+                moduleName,
+                true
+            )
+        } else if (action === "disable") {
+            boss.setModuleEnabled(
+                moduleName,
+                false
+            )
+        } else if (action === "uninstall") {
+            boss.uninstallModule(
+                moduleName,
+                removeLocalState
+            )
+        }
+    }
+
+    function dependencyWarningTitle() {
+        if (dependencyPreflightFailed()) {
+            return root.t(
+                "modules.dependency_warning_preflight_failed_title"
+            )
+        }
+
+        if (
+            pendingDependencyAction === "enable"
+        ) {
+            return root.t(
+                "modules.dependency_warning_enable_title"
+            )
+        }
+
+        if (
+            pendingDependencyAction === "disable"
+        ) {
+            return root.t(
+                "modules.dependency_warning_disable_title"
+            )
+        }
+
+        if (
+            pendingDependencyAction === "uninstall"
+            && !pendingDependencyAllowed
+        ) {
+            return root.t(
+                "modules.dependency_warning_uninstall_blocked_title"
+            )
+        }
+
+        return root.t(
+            "modules.dependency_warning_uninstall_title"
+        )
+    }
+
+    function dependencyWarningBody() {
+        if (dependencyPreflightFailed()) {
+            return root.t(
+                "modules.dependency_warning_preflight_failed_body"
+            )
+        }
+
+        if (
+            pendingDependencyAction === "enable"
+        ) {
+            return root.t(
+                "modules.dependency_warning_enable_body"
+            )
+        }
+
+        if (
+            pendingDependencyAction === "disable"
+        ) {
+            return root.t(
+                "modules.dependency_warning_disable_body"
+            )
+        }
+
+        if (
+            pendingDependencyAction === "uninstall"
+            && !pendingDependencyAllowed
+        ) {
+            return root.t(
+                "modules.dependency_warning_uninstall_blocked_body"
+            )
+        }
+
+        return root.t(
+            "modules.dependency_warning_uninstall_body"
+        )
+    }
+
 
     function asset(name) {
         if (typeof boss !== "undefined" && boss.assetUrl)
@@ -1030,31 +1266,11 @@ ApplicationWindow {
 
                                 required property var modelData
 
-                                readonly property var operationState:
-                                    typeof boss !== "undefined"
-                                    && boss.moduleOperations[
-                                        modelData.name
-                                    ]
-                                    ? boss.moduleOperations[
-                                        modelData.name
-                                    ]
-                                    : ({})
-
-                                readonly property bool realOperationVisible:
-                                    operationState.started === true
-
-                                readonly property int realProgress:
-                                    operationState.progress !== undefined
-                                    ? operationState.progress
-                                    : -1
-
                                 readonly property bool effectiveInstalled:
                                     !!modelData.installed
 
                                 readonly property bool effectiveEnabled:
                                     !!modelData.enabled
-
-                                property bool detailsVisible: false
 
                                 readonly property color moduleStateColor:
                                     !effectiveInstalled
@@ -1066,12 +1282,7 @@ ApplicationWindow {
                                 width:
                                     ListView.view.width
 
-                                height:
-                                    !realOperationVisible
-                                    ? 116
-                                    : detailsVisible
-                                      ? 340
-                                      : 205
+                                height: 116
 
                                 radius: 12
                                 color: "#0C0C10"
@@ -1254,10 +1465,7 @@ ApplicationWindow {
                                                     && !modelData.running
 
                                                 onClicked: {
-                                                    moduleCard.detailsVisible =
-                                                        false
-
-                                                    if (
+if (
                                                         moduleCard.effectiveInstalled
                                                     ) {
                                                         const state =
@@ -1268,13 +1476,11 @@ ApplicationWindow {
                                                         if (state < 0)
                                                             return
 
-                                                        root.pendingUninstallModule =
-                                                            modelData.name
-
-                                                        root.pendingUninstallHasLocalState =
+                                                        root.requestDependencyConfirmation(
+                                                            "uninstall",
+                                                            modelData.name,
                                                             state === 1
-
-                                                        uninstallSettingsDialog.open()
+                                                        )
                                                     } else {
                                                         boss.installModule(
                                                             modelData.name
@@ -1322,60 +1528,330 @@ ApplicationWindow {
                                                     && !boss.busy
 
                                                 onClicked: {
-                                                    boss.setModuleEnabled(
+                                                    root.requestDependencyConfirmation(
+                                                        modelData.enabled
+                                                        ? "disable"
+                                                        : "enable",
                                                         modelData.name,
-                                                        !modelData.enabled
+                                                        false
                                                     )
                                                 }
                                             }
                                         }
 
                                         ColumnLayout {
+                                            id: surfaceActionColumn
+
                                             spacing: 6
 
-                                            Button {
-                                                id: moduleOpenButton
+                                            property string moduleName:
+                                                modelData.name
 
-                                                visible:
-                                                    moduleCard.effectiveInstalled
-                                                    && moduleCard.effectiveEnabled
-                                                    && !modelData.running
-                                                    && !modelData.update_available
+                                            property var moduleSurfaceContent:
+                                                modelData.surface_content
+                                                ? modelData.surface_content
+                                                : []
 
-                                                text:
-                                                    root.t(
-                                                        "common.open"
+                                            /*
+                                             * Boss UI presentation convention.
+                                             *
+                                             * SurfaceContent itself remains
+                                             * schema-generic.
+                                             *
+                                             * The UI consumes only declarations
+                                             * addressed to surface "ui" whose
+                                             * presentation payload declares:
+                                             *
+                                             *   control   = button
+                                             *   action    = arbitrary Governor action
+                                             *   label_key = language key
+                                             *
+                                             * Lifecycle transition identity is
+                                             * intentionally NOT executed here.
+                                             */
+                                            function uiActionButtons() {
+                                                var result = []
+
+                                                var content =
+                                                    surfaceActionColumn
+                                                        .moduleSurfaceContent
+
+                                                for (
+                                                    var index = 0;
+                                                    index < content.length;
+                                                    ++index
+                                                ) {
+                                                    var item =
+                                                        content[index]
+
+                                                    if (!item)
+                                                        continue
+
+                                                    if (
+                                                        item.surface
+                                                        !== "ui"
                                                     )
+                                                        continue
 
-                                                enabled:
-                                                    typeof boss !== "undefined"
-                                                    && !boss.busy
+                                                    if (
+                                                        item.visible
+                                                        !== true
+                                                    )
+                                                        continue
 
-                                                background: Rectangle {
-                                                    radius: 7
-                                                    color: "#10131A"
+                                                    var data =
+                                                        item.data
+                                                        ? item.data
+                                                        : ({})
 
-                                                    border.width: 2
-                                                    border.color: "#22D3EE"
+                                                    if (
+                                                        data.control
+                                                        !== "button"
+                                                    )
+                                                        continue
+
+                                                    if (
+                                                        !data.action
+                                                        || !data.label_key
+                                                    )
+                                                        continue
+
+                                                    result.push(
+                                                        item
+                                                    )
                                                 }
 
-                                                contentItem: Text {
+                                                return result
+                                            }
+
+                                            function uiStatefulSwitches() {
+                                                var result = []
+
+                                                var content =
+                                                    surfaceActionColumn
+                                                        .moduleSurfaceContent
+
+                                                for (
+                                                    var index = 0;
+                                                    index < content.length;
+                                                    ++index
+                                                ) {
+                                                    var item =
+                                                        content[index]
+
+                                                    if (
+                                                        !item
+                                                        || item.surface !== "ui"
+                                                        || !item.visible
+                                                    )
+                                                        continue
+
+                                                    var data =
+                                                        item.data
+                                                        ? item.data
+                                                        : ({})
+
+                                                    if (
+                                                        data.control !== "switch"
+                                                        || !item.object_id
+                                                        || item.active === undefined
+                                                        || item.active === null
+                                                        || !data.label_key
+                                                        || !data.action_on
+                                                        || !data.action_off
+                                                        || !data.transition_on
+                                                        || !data.transition_off
+                                                    )
+                                                        continue
+
+                                                    result.push(
+                                                        item
+                                                    )
+                                                }
+
+                                                return result
+                                            }
+
+                                            Repeater {
+                                                id: surfaceActionRepeater
+
+                                                model:
+                                                    surfaceActionColumn
+                                                        .uiActionButtons()
+
+                                                delegate: Button {
+                                                    id: surfaceActionButton
+
+                                                    required property var modelData
+
+                                                    property var surfaceItem:
+                                                        modelData
+
+                                                    property var surfaceData:
+                                                        surfaceItem
+                                                        && surfaceItem.data
+                                                        ? surfaceItem.data
+                                                        : ({})
+
                                                     text:
-                                                        moduleOpenButton.text
+                                                        root.t(
+                                                            surfaceData
+                                                                .label_key
+                                                        )
 
-                                                    color: "#67E8F9"
+                                                    enabled:
+                                                        typeof boss
+                                                        !== "undefined"
+                                                        && !boss.busy
+                                                        && moduleCard
+                                                            .effectiveInstalled
+                                                        && moduleCard
+                                                            .effectiveEnabled
+                                                        && !modelData
+                                                            .update_available
 
-                                                    horizontalAlignment:
-                                                        Text.AlignHCenter
+                                                    hoverEnabled: true
 
-                                                    verticalAlignment:
-                                                        Text.AlignVCenter
+                                                    background: Rectangle {
+                                                        radius: 7
+
+                                                        color:
+                                                            surfaceActionButton
+                                                                .down
+                                                            ? "#0B1220"
+                                                            : surfaceActionButton
+                                                                .hovered
+                                                            ? "#172033"
+                                                            : "#10131A"
+
+                                                        border.width:
+                                                            surfaceActionButton
+                                                                .activeFocus
+                                                            ? 3
+                                                            : 2
+
+                                                        border.color:
+                                                            surfaceActionButton
+                                                                .hovered
+                                                            || surfaceActionButton
+                                                                .activeFocus
+                                                            ? "#67E8F9"
+                                                            : "#22D3EE"
+                                                    }
+
+                                                    contentItem: Text {
+                                                        text:
+                                                            surfaceActionButton
+                                                                .text
+
+                                                        color:
+                                                            surfaceActionButton
+                                                                .enabled
+                                                            ? "#67E8F9"
+                                                            : "#64748B"
+
+                                                        horizontalAlignment:
+                                                            Text.AlignHCenter
+
+                                                        verticalAlignment:
+                                                            Text.AlignVCenter
+                                                    }
+
+                                                    onClicked: {
+                                                        boss
+                                                            .requestModuleAction(
+                                                                surfaceActionColumn
+                                                                    .moduleName,
+                                                                surfaceData
+                                                                    .action,
+                                                                surfaceItem
+                                                                    .object_id
+                                                                    || "",
+                                                                surfaceItem
+                                                                    .transition
+                                                                    || ""
+                                                            )
+                                                    }
                                                 }
+                                            }
 
-                                                onClicked: {
-                                                    boss.openModule(
-                                                        modelData.name
-                                                    )
+                                            Repeater {
+                                                id: surfaceStateRepeater
+
+                                                model:
+                                                    surfaceActionColumn
+                                                        .uiStatefulSwitches()
+
+                                                delegate: RowLayout {
+                                                    required property var modelData
+
+                                                    Layout.fillWidth: true
+                                                    spacing: 10
+
+                                                    property var surfaceItem:
+                                                        modelData
+
+                                                    property var surfaceData:
+                                                        surfaceItem
+                                                        && surfaceItem.data
+                                                        ? surfaceItem.data
+                                                        : ({})
+
+                                                    Label {
+                                                        Layout.fillWidth: true
+
+                                                        text:
+                                                            root.t(
+                                                                surfaceData
+                                                                    .label_key
+                                                            )
+
+                                                        color:
+                                                            "#A78BFA"
+
+                                                        font.pixelSize: 12
+                                                    }
+
+                                                    NeeblesSwitch {
+                                                        checked:
+                                                            !!surfaceItem
+                                                                .active
+
+                                                        checkable: false
+
+                                                        enabled:
+                                                            typeof boss
+                                                            !== "undefined"
+                                                            && !boss.busy
+                                                            && moduleCard
+                                                                .effectiveInstalled
+                                                            && moduleCard
+                                                                .effectiveEnabled
+
+                                                        onClicked: {
+                                                            const turnOn =
+                                                                !surfaceItem
+                                                                    .active
+
+                                                            boss
+                                                                .requestModuleAction(
+                                                                    surfaceActionColumn
+                                                                        .moduleName,
+                                                                    turnOn
+                                                                    ? surfaceData
+                                                                        .action_on
+                                                                    : surfaceData
+                                                                        .action_off,
+                                                                    surfaceItem
+                                                                        .object_id,
+                                                                    turnOn
+                                                                    ? surfaceData
+                                                                        .transition_on
+                                                                    : surfaceData
+                                                                        .transition_off
+                                                                )
+                                                        }
+                                                    }
                                                 }
                                             }
 
@@ -1417,10 +1893,7 @@ ApplicationWindow {
                                                 }
 
                                                 onClicked: {
-                                                    moduleCard.detailsVisible =
-                                                        false
-
-                                                    boss.updateModule(
+boss.updateModule(
                                                         modelData.name
                                                     )
                                                 }
@@ -1428,271 +1901,7 @@ ApplicationWindow {
                                         }
                                     }
 
-                                    /*
-                                     * PROCESO INDEPENDIENTE DEL MÓDULO.
-                                     * Aparece sólo después de una operación.
-                                     */
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
 
-                                        visible:
-                                            moduleCard.realOperationVisible
-
-                                        spacing: 5
-
-                                        RowLayout {
-                                            Layout.fillWidth: true
-
-                                            /*
-                                             * Barra morada.
-                                             */
-                                            ProgressBar {
-                                                id: moduleProgress
-
-                                                Layout.fillWidth: true
-                                                Layout.preferredHeight: 20
-
-                                                from: 0
-                                                to: 1
-
-                                                value:
-                                                    moduleCard.realProgress >= 0
-                                                    ? moduleCard.realProgress
-                                                      / 100.0
-                                                    : 0
-
-                                                background: Rectangle {
-                                                    implicitHeight: 10
-                                                    radius: 5
-
-                                                    color: "#18111F"
-
-                                                    border.width: 1
-                                                    border.color: "#6D28D9"
-                                                }
-
-                                                contentItem: Item {
-                                                    implicitHeight: 10
-
-                                                    Rectangle {
-                                                        width:
-                                                            parent.width
-                                                            * moduleProgress
-                                                                .position
-
-                                                        height:
-                                                            parent.height
-
-                                                        radius: 5
-
-                                                        color: "#A855F7"
-
-                                                        border.width: 1
-                                                        border.color: "#D8B4FE"
-                                                    }
-                                                }
-                                            }
-
-                                            Label {
-                                                Layout.preferredWidth: 42
-
-                                                text:
-                                                    moduleCard.realProgress >= 0
-                                                    ? moduleCard.realProgress
-                                                      + "%"
-                                                    : "..."
-
-                                                color: "#D8B4FE"
-
-                                                horizontalAlignment:
-                                                    Text.AlignRight
-                                            }
-
-                                            Button {
-                                                id: moduleCopyButton
-
-                                                visible:
-                                                    moduleCard.detailsVisible
-
-                                                Layout.minimumWidth: 42
-                                                Layout.preferredWidth: 42
-                                                Layout.maximumWidth: 42
-
-                                                Layout.minimumHeight: 42
-                                                Layout.preferredHeight: 42
-                                                Layout.maximumHeight: 42
-
-                                                padding: 0
-                                                hoverEnabled: true
-
-                                                enabled:
-                                                    moduleLogText.text.length > 0
-
-                                                background: Item {
-                                                }
-
-                                                contentItem: Image {
-                                                    anchors.fill: parent
-
-                                                    source:
-                                                        !moduleCopyButton.enabled
-                                                        ? root.asset(
-                                                            "copy-icon-disabled.png"
-                                                        )
-                                                        : moduleCopyButton.down
-                                                          ? root.asset(
-                                                              "copy-icon-pressed.png"
-                                                          )
-                                                          : moduleCopyButton.hovered
-                                                            ? root.asset(
-                                                                "copy-icon-hover.png"
-                                                            )
-                                                            : root.asset(
-                                                                "copy-icon-normal.png"
-                                                            )
-
-                                                    fillMode:
-                                                        Image.PreserveAspectFit
-
-                                                    smooth: true
-                                                    mipmap: true
-                                                }
-
-                                                onClicked: {
-                                                    moduleLogText.selectAll()
-                                                    moduleLogText.copy()
-                                                    moduleLogText.deselect()
-                                                }
-                                            }
-
-                                            /*
-                                             * Misma flecha que el installer.
-                                             */
-                                            Button {
-                                                id: moduleDetailsButton
-
-                                                Layout.preferredWidth: 42
-                                                Layout.preferredHeight: 42
-
-                                                padding: 0
-                                                hoverEnabled: true
-
-                                                background: Item {
-                                                }
-
-                                                contentItem: Image {
-                                                    anchors.fill: parent
-
-                                                    source:
-                                                        !moduleDetailsButton.enabled
-                                                        ? root.asset(
-                                                            "show_details_disabled.png"
-                                                        )
-                                                        : moduleDetailsButton.down
-                                                          ? root.asset(
-                                                              "show_details_pressed.png"
-                                                          )
-                                                          : moduleDetailsButton.hovered
-                                                            ? root.asset(
-                                                                "show_details_hover.png"
-                                                            )
-                                                            : root.asset(
-                                                                "show_details_normal.png"
-                                                            )
-
-                                                    fillMode:
-                                                        Image.PreserveAspectFit
-
-                                                    smooth: true
-                                                    mipmap: true
-
-                                                    rotation:
-                                                        moduleCard.detailsVisible
-                                                        ? 180
-                                                        : 0
-
-                                                    Behavior on rotation {
-                                                        NumberAnimation {
-                                                            duration: 120
-                                                        }
-                                                    }
-                                                }
-
-                                                onClicked:
-                                                    moduleCard.detailsVisible =
-                                                        !moduleCard
-                                                            .detailsVisible
-                                            }
-                                        }
-
-                                        /*
-                                         * Log de ESTE módulo.
-                                         */
-                                        Rectangle {
-                                            Layout.fillWidth: true
-                                            Layout.preferredHeight: 125
-
-                                            visible:
-                                                moduleCard.detailsVisible
-
-                                            radius: 8
-                                            color: "#050507"
-
-                                            border.width: 2
-                                            border.color: "#A855F7"
-
-                                            Rectangle {
-                                                anchors.fill: parent
-                                                anchors.margins: -3
-
-                                                z: -1
-
-                                                radius: 10
-                                                color: "transparent"
-
-                                                border.width: 4
-                                                border.color: "#4C1D95"
-
-                                                opacity: 0.45
-                                            }
-
-                                            ScrollView {
-                                                anchors.fill: parent
-                                                anchors.margins: 8
-
-                                                TextArea {
-                                                    id: moduleLogText
-
-                                                    readOnly: true
-                                                    selectByMouse: true
-
-                                                    wrapMode:
-                                                        TextEdit.WrapAnywhere
-
-                                                    color: "#D4D4D8"
-
-                                                    selectionColor:
-                                                        "#7C3AED"
-
-                                                    selectedTextColor:
-                                                        "#FFFFFF"
-
-                                                    font.family:
-                                                        "monospace"
-
-                                                    font.pixelSize: 12
-
-                                                    background: null
-
-                                                    text:
-                                                        moduleCard.operationState.log
-                                                        !== undefined
-                                                        ? moduleCard.operationState.log
-                                                        : ""
-                                                }
-                                            }
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -1911,152 +2120,205 @@ ApplicationWindow {
      * Una sola instancia para todos los módulos.
      * ==========================================================
      */
+    Connections {
+        target:
+            typeof boss !== "undefined"
+            ? boss
+            : null
+
+        function onTransactionOperationChanged() {
+            if (
+                typeof boss === "undefined"
+                || !boss.transactionOperation
+            ) {
+                return
+            }
+
+            const transaction =
+                boss.transactionOperation
+
+            const id =
+                transaction.id !== undefined
+                ? String(transaction.id)
+                : ""
+
+            if (
+                transaction.started === true
+                && id.length > 0
+                && id !== root.lastPresentedTransactionId
+            ) {
+                root.lastPresentedTransactionId =
+                    id
+
+                transactionProcessDialog.open()
+                transactionProcessDialog.forceActiveFocus()
+            }
+        }
+    }
+
     Dialog {
-        id: uninstallSettingsDialog
+        id: transactionProcessDialog
+
+        parent: Overlay.overlay
 
         modal: true
         focus: true
 
         width:
             Math.min(
-                500,
-                root.width - 80
+                760,
+                root.width - 64
+            )
+
+        height:
+            Math.min(
+                560,
+                root.height - 64
             )
 
         x:
             Math.round(
-                (root.width - width) / 2
+                (parent.width - width) / 2
             )
 
         y:
             Math.round(
-                (root.height - height) / 2
+                (parent.height - height) / 2
             )
-
-        padding: 24
 
         closePolicy:
             Popup.CloseOnEscape
+            | Popup.CloseOnPressOutside
 
-        onOpened:
-            uninstallRemoveLocalState.checked = false
+        padding: 22
 
+        /*
+         * Closing this presentation NEVER cancels the
+         * underlying transaction.
+         *
+         * Real execution cancellation must later use
+         * Lifecycle CancellationToken/control path.
+         */
         background: Rectangle {
             radius: 14
-
-            color: "#0C0C10"
+            color: "#100D14"
 
             border.width: 2
-            border.color: "#A855F7"
+            border.color: "#7C3AED"
 
             Rectangle {
                 anchors.fill: parent
-                anchors.margins: -3
+                anchors.margins: -5
 
                 z: -1
 
-                radius: 17
+                radius: 18
                 color: "transparent"
 
-                border.width: 4
-                border.color: "#4C1D95"
+                border.width: 2
+                border.color: "#A855F7"
 
-                opacity: 0.55
+                opacity: 0.38
             }
         }
 
         contentItem: ColumnLayout {
-            spacing: 18
+            spacing: 14
 
-            Label {
-                Layout.fillWidth: true
+            readonly property var transaction:
+                typeof boss !== "undefined"
+                && boss.transactionOperation
+                ? boss.transactionOperation
+                : ({})
 
-                text:
-                    root.t(
-                        "modules.uninstall_title"
-                    )
-
-                color: "#E9D5FF"
-
-                font.pixelSize: 20
-                font.bold: true
-
-                horizontalAlignment:
-                    Text.AlignHCenter
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 1
-
-                color: "#4C1D95"
-            }
-
-            Label {
-                Layout.fillWidth: true
-
-                text:
-                    root.pendingUninstallModule
-
-                color: "#A1A1AA"
-
-                font.pixelSize: 13
-
-                horizontalAlignment:
-                    Text.AlignHCenter
-            }
-
-            CheckBox {
-                id: uninstallRemoveLocalState
-
-                Layout.fillWidth: true
-
-                visible:
-                    root.pendingUninstallHasLocalState
-
-                text:
-                    root.t(
-                        "modules.uninstall_remove_local_state"
-                    )
-            }
+            readonly property int progressValue:
+                transaction.progress !== undefined
+                ? transaction.progress
+                : -1
 
             RowLayout {
                 Layout.fillWidth: true
+                spacing: 12
 
-                spacing: 10
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 3
+
+                    Label {
+                        Layout.fillWidth: true
+
+                        text:
+                            root.t(
+                                "modules.transaction.title"
+                            )
+
+                        color: "#F5D0FE"
+
+                        font.pixelSize: 20
+                        font.bold: true
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+
+                        text:
+                            transactionProcessDialog.contentItem.transaction.operation
+                            !== undefined
+                            && transactionProcessDialog.contentItem.transaction.module
+                            !== undefined
+                            ? transactionProcessDialog.contentItem.transaction.operation
+                              + " · "
+                              + transactionProcessDialog.contentItem.transaction.module
+                            : ""
+
+                        color: "#C4B5FD"
+
+                        font.pixelSize: 13
+
+                        elide:
+                            Text.ElideRight
+                    }
+                }
 
                 Button {
-                    id: uninstallCancelButton
+                    id: transactionCloseButton
 
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 42
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
 
+                    padding: 0
                     hoverEnabled: true
 
-                    text:
-                        root.t(
-                            "common.cancel"
-                        )
+                    text: "×"
 
                     background: Rectangle {
                         radius: 8
 
                         color:
-                            uninstallCancelButton.down
-                            ? "#27272A"
-                            : uninstallCancelButton.hovered
-                              ? "#18181B"
-                              : "#101014"
+                            transactionCloseButton.down
+                            ? "#24102F"
+                            : transactionCloseButton.hovered
+                              ? "#1B1027"
+                              : "transparent"
 
-                        border.width: 1
-                        border.color: "#52525B"
+                        border.width:
+                            transactionCloseButton.activeFocus
+                            ? 1
+                            : 0
+
+                        border.color: "#A78BFA"
                     }
 
                     contentItem: Text {
                         text:
-                            uninstallCancelButton.text
+                            transactionCloseButton.text
 
-                        color: "#D4D4D8"
+                        color:
+                            transactionCloseButton.hovered
+                            ? "#FFFFFF"
+                            : "#D8B4FE"
+
+                        font.pixelSize: 22
 
                         horizontalAlignment:
                             Text.AlignHCenter
@@ -2066,41 +2328,248 @@ ApplicationWindow {
                     }
 
                     onClicked:
-                        uninstallSettingsDialog.close()
+                        transactionProcessDialog.close()
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+
+                ProgressBar {
+                    id: transactionProgress
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 20
+
+                    from: 0
+                    to: 1
+
+                    indeterminate:
+                        transactionProcessDialog.contentItem.progressValue < 0
+                        && transactionProcessDialog.contentItem.transaction.running === true
+
+                    value:
+                        transactionProcessDialog.contentItem.progressValue >= 0
+                        ? transactionProcessDialog.contentItem.progressValue
+                          / 100.0
+                        : 0
+
+                    background: Rectangle {
+                        implicitHeight: 10
+                        radius: 5
+
+                        color: "#18111F"
+
+                        border.width: 1
+                        border.color: "#6D28D9"
+                    }
+
+                    contentItem: Item {
+                        implicitHeight: 10
+
+                        Rectangle {
+                            width:
+                                transactionProgress.visualPosition
+                                * parent.width
+
+                            height:
+                                parent.height
+
+                            radius: 5
+
+                            color: "#A855F7"
+
+                            border.width: 1
+                            border.color: "#D8B4FE"
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.preferredWidth: 54
+
+                    text:
+                        transactionProcessDialog.contentItem.progressValue >= 0
+                        ? transactionProcessDialog.contentItem.progressValue
+                          + "%"
+                        : "..."
+
+                    color: "#D8B4FE"
+
+                    horizontalAlignment:
+                        Text.AlignRight
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                radius: 10
+
+                color: "#09090B"
+
+                border.width: 1
+                border.color: "#3F3F46"
+
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 8
+
+                    TextArea {
+                        id: transactionLogText
+
+                        width:
+                            parent.width
+
+                        readOnly: true
+                        selectByMouse: true
+
+                        wrapMode:
+                            TextEdit.NoWrap
+
+                        color: "#E4E4E7"
+                        selectionColor: "#7C3AED"
+                        selectedTextColor: "#FFFFFF"
+
+                        font.family: "monospace"
+                        font.pixelSize: 12
+
+                        background: null
+
+                        text:
+                            transactionProcessDialog.contentItem.transaction.log
+                            !== undefined
+                            ? transactionProcessDialog.contentItem.transaction.log
+                            : ""
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+
+                Label {
+                    Layout.fillWidth: true
+
+                    text:
+                        transactionProcessDialog.contentItem.transaction.running === true
+                        ? root.t(
+                            "modules.transaction.running"
+                        )
+                        : transactionProcessDialog.contentItem.transaction.success === true
+                          ? root.t(
+                              "modules.transaction.success"
+                          )
+                          : root.t(
+                              "modules.transaction.failed"
+                          )
+
+                    color:
+                        transactionProcessDialog.contentItem.transaction.running === true
+                        ? "#C4B5FD"
+                        : transactionProcessDialog.contentItem.transaction.success === true
+                          ? "#86EFAC"
+                          : "#FCA5A5"
+
+                    font.bold: true
                 }
 
                 Button {
-                    id: uninstallConfirmButton
+                    id: transactionCopyButton
 
-                    Layout.fillWidth: true
+                    Layout.minimumWidth: 42
+                    Layout.preferredWidth: 42
+                    Layout.maximumWidth: 42
+
+                    Layout.minimumHeight: 42
+                    Layout.preferredHeight: 42
+                    Layout.maximumHeight: 42
+
+                    padding: 0
+                    hoverEnabled: true
+
+                    enabled:
+                        transactionLogText.text.length > 0
+
+                    background: Item {
+                    }
+
+                    contentItem: Image {
+                        anchors.fill: parent
+
+                        source:
+                            !transactionCopyButton.enabled
+                            ? root.asset(
+                                "copy-icon-disabled.png"
+                            )
+                            : transactionCopyButton.down
+                              ? root.asset(
+                                  "copy-icon-pressed.png"
+                              )
+                              : transactionCopyButton.hovered
+                                ? root.asset(
+                                    "copy-icon-hover.png"
+                                )
+                                : root.asset(
+                                    "copy-icon-normal.png"
+                                )
+
+                        fillMode:
+                            Image.PreserveAspectFit
+
+                        smooth: true
+                        mipmap: true
+                    }
+
+                    onClicked: {
+                        transactionLogText.selectAll()
+                        transactionLogText.copy()
+                        transactionLogText.deselect()
+                    }
+                }
+
+                Button {
+                    id: transactionHideButton
+
+                    Layout.preferredWidth: 110
                     Layout.preferredHeight: 42
 
                     hoverEnabled: true
 
                     text:
                         root.t(
-                            "modules.uninstall_confirm"
+                            "modules.transaction.close"
                         )
 
                     background: Rectangle {
                         radius: 8
 
                         color:
-                            uninstallConfirmButton.down
-                            ? "#6D28D9"
-                            : uninstallConfirmButton.hovered
-                              ? "#4C1D95"
-                              : "#1B1027"
+                            transactionHideButton.down
+                            ? "#27272A"
+                            : transactionHideButton.hovered
+                              ? "#3F3F46"
+                              : "#18181B"
 
-                        border.width: 2
-                        border.color: "#A855F7"
+                        border.width:
+                            transactionHideButton.activeFocus
+                            ? 2
+                            : 1
+
+                        border.color:
+                            transactionHideButton.activeFocus
+                            ? "#A78BFA"
+                            : "#52525B"
                     }
 
                     contentItem: Text {
                         text:
-                            uninstallConfirmButton.text
+                            transactionHideButton.text
 
-                        color: "#E9D5FF"
+                        color: "#E4E4E7"
 
                         font.bold: true
 
@@ -2111,33 +2580,396 @@ ApplicationWindow {
                             Text.AlignVCenter
                     }
 
-                    onClicked: {
-                        const name =
-                            root.pendingUninstallModule
-
-                        const removeLocalState =
-                            uninstallRemoveLocalState.checked
-
-                        uninstallSettingsDialog.close()
-
-                        if (
-                            typeof boss !== "undefined"
-                            && name.length > 0
-                        ) {
-                            boss.uninstallModule(
-                                name,
-                                removeLocalState
-                            )
-                        }
-                    }
+                    onClicked:
+                        transactionProcessDialog.close()
                 }
             }
         }
 
+        onOpened:
+            transactionHideButton.forceActiveFocus()
+    }
+
+    Dialog {
+        id: dependencyWarningDialog
+
+        parent: Overlay.overlay
+
+        modal: true
+        focus: true
+
+        width:
+            Math.min(
+                560,
+                root.width - 64
+            )
+
+        x:
+            Math.round(
+                (parent.width - width) / 2
+            )
+
+        y:
+            Math.round(
+                (parent.height - height) / 2
+            )
+
+        closePolicy:
+            Popup.CloseOnEscape
+            | Popup.CloseOnPressOutside
+
+        padding: 24
+
+        background: Rectangle {
+            radius: 14
+            color: "#120A12"
+
+            border.width: 2
+            border.color: "#FF334F"
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -5
+
+                radius: 18
+                color: "transparent"
+
+                border.width: 2
+                border.color: "#B91C3B"
+
+                opacity: 0.48
+                z: -1
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -10
+
+                radius: 22
+                color: "transparent"
+
+                border.width: 1
+                border.color: "#7F1D2D"
+
+                opacity: 0.28
+                z: -2
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 16
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+
+                Label {
+                    Layout.fillWidth: true
+
+                    text:
+                        root.dependencyWarningTitle()
+
+                    color: "#F5D0FE"
+
+                    font.pixelSize: 20
+                    font.bold: true
+
+                    wrapMode:
+                        Text.WordWrap
+                }
+
+                Button {
+                    id: dependencyWarningCloseButton
+
+                    Layout.preferredWidth: 34
+                    Layout.preferredHeight: 34
+
+                    hoverEnabled: true
+                    flat: true
+
+                    text: "×"
+
+                    background: Rectangle {
+                        radius: 8
+
+                        color:
+                            dependencyWarningCloseButton.down
+                            ? "#3F1720"
+                            : dependencyWarningCloseButton.hovered
+                              ? "#2A1118"
+                              : "transparent"
+
+                        border.width:
+                            dependencyWarningCloseButton.activeFocus
+                            ? 1
+                            : 0
+
+                        border.color: "#A78BFA"
+                    }
+
+                    contentItem: Text {
+                        text:
+                            dependencyWarningCloseButton.text
+
+                        color:
+                            dependencyWarningCloseButton.hovered
+                            ? "#FFFFFF"
+                            : "#D8B4FE"
+
+                        font.pixelSize: 22
+
+                        horizontalAlignment:
+                            Text.AlignHCenter
+
+                        verticalAlignment:
+                            Text.AlignVCenter
+                    }
+
+                    onClicked:
+                        dependencyWarningDialog.close()
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+
+                text:
+                    root.dependencyWarningBody()
+
+                color: "#D4D4D8"
+                font.pixelSize: 14
+
+                wrapMode:
+                    Text.WordWrap
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+
+                visible:
+                    root.pendingDependencyAllowed
+                    && root.dependencyAdditionalAffected().length > 0
+
+                spacing: 8
+
+                Label {
+                    Layout.fillWidth: true
+
+                    text:
+                        root.t(
+                            "modules.dependency_warning_affected"
+                        )
+
+                    color: "#F0ABFC"
+                    font.bold: true
+                }
+
+                Repeater {
+                    model:
+                        root.dependencyAdditionalAffected()
+
+                    delegate: Label {
+                        required property var modelData
+
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12
+
+                        text:
+                            "• " + modelData
+
+                        color: "#E4E4E7"
+
+                        wrapMode:
+                            Text.WordWrap
+                    }
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+
+                visible:
+                    !root.pendingDependencyAllowed
+                    && root.pendingDependencyBlockers.length > 0
+
+                spacing: 8
+
+                Label {
+                    Layout.fillWidth: true
+
+                    text:
+                        root.t(
+                            "modules.dependency_warning_blockers"
+                        )
+
+                    color: "#FB7185"
+                    font.bold: true
+                }
+
+                Repeater {
+                    model:
+                        root.pendingDependencyBlockers
+
+                    delegate: Label {
+                        required property var modelData
+
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12
+
+                        text:
+                            "• " + modelData
+
+                        color: "#F4F4F5"
+
+                        wrapMode:
+                            Text.WordWrap
+                    }
+                }
+            }
+
+            NeeblesSwitch {
+                id: dependencyRemoveLocalState
+
+                Layout.fillWidth: true
+
+                visible:
+                    root.pendingDependencyAction === "uninstall"
+                    && root.pendingDependencyAllowed
+                    && root.pendingDependencyHasLocalState
+
+                checked: false
+
+                text:
+                    root.t(
+                        "modules.dependency_warning_remove_local_state"
+                    )
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+
+                Button {
+                    id: dependencyWarningCancelButton
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 42
+
+                    hoverEnabled: true
+
+                    text:
+                        root.pendingDependencyAllowed
+                        ? root.t(
+                            "common.cancel"
+                        )
+                        : root.t(
+                            "modules.dependency_warning_understood"
+                        )
+
+                    background: Rectangle {
+                        radius: 8
+
+                        color:
+                            dependencyWarningCancelButton.down
+                            ? "#27272A"
+                            : dependencyWarningCancelButton.hovered
+                              ? "#3F3F46"
+                              : "#18181B"
+
+                        border.width:
+                            dependencyWarningCancelButton.activeFocus
+                            ? 2
+                            : 1
+
+                        border.color:
+                            dependencyWarningCancelButton.activeFocus
+                            ? "#A78BFA"
+                            : "#52525B"
+                    }
+
+                    contentItem: Text {
+                        text:
+                            dependencyWarningCancelButton.text
+
+                        color: "#E4E4E7"
+                        font.bold: true
+
+                        horizontalAlignment:
+                            Text.AlignHCenter
+
+                        verticalAlignment:
+                            Text.AlignVCenter
+                    }
+
+                    onClicked:
+                        dependencyWarningDialog.close()
+                }
+
+                Button {
+                    id: dependencyWarningAcceptButton
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 42
+
+                    visible:
+                        root.pendingDependencyAllowed
+
+                    hoverEnabled: true
+
+                    text:
+                        root.t(
+                            "modules.dependency_warning_accept"
+                        )
+
+                    background: Rectangle {
+                        radius: 8
+
+                        color:
+                            dependencyWarningAcceptButton.down
+                            ? "#991B1B"
+                            : dependencyWarningAcceptButton.hovered
+                              ? "#EF4444"
+                              : "#B91C1C"
+
+                        border.width:
+                            dependencyWarningAcceptButton.activeFocus
+                            ? 3
+                            : 1
+
+                        border.color:
+                            dependencyWarningAcceptButton.activeFocus
+                            ? "#FCA5A5"
+                            : dependencyWarningAcceptButton.hovered
+                              ? "#F87171"
+                              : "#EF4444"
+                    }
+
+                    contentItem: Text {
+                        text:
+                            dependencyWarningAcceptButton.text
+
+                        color: "#FFF1F2"
+                        font.bold: true
+
+                        horizontalAlignment:
+                            Text.AlignHCenter
+
+                        verticalAlignment:
+                            Text.AlignVCenter
+                    }
+
+                    onClicked:
+                        root.executeDependencyConfirmation()
+                }
+            }
+        }
+
+        onOpened:
+            dependencyWarningCancelButton.forceActiveFocus()
+
         onClosed: {
-            uninstallRemoveLocalState.checked = false
-            root.pendingUninstallModule = ""
-            root.pendingUninstallHasLocalState = false
+            dependencyRemoveLocalState.checked = false
+            root.resetDependencyWarning()
         }
     }
 

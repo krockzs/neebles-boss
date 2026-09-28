@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::lifecycle::LifecycleContract;
+use crate::lifecycle_available_capabilities::AvailableCapabilityCatalog;
 use crate::lifecycle_battlefield::Battlefield;
 use crate::lifecycle_capabilities::CapabilityRegistry;
 use crate::lifecycle_communication::LifecycleCommunication;
@@ -9,6 +10,7 @@ use crate::lifecycle_control::{CancellationToken, ExecutionControl};
 use crate::lifecycle_dag_executor::LifecycleDependencyGraph;
 use crate::lifecycle_fire_control::FireControl;
 use crate::lifecycle_ir;
+use crate::lifecycle_observer::LifecycleObserver;
 use crate::lifecycle_state::LifecycleRuntimeState;
 use crate::lifecycle_transition_executor::{self, TransitionExecutionReport};
 
@@ -101,7 +103,34 @@ pub async fn execute(
     fire_control: Arc<FireControl>,
     capabilities: Arc<CapabilityRegistry>,
 ) -> Result<ObjectTransitionExecutionReport, String> {
-    execute_controlled(
+    execute_observed(
+        contract,
+        object_id,
+        transition_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        fire_control,
+        capabilities,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_observed(
+    contract: &LifecycleContract,
+    object_id: &str,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    fire_control: Arc<FireControl>,
+    capabilities: Arc<CapabilityRegistry>,
+    observer: LifecycleObserver,
+) -> Result<ObjectTransitionExecutionReport, String> {
+    execute_controlled_observed(
         contract,
         object_id,
         transition_id,
@@ -113,6 +142,7 @@ pub async fn execute(
         capabilities,
         BTreeMap::new(),
         CancellationToken::new(),
+        observer,
     )
     .await
 }
@@ -130,6 +160,37 @@ pub async fn execute_controlled(
     controls: BTreeMap<String, ExecutionControl>,
     cancellation: CancellationToken,
 ) -> Result<ObjectTransitionExecutionReport, String> {
+    execute_controlled_observed(
+        contract,
+        object_id,
+        transition_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        fire_control,
+        capabilities,
+        controls,
+        cancellation,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_controlled_observed(
+    contract: &LifecycleContract,
+    object_id: &str,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    fire_control: Arc<FireControl>,
+    capabilities: Arc<CapabilityRegistry>,
+    controls: BTreeMap<String, ExecutionControl>,
+    cancellation: CancellationToken,
+    observer: LifecycleObserver,
+) -> Result<ObjectTransitionExecutionReport, String> {
     if object_id.trim().is_empty() {
         return Err("lifecycle object transition executor object id cannot be empty".to_string());
     }
@@ -140,17 +201,12 @@ pub async fn execute_controlled(
         );
     }
 
-    /*
-     * Object and transition selection happens before any runtime
-     * mutation. An unknown object or unknown object transition cannot
-     * claim execution state.
-     */
     let ir =
         lifecycle_ir::compile_object_transition(contract, object_id, transition_id, battlefield)?;
 
     enter_object_scope(object_id, state, communication)?;
 
-    let transition = lifecycle_transition_executor::execute_ir_controlled(
+    let transition = lifecycle_transition_executor::execute_ir_controlled_observed(
         ir,
         transition_id,
         Some(object_id),
@@ -162,6 +218,7 @@ pub async fn execute_controlled(
         capabilities,
         controls,
         cancellation,
+        observer,
     )
     .await?;
 
@@ -169,7 +226,136 @@ pub async fn execute_controlled(
 
     Ok(ObjectTransitionExecutionReport {
         object_id: object_id.to_string(),
+        transition,
+    })
+}
 
+pub async fn execute_from_available(
+    contract: &LifecycleContract,
+    object_id: &str,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    available: Arc<AvailableCapabilityCatalog>,
+) -> Result<ObjectTransitionExecutionReport, String> {
+    execute_from_available_observed(
+        contract,
+        object_id,
+        transition_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        available,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_from_available_observed(
+    contract: &LifecycleContract,
+    object_id: &str,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    available: Arc<AvailableCapabilityCatalog>,
+    observer: LifecycleObserver,
+) -> Result<ObjectTransitionExecutionReport, String> {
+    execute_controlled_from_available_observed(
+        contract,
+        object_id,
+        transition_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        available,
+        BTreeMap::new(),
+        CancellationToken::new(),
+        observer,
+    )
+    .await
+}
+
+pub async fn execute_controlled_from_available(
+    contract: &LifecycleContract,
+    object_id: &str,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    available: Arc<AvailableCapabilityCatalog>,
+    controls: BTreeMap<String, ExecutionControl>,
+    cancellation: CancellationToken,
+) -> Result<ObjectTransitionExecutionReport, String> {
+    execute_controlled_from_available_observed(
+        contract,
+        object_id,
+        transition_id,
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        available,
+        controls,
+        cancellation,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_controlled_from_available_observed(
+    contract: &LifecycleContract,
+    object_id: &str,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    state: &mut LifecycleRuntimeState,
+    communication: &mut LifecycleCommunication,
+    available: Arc<AvailableCapabilityCatalog>,
+    controls: BTreeMap<String, ExecutionControl>,
+    cancellation: CancellationToken,
+    observer: LifecycleObserver,
+) -> Result<ObjectTransitionExecutionReport, String> {
+    if object_id.trim().is_empty() {
+        return Err("lifecycle object transition executor object id cannot be empty".to_string());
+    }
+
+    if transition_id.trim().is_empty() {
+        return Err(
+            "lifecycle object transition executor transition id cannot be empty".to_string(),
+        );
+    }
+
+    let ir =
+        lifecycle_ir::compile_object_transition(contract, object_id, transition_id, battlefield)?;
+
+    enter_object_scope(object_id, state, communication)?;
+
+    let transition = lifecycle_transition_executor::execute_ir_from_available_observed(
+        ir,
+        transition_id,
+        Some(object_id),
+        dependencies,
+        battlefield,
+        state,
+        communication,
+        available,
+        controls,
+        cancellation,
+        observer,
+    )
+    .await?;
+
+    attach_object_result_identity(object_id, communication)?;
+
+    Ok(ObjectTransitionExecutionReport {
+        object_id: object_id.to_string(),
         transition,
     })
 }
@@ -206,6 +392,9 @@ mod tests {
         contract.objects.insert(
             object_id.to_string(),
             ObjectContract {
+                initial_active: None,
+                transition_active: Default::default(),
+
                 transitions: BTreeMap::from([(
                     transition_id.to_string(),
                     Battleplan { operations },

@@ -89,6 +89,26 @@ pub struct Battleplan {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectContract {
+    /*
+     * Canonical functional state is optional because not every
+     * Lifecycle object has boolean active/inactive semantics.
+     *
+     * When present, initial_active is the explicit initial truth.
+     * Lifecycle never infers it from transition names.
+     */
+    #[serde(default)]
+    pub initial_active: Option<bool>,
+
+    /*
+     * Optional canonical state consequences for arbitrary object
+     * transitions.
+     *
+     * Key   = object transition id
+     * Value = resulting canonical active state after success
+     */
+    #[serde(default)]
+    pub transition_active: BTreeMap<String, bool>,
+
     #[serde(default)]
     pub transitions: BTreeMap<String, Battleplan>,
 }
@@ -220,6 +240,22 @@ pub fn validate(contract: &LifecycleContract) -> Result<(), String> {
 
     for (object_id, object) in &contract.objects {
         validate_non_empty_identifier("object id", object_id)?;
+
+        if !object.transition_active.is_empty() && object.initial_active.is_none() {
+            return Err(format!(
+                "lifecycle object '{object_id}' declares transition_active but has no explicit initial_active"
+            ));
+        }
+
+        for transition_id in object.transition_active.keys() {
+            validate_non_empty_identifier("object state transition id", transition_id)?;
+
+            if !object.transitions.contains_key(transition_id) {
+                return Err(format!(
+                    "lifecycle object '{object_id}' declares state for unknown transition '{transition_id}'"
+                ));
+            }
+        }
 
         for (transition_id, battleplan) in &object.transitions {
             validate_non_empty_identifier("object transition id", transition_id)?;

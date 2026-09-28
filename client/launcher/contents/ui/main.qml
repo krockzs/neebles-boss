@@ -15,6 +15,63 @@ PlasmoidItem {
     property var callbacks: ({})
     property string bossVersion: "1.0.15"
 
+    component NeeblesSwitch: QQC2.Switch {
+        id: control
+
+        implicitWidth: 42
+        implicitHeight: 24
+
+        hoverEnabled: true
+
+        indicator: Rectangle {
+            anchors.centerIn: parent
+
+            width: 36
+            height: 18
+            radius: 9
+
+            color:
+                control.checked
+                ? "#5B21B6"
+                : "#27272A"
+
+            border.width:
+                control.hovered
+                ? 2
+                : 1
+
+            border.color:
+                control.checked
+                ? "#A855F7"
+                : control.hovered
+                  ? "#67E8F9"
+                  : "#3F3F46"
+
+            Rectangle {
+                width: 14
+                height: 14
+                radius: 7
+
+                anchors.verticalCenter:
+                    parent.verticalCenter
+
+                x:
+                    control.checked
+                    ? parent.width - width - 2
+                    : 2
+
+                color:
+                    control.checked
+                    ? "#F5F3FF"
+                    : "#A1A1AA"
+            }
+        }
+
+        contentItem: Item {
+        }
+    }
+
+
     LauncherBossEvents {
         id: bossEvents
 
@@ -47,22 +104,114 @@ PlasmoidItem {
         runner.connectSource(command)
     }
 
+    function launcherContent(module) {
+        if (
+            !module
+            || !Array.isArray(module.surface_content)
+        )
+            return []
+
+        return module.surface_content.filter(
+            function(item) {
+                return (
+                    item
+                    && item.surface === "launcher"
+                    && item.visible
+                )
+            }
+        )
+    }
+
+    function launcherActionButtons(module) {
+        return launcherContent(module).filter(
+            function(item) {
+                const data =
+                    item.data
+                    ? item.data
+                    : ({})
+
+                return (
+                    data.control === "button"
+                    && typeof data.action === "string"
+                    && data.action.length > 0
+                    && typeof data.label_key === "string"
+                    && data.label_key.length > 0
+                )
+            }
+        )
+    }
+
+    function launcherStateSwitches(module) {
+        return launcherContent(module).filter(
+            function(item) {
+                const data =
+                    item.data
+                    ? item.data
+                    : ({})
+
+                return (
+                    data.control === "switch"
+                    && item.object_id
+                    && item.active !== undefined
+                    && item.active !== null
+                    && data.action_on
+                    && data.action_off
+                    && data.transition_on
+                    && data.transition_off
+                    && data.label_key
+                )
+            }
+        )
+    }
+
     function applyModuleFilter() {
         modules = installedModules.filter(
             function(module) {
                 return (
-                    typeof module.launcher_action === "string"
-                    && module.launcher_action.length > 0
-                    && root.safeModuleId(module.name)
-                    && root.safeModuleId(
-                        module.launcher_action
-                    )
+                    root.safeModuleId(module.name)
+                    && root.launcherContent(module).length > 0
                     && bossEvents.hiddenLauncherModules.indexOf(
                         module.name
                     ) === -1
                 )
             }
         )
+    }
+
+    function shellArg(value) {
+        return "'"
+            + String(value).replace(
+                /'/g,
+                "'\\''"
+            )
+            + "'"
+    }
+
+    function moduleActionCommand(
+        moduleName,
+        action,
+        objectId,
+        transition
+    ) {
+        var command =
+            "/opt/neebles/client/bin/neebles modules action "
+            + shellArg(moduleName)
+            + " "
+            + shellArg(action)
+
+        if (objectId) {
+            command +=
+                " --object-id "
+                + shellArg(objectId)
+        }
+
+        if (transition) {
+            command +=
+                " --transition "
+                + shellArg(transition)
+        }
+
+        return command
     }
 
     function refresh() {
@@ -273,172 +422,286 @@ PlasmoidItem {
                     delegate: Rectangle {
                         required property var modelData
 
-                        width: ListView.view.width
-                        height: 52
-                        radius: 8
+                        property var launcherButtons:
+                            root.launcherActionButtons(
+                                modelData
+                            )
 
+                        property var launcherSwitches:
+                            root.launcherStateSwitches(
+                                modelData
+                            )
+
+                        width:
+                            ListView.view.width
+
+                        height:
+                            48
+                            + launcherButtons.length * 36
+                            + launcherSwitches.length * 34
+
+                        radius: 8
                         color: "#09090D"
 
                         border.width: 1
+
                         border.color:
                             modelData.enabled
                             ? "#4C1D95"
                             : "#3F3F46"
 
-                        RowLayout {
+                        ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 7
 
-                            spacing: 7
+                            spacing: 6
 
-                            Text {
+                            RowLayout {
                                 Layout.fillWidth: true
-
-                                text: modelData.name
-
-                                color:
-                                    modelData.enabled
-                                    ? "#F5F3FF"
-                                    : "#71717A"
-
-                                font.pixelSize: 13
-                                font.bold: true
-
-                                elide: Text.ElideRight
-                            }
-
-                            PlasmaComponents3.Button {
-                                id: openButton
-
-                                Layout.preferredWidth: 54
                                 Layout.preferredHeight: 28
 
-                                text:
-                                    root.t(
-                                        "common.open"
-                                    )
+                                spacing: 7
 
-                                enabled:
-                                    modelData.enabled
-                                    && root.safeModuleId(
-                                        modelData.name
-                                    )
-                                    && root.safeModuleId(
-                                        modelData.launcher_action
-                                    )
+                                Text {
+                                    Layout.fillWidth: true
 
-                                background: Rectangle {
-                                    radius: 7
+                                    text: modelData.name
 
                                     color:
-                                        openButton.enabled
-                                        ? "#0B1015"
-                                        : "#202024"
-
-                                    border.width:
-                                        openButton.enabled
-                                        ? 2
-                                        : 1
-
-                                    border.color:
-                                        openButton.enabled
-                                        ? "#22D3EE"
-                                        : "#52525B"
-                                }
-
-                                contentItem: Text {
-                                    text: openButton.text
-
-                                    color:
-                                        openButton.enabled
-                                        ? "#67E8F9"
+                                        modelData.enabled
+                                        ? "#F5F3FF"
                                         : "#71717A"
 
-                                    font.pixelSize: 11
+                                    font.pixelSize: 13
                                     font.bold: true
 
-                                    horizontalAlignment:
-                                        Text.AlignHCenter
-
-                                    verticalAlignment:
-                                        Text.AlignVCenter
+                                    elide: Text.ElideRight
                                 }
 
-                                onClicked:
-                                    root.exec(
-                                        "/opt/neebles/client/bin/neebles "
-                                        + modelData.name
-                                        + " "
-                                        + modelData.launcher_action,
-                                        function() {}
-                                    )
+                                PlasmaComponents3.Button {
+                                    id: stateButton
+
+                                    Layout.preferredWidth: 64
+                                    Layout.preferredHeight: 28
+
+                                    text:
+                                        modelData.enabled
+                                        ? root.t(
+                                            "common.disable"
+                                        )
+                                        : root.t(
+                                            "common.enable"
+                                        )
+
+                                    enabled:
+                                        root.safeModuleId(
+                                            modelData.name
+                                        )
+
+                                    hoverEnabled: true
+
+                                    background: Rectangle {
+                                        radius: 7
+
+                                        color:
+                                            stateButton.down
+                                            ? "#1B1027"
+                                            : stateButton.hovered
+                                              ? "#211331"
+                                              : "#110B19"
+
+                                        border.width: 2
+
+                                        border.color:
+                                            modelData.enabled
+                                            ? "#A855F7"
+                                            : "#22D3EE"
+                                    }
+
+                                    contentItem: Text {
+                                        text: stateButton.text
+
+                                        color:
+                                            modelData.enabled
+                                            ? "#D8B4FE"
+                                            : "#67E8F9"
+
+                                        font.pixelSize: 12
+                                        font.bold: true
+
+                                        horizontalAlignment:
+                                            Text.AlignHCenter
+
+                                        verticalAlignment:
+                                            Text.AlignVCenter
+                                    }
+
+                                    onClicked: {
+                                        const verb =
+                                            modelData.enabled
+                                            ? "disable"
+                                            : "enable"
+
+                                        root.exec(
+                                            "/opt/neebles/client/bin/neebles modules "
+                                            + verb
+                                            + " "
+                                            + root.shellArg(
+                                                modelData.name
+                                            ),
+                                            function() {
+                                                root.refresh()
+                                            }
+                                        )
+                                    }
+                                }
                             }
 
-                            PlasmaComponents3.Button {
-                                id: stateButton
+                            Repeater {
+                                model:
+                                    launcherButtons
 
-                                Layout.preferredWidth: 64
-                                Layout.preferredHeight: 28
+                                delegate: PlasmaComponents3.Button {
+                                    required property var modelData
 
-                                text:
-                                    modelData.enabled
-                                    ? root.t(
-                                        "common.disable"
-                                    )
-                                    : root.t(
-                                        "common.enable"
-                                    )
+                                    property var surfaceItem:
+                                        modelData
 
-                                enabled:
-                                    root.safeModuleId(
-                                        modelData.name
-                                    )
+                                    property var surfaceData:
+                                        surfaceItem.data
+                                        ? surfaceItem.data
+                                        : ({})
 
-                                background: Rectangle {
-                                    radius: 7
-                                    color: "#110B19"
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 30
 
-                                    border.width: 2
+                                    text:
+                                        root.t(
+                                            surfaceData.label_key
+                                        )
 
-                                    border.color:
-                                        modelData.enabled
-                                        ? "#A855F7"
-                                        : "#22D3EE"
+                                    enabled:
+                                        moduleList.currentItem === null
+                                        || true
+
+                                    hoverEnabled: true
+
+                                    background: Rectangle {
+                                        radius: 7
+
+                                        color:
+                                            parent.down
+                                            ? "#0B1220"
+                                            : parent.hovered
+                                              ? "#172033"
+                                              : "#10131A"
+
+                                        border.width:
+                                            parent.activeFocus
+                                            ? 3
+                                            : 2
+
+                                        border.color:
+                                            parent.hovered
+                                            || parent.activeFocus
+                                            ? "#67E8F9"
+                                            : "#22D3EE"
+                                    }
+
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: "#67E8F9"
+
+                                        font.pixelSize: 11
+                                        font.bold: true
+
+                                        horizontalAlignment:
+                                            Text.AlignHCenter
+
+                                        verticalAlignment:
+                                            Text.AlignVCenter
+                                    }
+
+                                    onClicked: {
+                                        root.exec(
+                                            root.moduleActionCommand(
+                                                modelData.owner_module,
+                                                surfaceData.action,
+                                                surfaceItem.object_id || "",
+                                                surfaceItem.transition || ""
+                                            ),
+                                            function() {
+                                                root.refresh()
+                                            }
+                                        )
+                                    }
                                 }
+                            }
 
-                                contentItem: Text {
-                                    text: stateButton.text
+                            Repeater {
+                                model:
+                                    launcherSwitches
 
-                                    color:
-                                        modelData.enabled
-                                        ? "#D8B4FE"
-                                        : "#67E8F9"
+                                delegate: RowLayout {
+                                    required property var modelData
 
-                                    font.pixelSize: 12
-                                    font.bold: true
+                                    property var surfaceItem:
+                                        modelData
 
-                                    horizontalAlignment:
-                                        Text.AlignHCenter
+                                    property var surfaceData:
+                                        surfaceItem.data
+                                        ? surfaceItem.data
+                                        : ({})
 
-                                    verticalAlignment:
-                                        Text.AlignVCenter
-                                }
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 28
 
-                                onClicked: {
-                                    const verb =
-                                        modelData.enabled
-                                        ? "disable"
-                                        : "enable"
+                                    Text {
+                                        Layout.fillWidth: true
 
-                                    root.exec(
-                                        "/opt/neebles/client/bin/neebles modules "
-                                        + verb
-                                        + " "
-                                        + modelData.name,
-                                        function() {
-                                            root.refresh()
+                                        text:
+                                            root.t(
+                                                surfaceData.label_key
+                                            )
+
+                                        color: "#A78BFA"
+                                        font.pixelSize: 11
+
+                                        elide:
+                                            Text.ElideRight
+                                    }
+
+                                    NeeblesSwitch {
+                                        checked:
+                                            !!surfaceItem.active
+
+                                        checkable: false
+
+                                        enabled:
+                                            modelData.enabled
+                                            !== false
+
+                                        onClicked: {
+                                            const turnOn =
+                                                !surfaceItem.active
+
+                                            root.exec(
+                                                root.moduleActionCommand(
+                                                    surfaceItem.owner_module,
+                                                    turnOn
+                                                    ? surfaceData.action_on
+                                                    : surfaceData.action_off,
+                                                    surfaceItem.object_id,
+                                                    turnOn
+                                                    ? surfaceData.transition_on
+                                                    : surfaceData.transition_off
+                                                ),
+                                                function() {
+                                                    root.refresh()
+                                                }
+                                            )
                                         }
-                                    )
+                                    }
                                 }
                             }
                         }

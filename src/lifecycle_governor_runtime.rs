@@ -7,6 +7,7 @@ use crate::lifecycle_capabilities::CapabilityRegistry;
 use crate::lifecycle_dag_executor::LifecycleDependencyGraph;
 use crate::lifecycle_fire_control::FireControl;
 use crate::lifecycle_governor_bridge::GovernorLifecycleExecution;
+use crate::lifecycle_observer::LifecycleObserver;
 
 /*
  * N.E.E.B.L.E.S. Governor Lifecycle runtime.
@@ -68,19 +69,39 @@ impl GovernorLifecycleRuntime {
         action: &str,
         dependencies: LifecycleDependencyGraph,
     ) -> Result<Option<GovernorLifecycleExecution>, String> {
+        self.execute_action_blocking_observed(
+            module_id,
+            execution_id,
+            contract,
+            action,
+            dependencies,
+            LifecycleObserver::none(),
+        )
+    }
+
+    pub fn execute_action_blocking_observed(
+        &self,
+        module_id: &str,
+        execution_id: &str,
+        contract: &LifecycleContract,
+        action: &str,
+        dependencies: LifecycleDependencyGraph,
+        observer: LifecycleObserver,
+    ) -> Result<Option<GovernorLifecycleExecution>, String> {
         let Some(transition_id) = crate::lifecycle_governor_binding::resolve(contract, action)?
         else {
             return Ok(None);
         };
 
         let execution = if let Some(available) = self.available.as_ref() {
-            crate::lifecycle_governor_bridge::execute_transition_blocking_from_available(
+            crate::lifecycle_governor_bridge::execute_transition_blocking_from_available_with_observer(
                 module_id,
                 execution_id,
                 contract,
                 transition_id,
                 dependencies,
                 Arc::clone(available),
+                observer.clone(),
             )?
         } else {
             let fire_control = self
@@ -93,7 +114,7 @@ impl GovernorLifecycleRuntime {
                 .as_ref()
                 .ok_or_else(|| "Governor Lifecycle runtime lost CapabilityRegistry".to_string())?;
 
-            crate::lifecycle_governor_bridge::execute_transition_blocking(
+            crate::lifecycle_governor_bridge::execute_transition_blocking_with_observer(
                 module_id,
                 execution_id,
                 contract,
@@ -101,10 +122,151 @@ impl GovernorLifecycleRuntime {
                 dependencies,
                 Arc::clone(fire_control),
                 Arc::clone(capabilities),
+                observer,
             )?
         };
 
         execution.require_success().map(Some)
+    }
+
+    pub fn execute_target_blocking(
+        &self,
+        module_id: &str,
+        execution_id: &str,
+        contract: &LifecycleContract,
+        action: &str,
+        object_id: Option<&str>,
+        transition_id: Option<&str>,
+        dependencies: LifecycleDependencyGraph,
+    ) -> Result<Option<GovernorLifecycleExecution>, String> {
+        self.execute_target_blocking_observed(
+            module_id,
+            execution_id,
+            contract,
+            action,
+            object_id,
+            transition_id,
+            dependencies,
+            LifecycleObserver::none(),
+        )
+    }
+
+    pub fn execute_target_blocking_observed(
+        &self,
+        module_id: &str,
+        execution_id: &str,
+        contract: &LifecycleContract,
+        action: &str,
+        object_id: Option<&str>,
+        transition_id: Option<&str>,
+        dependencies: LifecycleDependencyGraph,
+        observer: LifecycleObserver,
+    ) -> Result<Option<GovernorLifecycleExecution>, String> {
+        let object_id = object_id.map(str::trim).filter(|value| !value.is_empty());
+
+        let transition_id = transition_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        match (object_id, transition_id) {
+            (Some(object_id), Some(transition_id)) => {
+                let execution = if let Some(available) = self.available.as_ref() {
+                    crate::lifecycle_governor_bridge::
+                            execute_object_transition_blocking_from_available_with_observer(
+                                module_id,
+                                execution_id,
+                                contract,
+                                object_id,
+                                transition_id,
+                                dependencies,
+                                Arc::clone(
+                                    available
+                                ),
+                                observer,
+                            )?
+                } else {
+                    let fire_control = self
+                        .fire_control
+                        .as_ref()
+                        .ok_or_else(|| "Governor Lifecycle runtime lost FireControl".to_string())?;
+
+                    let capabilities = self.capabilities.as_ref().ok_or_else(|| {
+                        "Governor Lifecycle runtime lost CapabilityRegistry".to_string()
+                    })?;
+
+                    crate::lifecycle_governor_bridge::
+                            execute_object_transition_blocking_with_observer(
+                                module_id,
+                                execution_id,
+                                contract,
+                                object_id,
+                                transition_id,
+                                dependencies,
+                                Arc::clone(
+                                    fire_control
+                                ),
+                                Arc::clone(
+                                    capabilities
+                                ),
+                                observer,
+                            )?
+                };
+
+                Ok(Some(execution))
+            }
+
+            (Some(_), None) => {
+                Err("Governor object target requires an explicit Lifecycle transition".to_string())
+            }
+
+            (None, Some(transition_id)) => {
+                let execution = if let Some(available) = self.available.as_ref() {
+                    crate::lifecycle_governor_bridge::
+                            execute_transition_blocking_from_available_with_observer(
+                                module_id,
+                                execution_id,
+                                contract,
+                                transition_id,
+                                dependencies,
+                                Arc::clone(
+                                    available
+                                ),
+                                observer,
+                            )?
+                } else {
+                    let fire_control = self
+                        .fire_control
+                        .as_ref()
+                        .ok_or_else(|| "Governor Lifecycle runtime lost FireControl".to_string())?;
+
+                    let capabilities = self.capabilities.as_ref().ok_or_else(|| {
+                        "Governor Lifecycle runtime lost CapabilityRegistry".to_string()
+                    })?;
+
+                    crate::lifecycle_governor_bridge::execute_transition_blocking_with_observer(
+                        module_id,
+                        execution_id,
+                        contract,
+                        transition_id,
+                        dependencies,
+                        Arc::clone(fire_control),
+                        Arc::clone(capabilities),
+                        observer,
+                    )?
+                };
+
+                Ok(Some(execution))
+            }
+
+            (None, None) => self.execute_action_blocking_observed(
+                module_id,
+                execution_id,
+                contract,
+                action,
+                dependencies,
+                observer,
+            ),
+        }
     }
 }
 

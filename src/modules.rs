@@ -93,6 +93,15 @@ pub struct ModuleManifest {
     pub lifecycle: Option<String>,
 
     /*
+     * Optional module-owned Boss surface declaration.
+     *
+     * This file declares presentation projections only.
+     * Functional state remains owned by Lifecycle.
+     */
+    #[serde(default)]
+    pub surfaces: Option<String>,
+
+    /*
      * Dynamic module contracts.
      *
      * A module may extend the N.E.E.B.L.E.S. ecosystem by
@@ -352,6 +361,141 @@ pub fn installed_module_lifecycle_contract(
     let manifest = read_manifest(&module_dir.join("manifest.json"))?;
 
     lifecycle_contract_from_module(&module_dir, &manifest)
+}
+
+/*
+ * Resolve the module-owned Boss surface declaration.
+ *
+ * Absence means that the module contributes no projected content.
+ *
+ * The declaration is validated against the same module-owned
+ * Lifecycle contract that owns functional object/transition identity.
+ */
+fn surface_projection_from_module(
+    module_dir: &Path,
+    manifest: &ModuleManifest,
+    lifecycle: &crate::lifecycle::LifecycleContract,
+) -> Result<crate::surface_projection::SurfaceProjection, String> {
+    let Some(reference) = manifest.surfaces.as_deref() else {
+        return Ok(crate::surface_projection::SurfaceProjection::new());
+    };
+
+    let path = resolve_module_file(module_dir, reference, "surfaces")?;
+
+    crate::surface_contract::load(&manifest.name, &path, lifecycle)
+}
+
+pub fn installed_module_surface_projection(
+    name: &str,
+) -> Result<crate::surface_projection::SurfaceProjection, String> {
+    if !valid_module_id(name) {
+        return Err(format!("invalid module id: {name}"));
+    }
+
+    let module_dir = find_module_dir(name)?;
+
+    let manifest = read_manifest(&module_dir.join("manifest.json"))?;
+
+    let lifecycle = lifecycle_contract_from_module(&module_dir, &manifest)?;
+
+    surface_projection_from_module(&module_dir, &manifest, &lifecycle)
+}
+
+/*
+ * Canonical Boss Surface Content Resolver entry point.
+ *
+ * Consumers ask:
+ *
+ *   module + arbitrary surface name
+ *
+ * and receive generic Boss-owned content.
+ *
+ * No consumer needs to know how the module declared Lifecycle,
+ * what technology implements the module, or whether that surface
+ * happens to be UI, Launcher, Tray or something introduced later.
+ */
+pub fn installed_module_all_surface_content(
+    name: &str,
+) -> Result<Vec<crate::surface_content::SurfaceContentItem>, String> {
+    let projection = installed_module_surface_projection(name)?;
+
+    Ok(crate::surface_content::resolve_all(&projection))
+}
+
+fn installed_module_object_state_store(
+    name: &str,
+    lifecycle: &crate::lifecycle::LifecycleContract,
+) -> Result<crate::lifecycle_objects::ObjectStateStore, String> {
+    let canonical = config::reconcile_module_object_states(name, lifecycle)?;
+
+    let mut states = crate::lifecycle_objects::ObjectStateStore::new();
+
+    for (object_id, active) in canonical {
+        states.register(lifecycle, object_id, active)?;
+    }
+
+    Ok(states)
+}
+
+fn surface_content_item_json(
+    item: &crate::surface_content::SurfaceContentItem,
+    states: &crate::lifecycle_objects::ObjectStateStore,
+) -> Result<Value, String> {
+    let active = match item.object_id() {
+        Some(object_id) if states.contains(object_id) => item.canonical_active(states)?,
+
+        _ => None,
+    };
+
+    Ok(json!({
+        "owner_module":
+            item.identity().owner_module(),
+
+        "item_id":
+            item.identity().item_id(),
+
+        "surface":
+            item.surface(),
+
+        "object_id":
+            item.object_id(),
+
+        "transition":
+            item.transition(),
+
+        "visible":
+            item.visible(),
+
+        "active":
+            active,
+
+        "data":
+            item.data(),
+    }))
+}
+
+pub fn installed_module_surface_content(
+    name: &str,
+    surface: &str,
+) -> Result<Vec<crate::surface_content::SurfaceContentItem>, String> {
+    let projection = installed_module_surface_projection(name)?;
+
+    Ok(crate::surface_content::resolve_for_surface(
+        &projection,
+        surface,
+    ))
+}
+
+pub fn installed_module_visible_surface_content(
+    name: &str,
+    surface: &str,
+) -> Result<Vec<crate::surface_content::SurfaceContentItem>, String> {
+    let projection = installed_module_surface_projection(name)?;
+
+    Ok(crate::surface_content::resolve_visible_for_surface(
+        &projection,
+        surface,
+    ))
 }
 
 /*
@@ -902,21 +1046,152 @@ fn module_governor_lifecycle_runtime(
     Ok(crate::lifecycle_governor_runtime::GovernorLifecycleRuntime::from_available(available))
 }
 
+pub type ModuleLifecycleObserverFactory = std::sync::Arc<
+    dyn Fn(&str, &str) -> crate::lifecycle_observer::LifecycleObserver + Send + Sync + 'static,
+>;
+
 fn execute_module_governor_lifecycle(
     runtime: &crate::lifecycle_governor_runtime::GovernorLifecycleRuntime,
     module_id: &str,
     action: &str,
     contract: &crate::lifecycle::LifecycleContract,
+    observer_factory: Option<&ModuleLifecycleObserverFactory>,
 ) -> Result<(), String> {
+    let observer = observer_factory
+        .map(|factory| factory(module_id, action))
+        .unwrap_or_else(crate::lifecycle_observer::LifecycleObserver::none);
+
     runtime
-        .execute_action_blocking(
+        .execute_action_blocking_observed(
             module_id,
             &format!("module.{action}"),
             contract,
             action,
             std::collections::BTreeMap::new(),
+            observer,
         )
         .map(|_| ())
+}
+
+pub fn execute_governor_action(name: &str, action: &str) -> Result<(), String> {
+    execute_governor_action_with_observer(name, action, None)
+}
+
+pub fn execute_governor_action_observed(
+    name: &str,
+    action: &str,
+    observer_factory: &ModuleLifecycleObserverFactory,
+) -> Result<(), String> {
+    execute_governor_action_with_observer(name, action, Some(observer_factory))
+}
+
+pub fn execute_governor_target(
+    name: &str,
+    action: &str,
+    object_id: Option<&str>,
+    transition_id: Option<&str>,
+) -> Result<(), String> {
+    execute_governor_target_with_observer(name, action, object_id, transition_id, None)
+}
+
+pub fn execute_governor_target_observed(
+    name: &str,
+    action: &str,
+    object_id: Option<&str>,
+    transition_id: Option<&str>,
+    observer_factory: &ModuleLifecycleObserverFactory,
+) -> Result<(), String> {
+    execute_governor_target_with_observer(
+        name,
+        action,
+        object_id,
+        transition_id,
+        Some(observer_factory),
+    )
+}
+
+fn execute_governor_target_with_observer(
+    name: &str,
+    action: &str,
+    object_id: Option<&str>,
+    transition_id: Option<&str>,
+    observer_factory: Option<&ModuleLifecycleObserverFactory>,
+) -> Result<(), String> {
+    let action = action.trim();
+
+    if action.is_empty() {
+        return Err("module Governor action cannot be empty".to_string());
+    }
+
+    let object_id = object_id.map(str::trim).filter(|value| !value.is_empty());
+
+    let transition_id = transition_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let lifecycle = installed_module_lifecycle_contract(name)?;
+
+    config::reconcile_module_object_states(name, &lifecycle)?;
+
+    let lifecycle_runtime = module_governor_lifecycle_runtime()?;
+
+    let observer = observer_factory
+        .map(|factory| factory(name, action))
+        .unwrap_or_else(crate::lifecycle_observer::LifecycleObserver::none);
+
+    lifecycle_runtime.execute_target_blocking_observed(
+        name,
+        &format!("module.{action}"),
+        &lifecycle,
+        action,
+        object_id,
+        transition_id,
+        std::collections::BTreeMap::new(),
+        observer,
+    )?;
+
+    if let (Some(object_id), Some(transition_id)) = (object_id, transition_id) {
+        if let Some(active) = lifecycle
+            .objects
+            .get(object_id)
+            .and_then(|object| object.transition_active.get(transition_id))
+            .copied()
+        {
+            config::update_module_object_state(name, object_id, active)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn execute_governor_action_with_observer(
+    name: &str,
+    action: &str,
+    observer_factory: Option<&ModuleLifecycleObserverFactory>,
+) -> Result<(), String> {
+    let action = action.trim();
+
+    if action.is_empty() {
+        return Err("module Governor action cannot be empty".to_string());
+    }
+
+    /*
+     * Presence of the installed module and ownership of
+     * its Lifecycle contract are resolved here.
+     *
+     * No action vocabulary is interpreted here.
+     */
+    let lifecycle = installed_module_lifecycle_contract(name)?;
+
+    let lifecycle_runtime = module_governor_lifecycle_runtime()?;
+
+    execute_module_governor_lifecycle(
+        &lifecycle_runtime,
+        name,
+        action,
+        &lifecycle,
+        observer_factory,
+    )
 }
 
 fn require_install_failure(
@@ -938,6 +1213,7 @@ fn install_require_tree(
     root: &str,
     registry: &Registry,
     lifecycle_runtime: &crate::lifecycle_governor_runtime::GovernorLifecycleRuntime,
+    observer_factory: Option<&ModuleLifecycleObserverFactory>,
 ) -> Result<(), String> {
     let (plan, mut inventory) = resolve_require_candidates(root, registry)?;
 
@@ -1009,9 +1285,13 @@ fn install_require_tree(
             );
         }
 
-        if let Err(error) =
-            execute_module_governor_lifecycle(lifecycle_runtime, &module_id, "install", &lifecycle)
-        {
+        if let Err(error) = execute_module_governor_lifecycle(
+            lifecycle_runtime,
+            &module_id,
+            "install",
+            &lifecycle,
+            observer_factory,
+        ) {
             return Err(require_install_failure(
                 format!(
                     "install Lifecycle failed for module '{}': {}",
@@ -2682,11 +2962,28 @@ pub fn installed_modules_json() -> Result<Value, String> {
             continue;
         }
         let manifest = read_manifest(&manifest_path)?;
+
+        let lifecycle = installed_module_lifecycle_contract(&manifest.name)?;
+
+        let object_states = installed_module_object_state_store(&manifest.name, &lifecycle)?;
+
         let enabled = config::module_enabled(&manifest.name)?;
         let icon = local_module_icon(&entry.path());
         let running = module_running(&manifest.name);
 
         let launcher_action = launcher_action_from(&entry.path(), &manifest)?;
+
+        /*
+         * Generic Boss surface content.
+         *
+         * Do not filter to UI here.
+         * Launcher, Tray and future Boss surfaces
+         * consume the exact same canonical material.
+         */
+        let surface_content = installed_module_all_surface_content(&manifest.name)?
+            .iter()
+            .map(|item| surface_content_item_json(item, &object_states))
+            .collect::<Result<Vec<_>, String>>()?;
 
         let mut item = json!({
             "name": manifest.name,
@@ -2696,6 +2993,9 @@ pub fn installed_modules_json() -> Result<Value, String> {
             "path": entry.path(),
             "icon": icon,
             "launcher_action": launcher_action,
+
+            "surface_content": surface_content,
+
             "notifications": manifest.notifications.as_ref().map(|contract| {
                 json!({
                     "protocol": contract.protocol,
@@ -2760,15 +3060,118 @@ fn installed_names() -> Result<HashSet<String>, String> {
         .collect())
 }
 
-pub fn install(name: &str) -> Result<(), String> {
-    let registry = fetch_registry()?;
-    install_internal(name, &registry)
+fn installed_dependency_graph(
+) -> Result<crate::module_dependency_policy::InstalledDependencyGraph, String> {
+    let mut names = installed_names()?.into_iter().collect::<Vec<_>>();
+
+    names.sort();
+
+    let mut contracts = BTreeMap::new();
+
+    for module_id in names {
+        let lifecycle = installed_module_lifecycle_contract(&module_id)?;
+
+        contracts.insert(module_id, lifecycle);
+    }
+
+    crate::module_dependency_policy::InstalledDependencyGraph::from_contracts(&contracts)
 }
 
-fn install_internal(name: &str, registry: &Registry) -> Result<(), String> {
+pub fn module_uninstall_blockers(name: &str) -> Result<Vec<String>, String> {
+    let _ = find_module_dir(name)?;
+
+    installed_dependency_graph()?.uninstall_blockers(name)
+}
+
+pub fn module_disable_plan(name: &str) -> Result<Vec<String>, String> {
+    let _ = find_module_dir(name)?;
+
+    installed_dependency_graph()?.disable_order(name)
+}
+
+pub fn module_enable_plan(name: &str) -> Result<Vec<String>, String> {
+    let _ = find_module_dir(name)?;
+
+    installed_dependency_graph()?.enable_order(name)
+}
+
+pub fn module_dependency_preflight(action: &str, name: &str) -> Result<Value, String> {
+    let _ = find_module_dir(name)?;
+
+    let graph = installed_dependency_graph()?;
+
+    match action {
+        "uninstall" => {
+            let blockers = graph.uninstall_blockers(name)?;
+
+            Ok(serde_json::json!({
+                "action": "uninstall",
+                "module": name,
+                "allowed": blockers.is_empty(),
+                "affected": [name],
+                "blockers": blockers
+            }))
+        }
+
+        "disable" => {
+            let affected = graph.disable_order(name)?;
+
+            Ok(serde_json::json!({
+                "action": "disable",
+                "module": name,
+                "allowed": true,
+                "affected": affected,
+                "blockers": []
+            }))
+        }
+
+        "enable" => {
+            let affected = graph.enable_order(name)?;
+
+            Ok(serde_json::json!({
+                "action": "enable",
+                "module": name,
+                "allowed": true,
+                "affected": affected,
+                "blockers": []
+            }))
+        }
+
+        _ => Err(format!(
+            "unsupported module dependency preflight action: {}",
+            action
+        )),
+    }
+}
+
+pub fn install(name: &str) -> Result<(), String> {
+    install_with_observer(name, None)
+}
+
+pub fn install_observed(
+    name: &str,
+    observer_factory: &ModuleLifecycleObserverFactory,
+) -> Result<(), String> {
+    install_with_observer(name, Some(observer_factory))
+}
+
+fn install_with_observer(
+    name: &str,
+    observer_factory: Option<&ModuleLifecycleObserverFactory>,
+) -> Result<(), String> {
+    let registry = fetch_registry()?;
+
+    install_internal(name, &registry, observer_factory)
+}
+
+fn install_internal(
+    name: &str,
+    registry: &Registry,
+    observer_factory: Option<&ModuleLifecycleObserverFactory>,
+) -> Result<(), String> {
     let lifecycle_runtime = module_governor_lifecycle_runtime()?;
 
-    install_require_tree(name, registry, &lifecycle_runtime)
+    install_require_tree(name, registry, &lifecycle_runtime, observer_factory)
 }
 
 pub fn module_has_local_state(name: &str) -> Result<bool, String> {
@@ -2801,19 +3204,52 @@ pub fn module_has_local_state(name: &str) -> Result<bool, String> {
 }
 
 pub fn uninstall(name: &str, remove_settings: bool) -> Result<(), String> {
+    uninstall_with_observer(name, remove_settings, None)
+}
+
+pub fn uninstall_observed(
+    name: &str,
+    remove_settings: bool,
+    observer_factory: &ModuleLifecycleObserverFactory,
+) -> Result<(), String> {
+    uninstall_with_observer(name, remove_settings, Some(observer_factory))
+}
+
+fn uninstall_with_observer(
+    name: &str,
+    remove_settings: bool,
+    observer_factory: Option<&ModuleLifecycleObserverFactory>,
+) -> Result<(), String> {
+    /*
+     * Dependency legality is checked before Lifecycle,
+     * process shutdown, filesystem movement or config mutation.
+     *
+     * A required installed module cannot be removed while
+     * any installed dependent still declares it in require.
+     */
+    let graph = installed_dependency_graph()?;
+
+    graph.can_uninstall(name)?;
+
     let lifecycle_runtime = module_governor_lifecycle_runtime()?;
 
-    uninstall_internal(name, remove_settings, Some(&lifecycle_runtime))
+    uninstall_internal(
+        name,
+        remove_settings,
+        Some(&lifecycle_runtime),
+        observer_factory,
+    )
 }
 
 fn uninstall_without_lifecycle(name: &str, remove_settings: bool) -> Result<(), String> {
-    uninstall_internal(name, remove_settings, None)
+    uninstall_internal(name, remove_settings, None, None)
 }
 
 fn uninstall_internal(
     name: &str,
     remove_settings: bool,
     lifecycle_runtime: Option<&crate::lifecycle_governor_runtime::GovernorLifecycleRuntime>,
+    observer_factory: Option<&ModuleLifecycleObserverFactory>,
 ) -> Result<(), String> {
     /*
      * Uninstall is inherently destructive and therefore
@@ -2825,7 +3261,13 @@ fn uninstall_internal(
     if let Some(lifecycle_runtime) = lifecycle_runtime {
         let lifecycle = installed_module_lifecycle_contract(name)?;
 
-        execute_module_governor_lifecycle(lifecycle_runtime, name, "uninstall", &lifecycle)?;
+        execute_module_governor_lifecycle(
+            lifecycle_runtime,
+            name,
+            "uninstall",
+            &lifecycle,
+            observer_factory,
+        )?;
     }
 
     deactivate_module(name, "uninstall")?;
@@ -3021,6 +3463,22 @@ fn uninstall_internal(
 }
 
 pub fn update(name: &str, close_running: bool) -> Result<(), String> {
+    update_with_observer(name, close_running, None)
+}
+
+pub fn update_observed(
+    name: &str,
+    close_running: bool,
+    observer_factory: &ModuleLifecycleObserverFactory,
+) -> Result<(), String> {
+    update_with_observer(name, close_running, Some(observer_factory))
+}
+
+fn update_with_observer(
+    name: &str,
+    close_running: bool,
+    observer_factory: Option<&ModuleLifecycleObserverFactory>,
+) -> Result<(), String> {
     /*
      * Without explicit permission Boss must never close
      * live module processes as part of an update.
@@ -3188,9 +3646,13 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
 
     let lifecycle_runtime = module_governor_lifecycle_runtime()?;
 
-    if let Err(lifecycle_error) =
-        execute_module_governor_lifecycle(&lifecycle_runtime, name, "update", &lifecycle)
-    {
+    if let Err(lifecycle_error) = execute_module_governor_lifecycle(
+        &lifecycle_runtime,
+        name,
+        "update",
+        &lifecycle,
+        observer_factory,
+    ) {
         let failed_update_path = root.join(format!(
             ".neebles-failed-lifecycle-update-{name}-{transaction}"
         ));
@@ -3298,7 +3760,7 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
 
     Ok(())
 }
-pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
+fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
     let _ = find_module_dir(name)?;
 
     let previous = config::module_enabled(name)?;
@@ -3309,7 +3771,13 @@ pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
 
     if !enabled {
         if previous {
-            execute_module_governor_lifecycle(&lifecycle_runtime, name, "disable", &lifecycle)?;
+            execute_module_governor_lifecycle(
+                &lifecycle_runtime,
+                name,
+                "disable",
+                &lifecycle,
+                None,
+            )?;
         }
 
         deactivate_module(name, "disabled")?;
@@ -3349,7 +3817,7 @@ pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
 
     if !previous {
         if let Err(error) =
-            execute_module_governor_lifecycle(&lifecycle_runtime, name, "enable", &lifecycle)
+            execute_module_governor_lifecycle(&lifecycle_runtime, name, "enable", &lifecycle, None)
         {
             let tray_cleanup = stop_tray_provider(name);
 
@@ -3389,6 +3857,52 @@ pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
             );
         }
     }
+
+    Ok(())
+}
+
+pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
+    let _ = find_module_dir(name)?;
+
+    let graph = installed_dependency_graph()?;
+
+    let plan = if enabled {
+        graph.enable_order(name)?
+    } else {
+        graph.disable_order(name)?
+    };
+
+    /*
+     * ENABLE:
+     *
+     * requirements first, requested module last.
+     *
+     * Re-enabling a requirement does NOT reactivate
+     * its dependents because enable_order only follows
+     * requires downward from the requested module.
+     *
+     * DISABLE:
+     *
+     * dependents first, requested module last.
+     *
+     * This prevents a live dependent from being left
+     * enabled after one of its requirements is disabled.
+     */
+    crate::module_dependency_policy::execute_state_plan_with_compensation(
+        &plan,
+        |module_id| {
+            let previous = config::module_enabled(module_id)?;
+
+            if previous == enabled {
+                return Ok(false);
+            }
+
+            set_enabled_single(module_id, enabled)?;
+
+            Ok(true)
+        },
+        |module_id| set_enabled_single(module_id, !enabled),
+    )?;
 
     Ok(())
 }
@@ -4130,7 +4644,13 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
      * Validate the referenced declarative contract before an
      * installation or update may commit.
      */
-    let _ = lifecycle_contract_from_module(module_dir, manifest)?;
+    let lifecycle = lifecycle_contract_from_module(module_dir, manifest)?;
+
+    /*
+     * Boss surface declarations are part of the installed module
+     * contract and must resolve only real Lifecycle identities.
+     */
+    let _ = surface_projection_from_module(module_dir, manifest, &lifecycle)?;
 
     /*
      * Settings are part of the installed module contract.
@@ -4249,6 +4769,8 @@ mod require_candidate_contract_tests {
             entrypoint: "entrypoint".to_string(),
 
             lifecycle: lifecycle.map(str::to_string),
+
+            surfaces: None,
 
             contracts: Vec::new(),
 
@@ -4414,6 +4936,7 @@ mod lifecycle_contract_reference_tests {
             version: "1.0.0".to_string(),
             entrypoint: "entrypoint".to_string(),
             lifecycle: Some(path.to_string()),
+            surfaces: None,
             contracts: Vec::new(),
             commands: BTreeMap::new(),
             tray: None,

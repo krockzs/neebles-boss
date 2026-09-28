@@ -49,6 +49,50 @@ use crate::lifecycle_result::NormalizedResult;
 
 pub type LifecycleDependencyGraph = BTreeMap<String, BTreeSet<String>>;
 
+/*
+ * Internal DAG completion observation.
+ *
+ * This is not a second Lifecycle semantic channel.
+ *
+ * It reports committed NormalizedResult snapshots upward so the
+ * Transition Executor can publish the canonical
+ * LifecycleCommunication surface while execution is still running.
+ *
+ * No UI, IPC, Launcher or Tray semantics belong here.
+ *
+ * Observation cannot fail execution.
+ */
+pub type LifecycleDagObserverHandler =
+    Arc<dyn Fn(&str, &BTreeMap<String, NormalizedResult>) + Send + Sync + 'static>;
+
+#[derive(Clone, Default)]
+pub struct LifecycleDagObserver {
+    handler: Option<LifecycleDagObserverHandler>,
+}
+
+impl LifecycleDagObserver {
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    pub fn observing<F>(handler: F) -> Self
+    where
+        F: Fn(&str, &BTreeMap<String, NormalizedResult>) + Send + Sync + 'static,
+    {
+        Self {
+            handler: Some(Arc::new(handler)),
+        }
+    }
+
+    pub fn publish(&self, operation_id: &str, results: &BTreeMap<String, NormalizedResult>) {
+        let Some(handler) = &self.handler else {
+            return;
+        };
+
+        handler(operation_id, results);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DagExecutionReport {
     orchestration: OrchestrationReport,
@@ -174,6 +218,29 @@ pub async fn execute_controlled(
     controls: BTreeMap<String, ExecutionControl>,
     cancellation: CancellationToken,
 ) -> Result<DagExecutionReport, String> {
+    execute_controlled_observed(
+        ir,
+        dependencies,
+        battlefield,
+        fire_control,
+        capabilities,
+        controls,
+        cancellation,
+        LifecycleDagObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_controlled_observed(
+    ir: Arc<BattleplanIr>,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    fire_control: Arc<FireControl>,
+    capabilities: Arc<CapabilityRegistry>,
+    controls: BTreeMap<String, ExecutionControl>,
+    cancellation: CancellationToken,
+    observer: LifecycleDagObserver,
+) -> Result<DagExecutionReport, String> {
     execute_controlled_internal(
         ir,
         dependencies,
@@ -182,6 +249,7 @@ pub async fn execute_controlled(
         None,
         controls,
         cancellation,
+        observer,
     )
     .await
 }
@@ -211,6 +279,27 @@ pub async fn execute_controlled_from_available(
     controls: BTreeMap<String, ExecutionControl>,
     cancellation: CancellationToken,
 ) -> Result<DagExecutionReport, String> {
+    execute_controlled_from_available_observed(
+        ir,
+        dependencies,
+        battlefield,
+        available,
+        controls,
+        cancellation,
+        LifecycleDagObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_controlled_from_available_observed(
+    ir: Arc<BattleplanIr>,
+    dependencies: LifecycleDependencyGraph,
+    battlefield: &mut Battlefield,
+    available: Arc<AvailableCapabilityCatalog>,
+    controls: BTreeMap<String, ExecutionControl>,
+    cancellation: CancellationToken,
+    observer: LifecycleDagObserver,
+) -> Result<DagExecutionReport, String> {
     execute_controlled_internal(
         ir,
         dependencies,
@@ -219,6 +308,7 @@ pub async fn execute_controlled_from_available(
         Some(available),
         controls,
         cancellation,
+        observer,
     )
     .await
 }
@@ -231,12 +321,20 @@ async fn execute_controlled_internal(
     available: Option<Arc<AvailableCapabilityCatalog>>,
     controls: BTreeMap<String, ExecutionControl>,
     cancellation: CancellationToken,
+    observer: LifecycleDagObserver,
 ) -> Result<DagExecutionReport, String> {
     validate_external_maps(&ir, &dependencies, &controls)?;
 
     let shared_battlefield = Arc::new(Mutex::new(battlefield.clone()));
 
     let shared_results = Arc::new(Mutex::new(BTreeMap::<String, NormalizedResult>::new()));
+
+    /*
+     * Result commit and live publication are serialized so
+     * progress snapshots cannot arrive 2/N and later regress
+     * to 1/N when independent operations finish concurrently.
+     */
+    let observer_order = Arc::new(Mutex::new(()));
 
     let controls = Arc::new(controls);
 
@@ -263,6 +361,10 @@ async fn execute_controlled_internal(
 
         let task_results = Arc::clone(&shared_results);
 
+        let task_observer = observer.clone();
+
+        let task_observer_order = Arc::clone(&observer_order);
+
         let handler_operation_id = operation_id.clone();
 
         let handler: OrchestrationHandler = Arc::new(move || {
@@ -286,6 +388,10 @@ async fn execute_controlled_internal(
             let cancellation = task_cancellation.clone();
 
             let results = Arc::clone(&task_results);
+
+            let observer = task_observer.clone();
+
+            let observer_order = Arc::clone(&task_observer_order);
 
             Box::pin(async move {
                 let operation = {
@@ -339,12 +445,30 @@ async fn execute_controlled_internal(
                     )?;
                 }
 
+                /*
+                 * Commit the NormalizedResult before publishing it.
+                 *
+                 * Publication order is serialized independently from
+                 * capability execution. Capabilities remain concurrent;
+                 * only the tiny result-commit / observation boundary is
+                 * ordered.
+                 */
                 {
-                    let mut results = results
+                    let _publication = observer_order
                         .lock()
-                        .map_err(|_| lock_error("normalized result"))?;
+                        .map_err(|_| lock_error("DAG observer order"))?;
 
-                    results.insert(operation_id.clone(), result.clone());
+                    let snapshot = {
+                        let mut results = results
+                            .lock()
+                            .map_err(|_| lock_error("normalized result"))?;
+
+                        results.insert(operation_id.clone(), result.clone());
+
+                        results.clone()
+                    };
+
+                    observer.publish(&operation_id, &snapshot);
                 }
 
                 if result.is_success() {
@@ -381,7 +505,29 @@ async fn execute_controlled_internal(
         .map_err(|_| lock_error("normalized result"))?
         .clone();
 
+    let observed_results = results.clone();
+
     let results = complete_normalized_results(&ir, &orchestration, results)?;
+
+    /*
+     * Orchestration can synthesize terminal outcomes for operations
+     * that never ran, for example because an upstream dependency
+     * failed. Materialize those outcomes through the same observer
+     * before the terminal transition snapshot is emitted.
+     */
+    if results.len() > observed_results.len() {
+        let mut progressive = observed_results;
+
+        for (operation_id, result) in &results {
+            if progressive.contains_key(operation_id) {
+                continue;
+            }
+
+            progressive.insert(operation_id.clone(), result.clone());
+
+            observer.publish(operation_id, &progressive);
+        }
+    }
 
     Ok(DagExecutionReport {
         orchestration,

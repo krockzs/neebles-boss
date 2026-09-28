@@ -353,6 +353,48 @@ fn reconcile_after_module_operation(operation: Result<(), String>) -> Result<(),
     }
 }
 
+const LIFECYCLE_EVENTS_FLAG: &str = "--lifecycle-events";
+
+const LIFECYCLE_EVENT_PREFIX: &str = "NEEBLES_LIFECYCLE\t";
+
+fn lifecycle_process_observer_factory() -> modules::ModuleLifecycleObserverFactory {
+    std::sync::Arc::new(|module_id, action| {
+        let module_id = module_id.to_string();
+
+        let action = action.to_string();
+
+        crate::lifecycle_observer::LifecycleObserver::observing(move |snapshot| {
+            let envelope = serde_json::json!({
+                "type":
+                    "lifecycle.communication",
+
+                "module":
+                    module_id,
+
+                "action":
+                    action,
+
+                "communication":
+                    snapshot.values()
+            });
+
+            let Ok(json) = serde_json::to_string(&envelope) else {
+                return;
+            };
+
+            use std::io::Write;
+
+            let stdout = std::io::stdout();
+
+            let mut output = stdout.lock();
+
+            let _ = writeln!(output, "{LIFECYCLE_EVENT_PREFIX}{json}");
+
+            let _ = output.flush();
+        })
+    })
+}
+
 fn modules_command(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("available") | Some("list") => match modules::available_modules_json() {
@@ -372,7 +414,32 @@ fn modules_command(args: &[String]) -> i32 {
                 return fail(error);
             }
 
-            result(reconcile_after_module_operation(modules::install(name)))
+            let lifecycle_events =
+                args.iter().any(
+                    |value| {
+                        value
+                            == LIFECYCLE_EVENTS_FLAG
+                    }
+                );
+
+            let operation =
+                if lifecycle_events {
+                    let observer_factory =
+                        lifecycle_process_observer_factory();
+
+                    modules::install_observed(
+                        name,
+                        &observer_factory,
+                    )
+                } else {
+                    modules::install(name)
+                };
+
+            result(
+                reconcile_after_module_operation(
+                    operation
+                )
+            )
         }
         Some("update") => {
             let Some(name) = args.get(1) else {
@@ -383,14 +450,44 @@ fn modules_command(args: &[String]) -> i32 {
                 return fail(error);
             }
 
-            const CLOSE_FLAG: &str = "--close-running";
+            const CLOSE_FLAG: &str =
+                "--close-running";
 
-            let close_running = args.iter().any(|value| value == CLOSE_FLAG);
+            let close_running =
+                args.iter().any(
+                    |value| value == CLOSE_FLAG
+                );
 
-            result(reconcile_after_module_operation(modules::update(
-                name,
-                close_running,
-            )))
+            let lifecycle_events =
+                args.iter().any(
+                    |value| {
+                        value
+                            == LIFECYCLE_EVENTS_FLAG
+                    }
+                );
+
+            let operation =
+                if lifecycle_events {
+                    let observer_factory =
+                        lifecycle_process_observer_factory();
+
+                    modules::update_observed(
+                        name,
+                        close_running,
+                        &observer_factory,
+                    )
+                } else {
+                    modules::update(
+                        name,
+                        close_running,
+                    )
+                };
+
+            result(
+                reconcile_after_module_operation(
+                    operation
+                )
+            )
         }
         Some("uninstall") => {
             let Some(name) = args.get(1) else {
@@ -409,15 +506,228 @@ fn modules_command(args: &[String]) -> i32 {
                     |value| value == REMOVE_SETTINGS_FLAG
                 );
 
-            result(
-                reconcile_after_module_operation(
+            let lifecycle_events =
+                args.iter().any(
+                    |value| {
+                        value
+                            == LIFECYCLE_EVENTS_FLAG
+                    }
+                );
+
+            let operation =
+                if lifecycle_events {
+                    let observer_factory =
+                        lifecycle_process_observer_factory();
+
+                    modules::uninstall_observed(
+                        name,
+                        remove_settings,
+                        &observer_factory,
+                    )
+                } else {
                     modules::uninstall(
                         name,
                         remove_settings,
                     )
+                };
+
+            result(
+                reconcile_after_module_operation(
+                    operation
                 )
             )
         }
+        Some("action") => {
+            let Some(name) =
+                args.get(1)
+            else {
+                return fail(
+                    "modules action requires a module name"
+                        .to_string()
+                );
+            };
+
+            const OBJECT_ID_FLAG: &str =
+                "--object-id";
+
+            const TRANSITION_FLAG: &str =
+                "--transition";
+
+            let lifecycle_events =
+                args.iter().any(
+                    |value| {
+                        value
+                            == LIFECYCLE_EVENTS_FLAG
+                    }
+                );
+
+            let mut action:
+                Option<&str> =
+                None;
+
+            let mut object_id:
+                Option<&str> =
+                None;
+
+            let mut transition_id:
+                Option<&str> =
+                None;
+
+            let mut index =
+                2usize;
+
+            while index < args.len() {
+                let value =
+                    args[index].as_str();
+
+                match value {
+                    LIFECYCLE_EVENTS_FLAG => {
+                        index += 1;
+                    }
+
+                    OBJECT_ID_FLAG => {
+                        let Some(next) =
+                            args.get(
+                                index + 1
+                            )
+                        else {
+                            return fail(
+                                "modules action --object-id requires a value"
+                                    .to_string()
+                            );
+                        };
+
+                        if next.trim().is_empty() {
+                            return fail(
+                                "modules action --object-id cannot be empty"
+                                    .to_string()
+                            );
+                        }
+
+                        object_id =
+                            Some(
+                                next.as_str()
+                            );
+
+                        index += 2;
+                    }
+
+                    TRANSITION_FLAG => {
+                        let Some(next) =
+                            args.get(
+                                index + 1
+                            )
+                        else {
+                            return fail(
+                                "modules action --transition requires a value"
+                                    .to_string()
+                            );
+                        };
+
+                        if next.trim().is_empty() {
+                            return fail(
+                                "modules action --transition cannot be empty"
+                                    .to_string()
+                            );
+                        }
+
+                        transition_id =
+                            Some(
+                                next.as_str()
+                            );
+
+                        index += 2;
+                    }
+
+                    _ => {
+                        if action.is_some() {
+                            return fail(
+                                format!(
+                                    "modules action unexpected argument '{value}'"
+                                )
+                            );
+                        }
+
+                        action =
+                            Some(
+                                value
+                            );
+
+                        index += 1;
+                    }
+                }
+            }
+
+            let Some(action) =
+                action
+            else {
+                return fail(
+                    "modules action requires an action"
+                        .to_string()
+                );
+            };
+
+            let operation =
+                if lifecycle_events {
+                    let observer_factory =
+                        lifecycle_process_observer_factory();
+
+                    modules::execute_governor_target_observed(
+                        name,
+                        action,
+                        object_id,
+                        transition_id,
+                        &observer_factory,
+                    )
+                } else {
+                    modules::execute_governor_target(
+                        name,
+                        action,
+                        object_id,
+                        transition_id,
+                    )
+                };
+
+            result(
+                operation
+            )
+        }
+
+        Some("preflight") => {
+            let Some(action) =
+                args.get(1)
+            else {
+                return fail(
+                    "modules preflight requires an action"
+                        .to_string()
+                );
+            };
+
+            let Some(name) =
+                args.get(2)
+            else {
+                return fail(
+                    "modules preflight requires a module name"
+                        .to_string()
+                );
+            };
+
+            match modules::module_dependency_preflight(
+                action,
+                name,
+            ) {
+                Ok(value) => {
+                    print_json(
+                        &value
+                    );
+
+                    0
+                }
+
+                Err(error) => fail(error),
+            }
+        }
+
         Some("enable") => {
             let Some(name) = args.get(1) else {
                 return fail("modules enable requires a module name".to_string());
@@ -595,7 +905,7 @@ fn modules_command(args: &[String]) -> i32 {
             }
         }
         _ => fail(
-            "usage: neebles modules available|installed|install|update|uninstall|enable|disable|runtime"
+            "usage: neebles modules available|installed|install|update|uninstall|preflight|enable|disable|runtime"
                 .to_string(),
         ),
     }
@@ -885,6 +1195,7 @@ fn print_help() {
     println!("  neebles modules available|installed");
     println!("  neebles modules install|update|uninstall <module>");
     println!("  neebles modules update <module> --close-running");
+    println!("  neebles modules preflight <enable|disable|uninstall> <module>");
     println!("  neebles modules enable|disable <module>");
     println!("  neebles notify <info|success|warning|critical|fatal> <title> <message>");
     println!("  neebles socket serve");

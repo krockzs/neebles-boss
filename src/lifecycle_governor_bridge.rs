@@ -8,6 +8,8 @@ use crate::lifecycle_communication::LifecycleCommunication;
 use crate::lifecycle_dag_executor::LifecycleDependencyGraph;
 use crate::lifecycle_event::LifecycleEventLog;
 use crate::lifecycle_fire_control::FireControl;
+use crate::lifecycle_object_transition_executor;
+use crate::lifecycle_observer::LifecycleObserver;
 use crate::lifecycle_state::LifecycleRuntimeState;
 use crate::lifecycle_telemetry;
 use crate::lifecycle_transition_executor::{self, TransitionExecutionReport};
@@ -121,6 +123,29 @@ pub async fn execute_transition_observed(
     fire_control: Arc<FireControl>,
     capabilities: Arc<CapabilityRegistry>,
 ) -> Result<GovernorLifecycleExecution, String> {
+    execute_transition_with_observer(
+        module_id,
+        execution_id,
+        contract,
+        transition_id,
+        dependencies,
+        fire_control,
+        capabilities,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_transition_with_observer(
+    module_id: &str,
+    execution_id: &str,
+    contract: &LifecycleContract,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    fire_control: Arc<FireControl>,
+    capabilities: Arc<CapabilityRegistry>,
+    observer: LifecycleObserver,
+) -> Result<GovernorLifecycleExecution, String> {
     validate_identity("module lifecycle module id", module_id)?;
     validate_identity("module lifecycle execution id", execution_id)?;
     validate_identity("module lifecycle transition id", transition_id)?;
@@ -137,7 +162,7 @@ pub async fn execute_transition_observed(
 
     let mut events = LifecycleEventLog::new();
 
-    let report = match lifecycle_transition_executor::execute(
+    let report = match lifecycle_transition_executor::execute_observed(
         contract,
         transition_id,
         dependencies,
@@ -146,6 +171,7 @@ pub async fn execute_transition_observed(
         &mut communication,
         fire_control,
         capabilities,
+        observer,
     )
     .await
     {
@@ -181,6 +207,27 @@ pub async fn execute_transition_observed_from_available(
     dependencies: LifecycleDependencyGraph,
     available: Arc<AvailableCapabilityCatalog>,
 ) -> Result<GovernorLifecycleExecution, String> {
+    execute_transition_from_available_with_observer(
+        module_id,
+        execution_id,
+        contract,
+        transition_id,
+        dependencies,
+        available,
+        LifecycleObserver::none(),
+    )
+    .await
+}
+
+pub async fn execute_transition_from_available_with_observer(
+    module_id: &str,
+    execution_id: &str,
+    contract: &LifecycleContract,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    available: Arc<AvailableCapabilityCatalog>,
+    observer: LifecycleObserver,
+) -> Result<GovernorLifecycleExecution, String> {
     validate_identity("module lifecycle module id", module_id)?;
 
     validate_identity("module lifecycle execution id", execution_id)?;
@@ -199,7 +246,7 @@ pub async fn execute_transition_observed_from_available(
 
     let mut events = LifecycleEventLog::new();
 
-    let report = match lifecycle_transition_executor::execute_from_available(
+    let report = match lifecycle_transition_executor::execute_from_available_observed(
         contract,
         transition_id,
         dependencies,
@@ -207,6 +254,7 @@ pub async fn execute_transition_observed_from_available(
         &mut state,
         &mut communication,
         available,
+        observer,
     )
     .await
     {
@@ -234,6 +282,221 @@ pub async fn execute_transition_observed_from_available(
     })
 }
 
+pub async fn execute_object_transition_from_available_with_observer(
+    module_id: &str,
+    execution_id: &str,
+    contract: &LifecycleContract,
+    object_id: &str,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    available: Arc<AvailableCapabilityCatalog>,
+    observer: LifecycleObserver,
+) -> Result<GovernorLifecycleExecution, String> {
+    validate_identity("module lifecycle module id", module_id)?;
+
+    validate_identity("module lifecycle execution id", execution_id)?;
+
+    validate_identity("module lifecycle object id", object_id)?;
+
+    validate_identity("module lifecycle transition id", transition_id)?;
+
+    lifecycle::validate(contract)?;
+
+    let mut battlefield = execution_battlefield(module_id, contract);
+
+    let mut state = LifecycleRuntimeState::new(execution_id, transition_id)?;
+
+    state.put("module.id", module_id)?;
+
+    let mut communication = LifecycleCommunication::from_state(&state)?;
+
+    let mut events = LifecycleEventLog::new();
+
+    let object_execution =
+        match lifecycle_object_transition_executor::execute_from_available_observed(
+            contract,
+            object_id,
+            transition_id,
+            dependencies,
+            &mut battlefield,
+            &mut state,
+            &mut communication,
+            available,
+            observer,
+        )
+        .await
+        {
+            Ok(report) => report,
+
+            Err(error) => {
+                record_event(&mut events, &communication, "object-transition.error")?;
+
+                return Err(error);
+            }
+        };
+
+    let report = object_execution.transition().clone();
+
+    record_event(
+        &mut events,
+        &communication,
+        format!("object-transition.{}", report.terminal_phase(),),
+    )?;
+
+    Ok(GovernorLifecycleExecution {
+        report,
+        state,
+        communication,
+        battlefield,
+        events,
+    })
+}
+
+pub async fn execute_object_transition_with_observer(
+    module_id: &str,
+    execution_id: &str,
+    contract: &LifecycleContract,
+    object_id: &str,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    fire_control: Arc<FireControl>,
+    capabilities: Arc<CapabilityRegistry>,
+    observer: LifecycleObserver,
+) -> Result<GovernorLifecycleExecution, String> {
+    validate_identity("module lifecycle module id", module_id)?;
+
+    validate_identity("module lifecycle execution id", execution_id)?;
+
+    validate_identity("module lifecycle object id", object_id)?;
+
+    validate_identity("module lifecycle transition id", transition_id)?;
+
+    lifecycle::validate(contract)?;
+
+    let mut battlefield = execution_battlefield(module_id, contract);
+
+    let mut state = LifecycleRuntimeState::new(execution_id, transition_id)?;
+
+    state.put("module.id", module_id)?;
+
+    let mut communication = LifecycleCommunication::from_state(&state)?;
+
+    let mut events = LifecycleEventLog::new();
+
+    let object_execution = match lifecycle_object_transition_executor::execute_observed(
+        contract,
+        object_id,
+        transition_id,
+        dependencies,
+        &mut battlefield,
+        &mut state,
+        &mut communication,
+        fire_control,
+        capabilities,
+        observer,
+    )
+    .await
+    {
+        Ok(report) => report,
+
+        Err(error) => {
+            record_event(&mut events, &communication, "object-transition.error")?;
+
+            return Err(error);
+        }
+    };
+
+    let report = object_execution.transition().clone();
+
+    record_event(
+        &mut events,
+        &communication,
+        format!("object-transition.{}", report.terminal_phase(),),
+    )?;
+
+    Ok(GovernorLifecycleExecution {
+        report,
+        state,
+        communication,
+        battlefield,
+        events,
+    })
+}
+
+pub fn execute_object_transition_blocking_from_available_with_observer(
+    module_id: &str,
+    execution_id: &str,
+    contract: &LifecycleContract,
+    object_id: &str,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    available: Arc<AvailableCapabilityCatalog>,
+    observer: LifecycleObserver,
+) -> Result<GovernorLifecycleExecution, String> {
+    let execution =
+        futures_lite::future::block_on(execute_object_transition_from_available_with_observer(
+            module_id,
+            execution_id,
+            contract,
+            object_id,
+            transition_id,
+            dependencies,
+            available,
+            observer,
+        ))?;
+
+    execution.require_success()
+}
+
+pub fn execute_object_transition_blocking_with_observer(
+    module_id: &str,
+    execution_id: &str,
+    contract: &LifecycleContract,
+    object_id: &str,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    fire_control: Arc<FireControl>,
+    capabilities: Arc<CapabilityRegistry>,
+    observer: LifecycleObserver,
+) -> Result<GovernorLifecycleExecution, String> {
+    let execution = futures_lite::future::block_on(execute_object_transition_with_observer(
+        module_id,
+        execution_id,
+        contract,
+        object_id,
+        transition_id,
+        dependencies,
+        fire_control,
+        capabilities,
+        observer,
+    ))?;
+
+    execution.require_success()
+}
+
+pub fn execute_transition_blocking_from_available_with_observer(
+    module_id: &str,
+    execution_id: &str,
+    contract: &LifecycleContract,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    available: Arc<AvailableCapabilityCatalog>,
+    observer: LifecycleObserver,
+) -> Result<GovernorLifecycleExecution, String> {
+    let execution =
+        futures_lite::future::block_on(execute_transition_from_available_with_observer(
+            module_id,
+            execution_id,
+            contract,
+            transition_id,
+            dependencies,
+            available,
+            observer,
+        ))?;
+
+    execution.require_success()
+}
+
 pub fn execute_transition_blocking_from_available(
     module_id: &str,
     execution_id: &str,
@@ -249,6 +512,30 @@ pub fn execute_transition_blocking_from_available(
         transition_id,
         dependencies,
         available,
+    ))?;
+
+    execution.require_success()
+}
+
+pub fn execute_transition_blocking_with_observer(
+    module_id: &str,
+    execution_id: &str,
+    contract: &LifecycleContract,
+    transition_id: &str,
+    dependencies: LifecycleDependencyGraph,
+    fire_control: Arc<FireControl>,
+    capabilities: Arc<CapabilityRegistry>,
+    observer: LifecycleObserver,
+) -> Result<GovernorLifecycleExecution, String> {
+    let execution = futures_lite::future::block_on(execute_transition_with_observer(
+        module_id,
+        execution_id,
+        contract,
+        transition_id,
+        dependencies,
+        fire_control,
+        capabilities,
+        observer,
     ))?;
 
     execution.require_success()

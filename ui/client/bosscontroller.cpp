@@ -8,7 +8,6 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QProcessEnvironment>
-#include <QRegularExpression>
 #include <QSet>
 #include <QTimer>
 #include <QVersionNumber>
@@ -1262,62 +1261,240 @@ void BossController::saveConfig(const QString &language,
 }
 
 
-void BossController::setModuleOperationField(
-    const QString &name,
+void BossController::setTransactionOperationField(
     const QString &key,
     const QVariant &value
 )
 {
-    QVariantMap state =
-        m_moduleOperations
-            .value(name)
-            .toMap();
-
-    state.insert(key, value);
-
-    m_moduleOperations.insert(
-        name,
-        state
+    m_transactionOperation.insert(
+        key,
+        value
     );
 
-    emit moduleOperationsChanged();
+    emit transactionOperationChanged();
 }
 
 
-void BossController::appendModuleOperationLog(
-    const QString &name,
+void BossController::appendTransactionOperationLog(
     const QString &line
 )
 {
     if (line.trimmed().isEmpty())
         return;
 
-    QVariantMap state =
-        m_moduleOperations
-            .value(name)
-            .toMap();
-
     QString log =
-        state.value(
+        m_transactionOperation.value(
             QStringLiteral("log")
         ).toString();
 
     if (!log.isEmpty())
         log.append(QLatin1Char('\n'));
 
-    log.append(line.trimmed());
+    log.append(
+        line.trimmed()
+    );
 
-    state.insert(
+    m_transactionOperation.insert(
         QStringLiteral("log"),
         log
     );
 
-    m_moduleOperations.insert(
-        name,
-        state
+    emit transactionOperationChanged();
+}
+
+
+bool BossController::consumeLifecycleProcessEvent(
+    const QString &line
+)
+{
+    static const QString prefix =
+        QStringLiteral(
+            "NEEBLES_LIFECYCLE\t"
+        );
+
+    if (!line.startsWith(prefix))
+        return false;
+
+    /*
+     * Reserved machine lines never enter the human
+     * transaction transcript, even when malformed.
+     *
+     * Observation is auxiliary and must never make
+     * the underlying module transaction fail.
+     */
+    const QByteArray payload =
+        line.mid(
+            prefix.size()
+        ).toUtf8();
+
+    QJsonParseError error;
+
+    const QJsonDocument document =
+        QJsonDocument::fromJson(
+            payload,
+            &error
+        );
+
+    if (
+        error.error
+            != QJsonParseError::NoError
+        || !document.isObject()
+    ) {
+        return true;
+    }
+
+    const QVariantMap event =
+        document
+            .object()
+            .toVariantMap();
+
+    if (
+        event.value(
+            QStringLiteral("type")
+        ).toString()
+        != QStringLiteral(
+            "lifecycle.communication"
+        )
+    ) {
+        return true;
+    }
+
+    const QVariantMap communication =
+        event.value(
+            QStringLiteral("communication")
+        ).toMap();
+
+    if (communication.isEmpty())
+        return true;
+
+    /*
+     * LifecycleCommunication is canonical semantic
+     * execution observation.
+     *
+     * BossController stores a projection only.
+     */
+    m_transactionOperation.insert(
+        QStringLiteral("lifecycle"),
+        communication
     );
 
-    emit moduleOperationsChanged();
+    m_transactionOperation.insert(
+        QStringLiteral("lifecycleModule"),
+        event.value(
+            QStringLiteral("module")
+        )
+    );
+
+    m_transactionOperation.insert(
+        QStringLiteral("lifecycleAction"),
+        event.value(
+            QStringLiteral("action")
+        )
+    );
+
+    const auto project =
+        [this, &communication](
+            const char *source,
+            const char *destination
+        ) {
+            const QString value =
+                communication.value(
+                    QString::fromLatin1(
+                        source
+                    )
+                ).toString();
+
+            if (!value.isEmpty()) {
+                m_transactionOperation.insert(
+                    QString::fromLatin1(
+                        destination
+                    ),
+                    value
+                );
+            }
+        };
+
+    project(
+        "state.execution.id",
+        "lifecycleExecutionId"
+    );
+
+    project(
+        "state.transition.id",
+        "lifecycleTransitionId"
+    );
+
+    project(
+        "state.object.id",
+        "lifecycleObjectId"
+    );
+
+    project(
+        "state.operation.id",
+        "lifecycleOperationId"
+    );
+
+    project(
+        "state.phase",
+        "lifecyclePhase"
+    );
+
+    bool totalOk = false;
+    bool completedOk = false;
+
+    const int total =
+        communication.value(
+            QStringLiteral(
+                "progress.total"
+            )
+        ).toString().toInt(
+            &totalOk
+        );
+
+    const int completed =
+        communication.value(
+            QStringLiteral(
+                "progress.completed"
+            )
+        ).toString().toInt(
+            &completedOk
+        );
+
+    if (
+        totalOk
+        && completedOk
+        && total > 0
+        && completed >= 0
+    ) {
+        const int bounded =
+            qBound(
+                0,
+                completed,
+                total
+            );
+
+        const int progress =
+            qRound(
+                (
+                    static_cast<double>(
+                        bounded
+                    )
+                    / static_cast<double>(
+                        total
+                    )
+                )
+                * 100.0
+            );
+
+        m_transactionOperation.insert(
+            QStringLiteral("progress"),
+            progress
+        );
+    }
+
+    emit transactionOperationChanged();
+
+    return true;
 }
 
 
@@ -1343,12 +1520,6 @@ void BossController::consumeModuleProcessOutput()
 
     m_moduleOutputPending += chunk;
 
-    const QRegularExpression progressExpression(
-        QStringLiteral(
-            R"((\d{1,3})%)"
-        )
-    );
-
     while (true) {
         const qsizetype separator =
             m_moduleOutputPending.indexOf(
@@ -1371,41 +1542,21 @@ void BossController::consumeModuleProcessOutput()
         if (line.isEmpty())
             continue;
 
-        appendModuleOperationLog(
-            m_activeModuleName,
+        if (
+            consumeLifecycleProcessEvent(
+                line
+            )
+        ) {
+            continue;
+        }
+
+        /*
+         * Everything not belonging to the reserved
+         * machine protocol remains human transcript.
+         */
+        appendTransactionOperationLog(
             line
         );
-
-        QRegularExpressionMatchIterator matches =
-            progressExpression.globalMatch(line);
-
-        int progress = -1;
-
-        while (matches.hasNext()) {
-            const QRegularExpressionMatch match =
-                matches.next();
-
-            bool ok = false;
-
-            const int value =
-                match.captured(1).toInt(&ok);
-
-            if (
-                ok
-                && value >= 0
-                && value <= 100
-            ) {
-                progress = value;
-            }
-        }
-
-        if (progress >= 0) {
-            setModuleOperationField(
-                m_activeModuleName,
-                QStringLiteral("progress"),
-                progress
-            );
-        }
     }
 }
 
@@ -1466,15 +1617,24 @@ void BossController::startModuleProcess(
         false
     );
 
-    m_moduleOperations.insert(
-        name,
-        state
+    state.insert(
+        QStringLiteral("id"),
+        QString::number(
+            ++m_transactionSequence
+        )
     );
 
-    emit moduleOperationsChanged();
+    state.insert(
+        QStringLiteral("module"),
+        name
+    );
 
-    appendModuleOperationLog(
-        name,
+    m_transactionOperation =
+        state;
+
+    emit transactionOperationChanged();
+
+    appendTransactionOperationLog(
         text(
             QStringLiteral(
                 "modules.operation.header"
@@ -1488,7 +1648,10 @@ void BossController::startModuleProcess(
     QStringList commandArguments = {
         QStringLiteral("modules"),
         operation,
-        name
+        name,
+        QStringLiteral(
+            "--lifecycle-events"
+        )
     };
 
     commandArguments.append(
@@ -1503,8 +1666,7 @@ void BossController::startModuleProcess(
             authorizationPath();
 
         if (authAgent.isEmpty()) {
-            appendModuleOperationLog(
-                name,
+            appendTransactionOperationLog(
                 text(
                     QStringLiteral(
                         "auth.agent_missing"
@@ -1512,8 +1674,7 @@ void BossController::startModuleProcess(
                 )
             );
 
-            setModuleOperationField(
-                name,
+            setTransactionOperationField(
                 QStringLiteral("running"),
                 false
             );
@@ -1628,15 +1789,13 @@ void BossController::startModuleProcess(
             runtimeAuthorityArguments();
 
         if (runtimeAuthority.isEmpty()) {
-            appendModuleOperationLog(
-                name,
+            appendTransactionOperationLog(
                 QStringLiteral(
                     "N.E.E.B.L.E.S. runtime authority transport is unavailable"
                 )
             );
 
-            setModuleOperationField(
-                name,
+            setTransactionOperationField(
                 QStringLiteral("running"),
                 false
             );
@@ -1690,8 +1849,7 @@ void BossController::startModuleProcess(
         [this, name](
             QProcess::ProcessError error
         ) {
-            appendModuleOperationLog(
-                name,
+            appendTransactionOperationLog(
                 text(
                     QStringLiteral(
                         "modules.operation.process_error"
@@ -1721,8 +1879,7 @@ void BossController::startModuleProcess(
                     .trimmed()
                     .isEmpty()
             ) {
-                appendModuleOperationLog(
-                    name,
+                appendTransactionOperationLog(
                     m_moduleOutputPending
                 );
 
@@ -1745,8 +1902,7 @@ void BossController::startModuleProcess(
                         "install"
                     )
             ) {
-                appendModuleOperationLog(
-                    name,
+                appendTransactionOperationLog(
                     text(
                         QStringLiteral(
                             "modules.operation.enabling"
@@ -1770,8 +1926,7 @@ void BossController::startModuleProcess(
                 success =
                     success && enabled;
 
-                appendModuleOperationLog(
-                    name,
+                appendTransactionOperationLog(
                     enabled
                     ? text(
                         QStringLiteral(
@@ -1786,27 +1941,23 @@ void BossController::startModuleProcess(
                 );
             }
 
-            setModuleOperationField(
-                name,
+            setTransactionOperationField(
                 QStringLiteral("running"),
                 false
             );
 
-            setModuleOperationField(
-                name,
+            setTransactionOperationField(
                 QStringLiteral("success"),
                 success
             );
 
             if (success) {
-                setModuleOperationField(
-                    name,
+                setTransactionOperationField(
                     QStringLiteral("progress"),
                     100
                 );
 
-                appendModuleOperationLog(
-                    name,
+                appendTransactionOperationLog(
                     text(
                         QStringLiteral(
                             "modules.operation.completed"
@@ -1814,8 +1965,7 @@ void BossController::startModuleProcess(
                     )
                 );
             } else {
-                appendModuleOperationLog(
-                    name,
+                appendTransactionOperationLog(
                     text(
                         QStringLiteral(
                             "modules.operation.failed"
@@ -2245,101 +2395,171 @@ void BossController::uninstallModule(
 }
 
 
-void BossController::openModule(
+void BossController::requestModuleAction(
+    const QString &name,
+    const QString &action,
+    const QString &objectId,
+    const QString &transition
+)
+{
+    const QString normalizedName =
+        name.trimmed();
+
+    const QString normalizedAction =
+        action.trimmed();
+
+    const QString normalizedObjectId =
+        objectId.trimmed();
+
+    const QString normalizedTransition =
+        transition.trimmed();
+
+    if (
+        normalizedName.isEmpty()
+        || normalizedAction.isEmpty()
+        || m_busy
+    ) {
+        return;
+    }
+
+    /*
+     * Generic Governor target transport.
+     *
+     * Boss transports, but does not interpret:
+     * - action
+     * - object identity
+     * - transition identity
+     *
+     * Empty object/transition preserves the existing
+     * action-only governor.<action> route.
+     */
+    QStringList extraArguments = {
+        normalizedAction
+    };
+
+    if (
+        !normalizedObjectId.isEmpty()
+    ) {
+        extraArguments
+            << QStringLiteral(
+                "--object-id"
+            )
+            << normalizedObjectId;
+    }
+
+    if (
+        !normalizedTransition.isEmpty()
+    ) {
+        extraArguments
+            << QStringLiteral(
+                "--transition"
+            )
+            << normalizedTransition;
+    }
+
+    startModuleProcess(
+        QStringLiteral(
+            "action"
+        ),
+        normalizedName,
+        false,
+        extraArguments
+    );
+}
+
+
+QVariantMap BossController::dependencyPreflight(
+    const QString &action,
     const QString &name
 )
 {
-    if (name.isEmpty())
-        return;
+    QVariantMap failure;
 
-    for (int i = 0; i < m_modules.size(); ++i) {
-        QVariantMap module =
-            m_modules.at(i).toMap();
+    failure.insert(
+        QStringLiteral("action"),
+        action
+    );
 
-        if (
-            module.value(
-                QStringLiteral("name")
-            ).toString()
-            != name
-        )
-            continue;
+    failure.insert(
+        QStringLiteral("module"),
+        name
+    );
 
-        if (
-            !module.value(
-                QStringLiteral("installed")
-            ).toBool()
-            || !module.value(
-                QStringLiteral("enabled")
-            ).toBool()
-            || module.value(
-                QStringLiteral("running"),
-                false
-            ).toBool()
-            || module.value(
-                QStringLiteral(
-                    "update_available"
-                ),
-                false
-            ).toBool()
-        )
-            return;
+    failure.insert(
+        QStringLiteral("allowed"),
+        false
+    );
 
-        const QString launcherAction =
-            module.value(
-                QStringLiteral(
-                    "launcher_action"
-                )
-            ).toString();
+    failure.insert(
+        QStringLiteral("affected"),
+        QVariantList()
+    );
 
-        if (launcherAction.isEmpty())
-            return;
+    failure.insert(
+        QStringLiteral("blockers"),
+        QVariantList()
+    );
 
-        qint64 processId = 0;
-
-        const bool started =
-            QProcess::startDetached(
-                commandPath(),
-                {
-                    name,
-                    launcherAction
-                },
-                QString(),
-                &processId
-            );
-
-        if (!started) {
-            setStatusText(
-                text(
-                    QStringLiteral(
-                        "modules.open_failed"
-                    )
-                ).arg(name)
-            );
-            return;
-        }
-
-        /*
-         * Hide Open immediately.
-         * The backend runtime marker becomes
-         * authoritative on the next poll.
-         */
-        module.insert(
-            QStringLiteral("running"),
-            true
-        );
-
-        m_modules[i] = module;
-        emit modulesChanged();
-
-        QTimer::singleShot(
-            250,
-            this,
-            &BossController::pollModuleRuntime
-        );
-
-        return;
+    if (
+        action.isEmpty()
+        || name.isEmpty()
+    ) {
+        return failure;
     }
+
+    bool ok = false;
+
+    const QByteArray output =
+        run(
+            {
+                QStringLiteral("modules"),
+                QStringLiteral("preflight"),
+                action,
+                name
+            },
+            false,
+            5000,
+            &ok
+        );
+
+    if (!ok)
+        return failure;
+
+    const QVariant parsed =
+        parseJson(output);
+
+    if (
+        !parsed.canConvert<QVariantMap>()
+    ) {
+        return failure;
+    }
+
+    const QVariantMap result =
+        parsed.toMap();
+
+    if (
+        !result.contains(
+            QStringLiteral("action")
+        )
+        || !result.contains(
+            QStringLiteral("module")
+        )
+        || !result.contains(
+            QStringLiteral("allowed")
+        )
+        || !result.contains(
+            QStringLiteral("affected")
+        )
+        || !result.contains(
+            QStringLiteral("blockers")
+        )
+    ) {
+        return failure;
+    }
+
+    return result;
 }
+
 
 void BossController::setModuleEnabled(const QString &name, bool enabled)
 {
