@@ -9,7 +9,7 @@ use neebles_backend::domestic_environment::parse_environment_lines;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -321,6 +321,40 @@ pub fn installed_module_manifest(name: &str) -> Result<ModuleManifest, String> {
 }
 
 /*
+ * Resolve Lifecycle from any already validated module directory.
+ *
+ * The same path is used by installed modules and staged candidates.
+ * A module without a Lifecycle declaration simply contributes an
+ * empty Lifecycle contract and therefore has no require relations.
+ */
+fn lifecycle_contract_from_module(
+    module_dir: &Path,
+    manifest: &ModuleManifest,
+) -> Result<crate::lifecycle::LifecycleContract, String> {
+    let Some(reference) = manifest.lifecycle.as_deref() else {
+        return Ok(crate::lifecycle::LifecycleContract::default());
+    };
+
+    let lifecycle_path = resolve_module_file(module_dir, reference, "lifecycle")?;
+
+    crate::lifecycle::load(&lifecycle_path)
+}
+
+pub fn installed_module_lifecycle_contract(
+    name: &str,
+) -> Result<crate::lifecycle::LifecycleContract, String> {
+    if !valid_module_id(name) {
+        return Err(format!("invalid module id: {name}"));
+    }
+
+    let module_dir = find_module_dir(name)?;
+
+    let manifest = read_manifest(&module_dir.join("manifest.json"))?;
+
+    lifecycle_contract_from_module(&module_dir, &manifest)
+}
+
+/*
  * Load every dynamic contract declared by an installed module.
  *
  * Boss does not know or care whether those contracts are named
@@ -506,6 +540,502 @@ impl Drop for ModuleInstallStaging {
             );
         }
     }
+}
+
+/*
+ * Candidate staged for recursive Lifecycle require resolution.
+ *
+ * Presence inside RequireCandidateInventory means the candidate was
+ * acquired for inspection during this transaction and has not been
+ * published into modules_root().
+ *
+ * No installation-state booleans are required.
+ */
+struct RequireCandidate {
+    module_id: String,
+    folder: String,
+    staging: ModuleInstallStaging,
+    manifest: ModuleManifest,
+    lifecycle: crate::lifecycle::LifecycleContract,
+}
+
+impl RequireCandidate {
+    fn module_id(&self) -> &str {
+        &self.module_id
+    }
+
+    fn folder(&self) -> &str {
+        &self.folder
+    }
+
+    fn staging_path(&self) -> &Path {
+        self.staging.path()
+    }
+
+    fn manifest(&self) -> &ModuleManifest {
+        &self.manifest
+    }
+
+    fn lifecycle(&self) -> &crate::lifecycle::LifecycleContract {
+        &self.lifecycle
+    }
+}
+
+/*
+ * Transaction-local candidate inventory.
+ *
+ * baseline:
+ *     modules that existed before require resolution
+ *
+ * staged:
+ *     missing modules materialized from immutable Registry commits
+ *     and retained without publication
+ */
+struct RequireCandidateInventory {
+    baseline: BTreeSet<String>,
+    staged: BTreeMap<String, RequireCandidate>,
+}
+
+impl RequireCandidateInventory {
+    fn new() -> Result<Self, String> {
+        let baseline = installed_names()?.into_iter().collect();
+
+        Ok(Self {
+            baseline,
+            staged: BTreeMap::new(),
+        })
+    }
+
+    fn baseline(&self) -> &BTreeSet<String> {
+        &self.baseline
+    }
+
+    fn staged(&self) -> &BTreeMap<String, RequireCandidate> {
+        &self.staged
+    }
+
+    fn staged_ids(&self) -> BTreeSet<String> {
+        self.staged.keys().cloned().collect()
+    }
+
+    fn take_staged(&mut self, module_id: &str) -> Option<RequireCandidate> {
+        self.staged.remove(module_id)
+    }
+
+    fn lifecycle_source(
+        &mut self,
+        module_id: &str,
+        registry: &Registry,
+    ) -> Result<crate::lifecycle::LifecycleContract, String> {
+        if !valid_module_id(module_id) {
+            return Err(format!("invalid require module id: {module_id}"));
+        }
+
+        /*
+         * Existing module:
+         *
+         * reuse it as baseline.
+         * Do not stage it and do not reinstall it.
+         *
+         * Its own require declaration is still inspected recursively.
+         */
+        if self.baseline.contains(module_id) {
+            return installed_module_lifecycle_contract(module_id);
+        }
+
+        /*
+         * Shared recursive requirement:
+         *
+         * one transaction keeps exactly one staged candidate.
+         */
+        if let Some(candidate) = self.staged.get(module_id) {
+            return Ok(candidate.lifecycle().clone());
+        }
+
+        let candidate = stage_require_candidate(module_id, registry)?;
+
+        let lifecycle = candidate.lifecycle().clone();
+
+        self.staged.insert(module_id.to_string(), candidate);
+
+        Ok(lifecycle)
+    }
+}
+
+fn stage_require_candidate(name: &str, registry: &Registry) -> Result<RequireCandidate, String> {
+    if !valid_module_id(name) {
+        return Err(format!("invalid module id in require candidate: {name}"));
+    }
+
+    let entry = registry.modules.get(name).ok_or_else(|| {
+        format!("required module '{name}' does not exist in the N.E.E.B.L.E.S. registry")
+    })?;
+
+    let temp_root = neebles_root().join("shared/tmp");
+
+    fs::create_dir_all(&temp_root)
+        .map_err(|error| format!("could not create {}: {error}", temp_root.display()))?;
+
+    let temp = temp_root.join(format!("require-{name}-{}", transaction_id()));
+
+    let staging = ModuleInstallStaging::prepare(temp)?;
+
+    checkout_registry_commit(name, entry, staging.path(), "boss.modules.install_staging")?;
+
+    let manifest = read_manifest(&staging.path().join("manifest.json"))?;
+
+    if manifest.name != name {
+        return Err(format!(
+            "required module manifest name '{}' does not match registry id '{name}'",
+            manifest.name
+        ));
+    }
+
+    if manifest.version != entry.version {
+        return Err(format!(
+            "required module '{}' manifest version '{}' does not match registry version '{}'",
+            name, manifest.version, entry.version
+        ));
+    }
+
+    let folder = entry.folder.as_deref().unwrap_or(name).to_string();
+
+    if !valid_module_id(&folder) {
+        return Err(format!("invalid module folder in registry: {folder}"));
+    }
+
+    let lifecycle = lifecycle_contract_from_module(staging.path(), &manifest)?;
+
+    Ok(RequireCandidate {
+        module_id: name.to_string(),
+
+        folder,
+
+        staging,
+
+        manifest,
+
+        lifecycle,
+    })
+}
+
+fn resolve_require_candidates(
+    root: &str,
+    registry: &Registry,
+) -> Result<
+    (
+        crate::lifecycle_require::RequirePlan,
+        RequireCandidateInventory,
+    ),
+    String,
+> {
+    let mut inventory = RequireCandidateInventory::new()?;
+
+    let baseline = inventory.baseline().clone();
+
+    let plan = crate::lifecycle_require::resolve(root, baseline, |module_id| {
+        inventory.lifecycle_source(module_id, registry)
+    })?;
+
+    Ok((plan, inventory))
+}
+
+/*
+ * Validate the complete publication surface before mutating
+ * the installed module tree.
+ *
+ * Folder collisions and pre-existing destinations are rejected
+ * before the first staged candidate is committed.
+ */
+fn validate_require_publication_destinations(
+    inventory: &RequireCandidateInventory,
+) -> Result<(), String> {
+    let mut folders = BTreeMap::<String, String>::new();
+
+    for (module_id, candidate) in inventory.staged() {
+        let folder = candidate.folder().to_string();
+
+        if let Some(previous) = folders.insert(folder.clone(), module_id.clone()) {
+            return Err(format!(
+                "require publication folder collision: modules '{}' and '{}' both resolve to '{}'",
+                previous, module_id, folder
+            ));
+        }
+
+        let destination = modules_root().join(&folder);
+
+        if destination.exists() {
+            return Err(format!(
+                "require publication destination already exists for module '{}': {}",
+                module_id,
+                destination.display()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/*
+ * Publish one already staged and validated candidate.
+ *
+ * This is the same installation boundary the normal Governor
+ * owns: module tree, settings contract, deactivate registry and
+ * lifecycle installation event.
+ *
+ * The caller owns multi-module rollback.
+ */
+fn publish_require_candidate(
+    candidate: RequireCandidate,
+) -> Result<BTreeMap<String, String>, String> {
+    let RequireCandidate {
+        module_id,
+        folder,
+        staging,
+        manifest,
+        lifecycle: _,
+    } = candidate;
+
+    if find_module_dir(&module_id).is_ok() {
+        return Err(format!(
+            "module '{}' became installed while require transaction was in progress",
+            module_id
+        ));
+    }
+
+    if manifest.tray.is_some() {
+        resolve_tray_contract_from(staging.path(), &manifest)?;
+    }
+
+    let settings_default = module_settings_default_from(staging.path(), &manifest)?;
+
+    let destination = modules_root().join(&folder);
+
+    fs::create_dir_all(modules_root())
+        .map_err(|error| format!("could not create {}: {error}", modules_root().display()))?;
+
+    if destination.exists() {
+        return Err(format!(
+            "module destination already exists: {}",
+            destination.display()
+        ));
+    }
+
+    staging.commit(&destination)?;
+
+    let settings_path = settings::module_settings_path(&neebles_root(), &module_id);
+
+    if let Err(error) = settings::update_from_default(&settings_path, &settings_default) {
+        let rollback_error = fs::remove_dir_all(&destination).err();
+
+        return match rollback_error {
+            None => Err(
+                format!(
+                    "could not initialize settings for required module '{}': {}; module publication was rolled back",
+                    module_id,
+                    error
+                )
+            ),
+
+            Some(rollback_error) => Err(
+                format!(
+                    "CRITICAL: could not initialize settings for required module '{}': {}; publication rollback also failed: {}",
+                    module_id,
+                    error,
+                    rollback_error
+                )
+            ),
+        };
+    }
+
+    if let Err(error) = register_deactivate_entry(&module_id, &manifest) {
+        let rollback_error = fs::remove_dir_all(&destination).err();
+
+        return match rollback_error {
+            None => Err(
+                format!(
+                    "could not register deactivate resources for required module '{}': {}; module publication was rolled back and local settings were preserved",
+                    module_id,
+                    error
+                )
+            ),
+
+            Some(rollback_error) => Err(
+                format!(
+                    "CRITICAL: could not register deactivate resources for required module '{}': {}; publication rollback also failed: {}",
+                    module_id,
+                    error,
+                    rollback_error
+                )
+            ),
+        };
+    }
+
+    if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
+        "module.lifecycle",
+        "installed",
+        serde_json::json!({
+            "module":
+                module_id,
+
+            "version":
+                manifest.version
+        }),
+    ) {
+        eprintln!(
+            "N.E.E.B.L.E.S.: required module '{}' installed but lifecycle event broadcast failed: {}",
+            module_id,
+            error
+        );
+    }
+
+    Ok(BTreeMap::from([
+        ("folder".to_string(), folder),
+        ("version".to_string(), manifest.version),
+    ]))
+}
+
+fn module_governor_lifecycle_runtime(
+) -> Result<crate::lifecycle_governor_runtime::GovernorLifecycleRuntime, String> {
+    let available = crate::lifecycle_available_capabilities::productive_catalog()?;
+
+    Ok(crate::lifecycle_governor_runtime::GovernorLifecycleRuntime::from_available(available))
+}
+
+fn execute_module_governor_lifecycle(
+    runtime: &crate::lifecycle_governor_runtime::GovernorLifecycleRuntime,
+    module_id: &str,
+    action: &str,
+    contract: &crate::lifecycle::LifecycleContract,
+) -> Result<(), String> {
+    runtime
+        .execute_action_blocking(
+            module_id,
+            &format!("module.{action}"),
+            contract,
+            action,
+            std::collections::BTreeMap::new(),
+        )
+        .map(|_| ())
+}
+
+fn require_install_failure(
+    cause: String,
+    transaction: &mut crate::lifecycle_require::RequireTransaction,
+) -> String {
+    match transaction.rollback(|entry| uninstall_without_lifecycle(entry.target(), true)) {
+        Ok(()) => {
+            format!("{cause}; modules acquired by this require transaction were rolled back")
+        }
+
+        Err(rollback_error) => {
+            format!("CRITICAL: {cause}; require rollback was incomplete: {rollback_error}")
+        }
+    }
+}
+
+fn install_require_tree(
+    root: &str,
+    registry: &Registry,
+    lifecycle_runtime: &crate::lifecycle_governor_runtime::GovernorLifecycleRuntime,
+) -> Result<(), String> {
+    let (plan, mut inventory) = resolve_require_candidates(root, registry)?;
+
+    validate_require_publication_destinations(&inventory)?;
+
+    let order = plan.resolution_order().to_vec();
+
+    let mut transaction = crate::lifecycle_require::RequireTransaction::new(plan);
+
+    for module_id in order {
+        if transaction.baseline().contains(&module_id) {
+            continue;
+        }
+
+        let Some(candidate) = inventory.take_staged(&module_id) else {
+            let error = format!("require transaction lost staged candidate '{}'", module_id);
+
+            return Err(require_install_failure(error, &mut transaction));
+        };
+
+        let lifecycle = candidate.lifecycle().clone();
+
+        let publication = publish_require_candidate(candidate);
+
+        let data = match publication {
+            Ok(data) => data,
+
+            Err(error) => {
+                return Err(require_install_failure(
+                    format!(
+                        "could not publish required module '{}': {}",
+                        module_id, error
+                    ),
+                    &mut transaction,
+                ));
+            }
+        };
+
+        if let Err(error) = transaction.record_acquisition(&module_id, "module.install", data) {
+            let current_cleanup = uninstall_without_lifecycle(&module_id, true);
+
+            let previous_cleanup =
+                transaction.rollback(|entry| uninstall_without_lifecycle(entry.target(), true));
+
+            let current_text = match current_cleanup {
+                Ok(()) => "current module was compensated".to_string(),
+
+                Err(cleanup_error) => {
+                    format!("current module compensation failed: {cleanup_error}")
+                }
+            };
+
+            let previous_text = match previous_cleanup {
+                Ok(()) => "previous acquisitions were compensated".to_string(),
+
+                Err(cleanup_error) => {
+                    format!("previous acquisition compensation failed: {cleanup_error}")
+                }
+            };
+
+            return Err(
+                format!(
+                    "CRITICAL: module '{}' was published but could not enter require journal: {}; {}; {}",
+                    module_id,
+                    error,
+                    current_text,
+                    previous_text
+                )
+            );
+        }
+
+        if let Err(error) =
+            execute_module_governor_lifecycle(lifecycle_runtime, &module_id, "install", &lifecycle)
+        {
+            return Err(require_install_failure(
+                format!(
+                    "install Lifecycle failed for module '{}': {}",
+                    module_id, error
+                ),
+                &mut transaction,
+            ));
+        }
+    }
+
+    if !inventory.staged().is_empty() {
+        let remaining = inventory
+            .staged_ids()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        return Err(require_install_failure(
+            format!("require transaction finished with unpublished staged candidates: {remaining}"),
+            &mut transaction,
+        ));
+    }
+
+    Ok(())
 }
 
 fn checkout_registry_commit(
@@ -2236,125 +2766,9 @@ pub fn install(name: &str) -> Result<(), String> {
 }
 
 fn install_internal(name: &str, registry: &Registry) -> Result<(), String> {
-    if find_module_dir(name).is_ok() {
-        return Ok(());
-    }
+    let lifecycle_runtime = module_governor_lifecycle_runtime()?;
 
-    let entry = registry
-        .modules
-        .get(name)
-        .ok_or_else(|| format!("module '{name}' does not exist in the N.E.E.B.L.E.S. registry"))?;
-
-    if !valid_module_id(name) {
-        return Err(format!("invalid module id in registry: {name}"));
-    }
-
-    let temp_root = neebles_root().join("shared/tmp");
-    fs::create_dir_all(&temp_root)
-        .map_err(|error| format!("could not create {}: {error}", temp_root.display()))?;
-    let temp = temp_root.join(format!("install-{name}-{}", transaction_id()));
-
-    let staging = ModuleInstallStaging::prepare(temp)?;
-
-    checkout_registry_commit(name, entry, staging.path(), "boss.modules.install_staging")?;
-
-    let manifest_path = staging.path().join("manifest.json");
-    let manifest = read_manifest(&manifest_path)?;
-    if manifest.name != name {
-        return Err(format!(
-            "module manifest name '{}' does not match registry id '{name}'",
-            manifest.name
-        ));
-    }
-
-    if manifest.version != entry.version {
-        return Err(format!(
-            "module '{}' manifest version '{}' does not match registry version '{}'",
-            name, manifest.version, entry.version
-        ));
-    }
-
-    if manifest.tray.is_some() {
-        resolve_tray_contract_from(staging.path(), &manifest)?;
-    }
-
-    let settings_default = module_settings_default_from(staging.path(), &manifest)?;
-
-    let folder = entry.folder.as_deref().unwrap_or(name);
-    if !valid_module_id(folder) {
-        return Err(format!("invalid module folder in registry: {folder}"));
-    }
-    let destination = modules_root().join(folder);
-    fs::create_dir_all(modules_root())
-        .map_err(|error| format!("could not create {}: {error}", modules_root().display()))?;
-    if destination.exists() {
-        return Err(format!(
-            "module destination already exists: {}",
-            destination.display()
-        ));
-    }
-    staging.commit(&destination)?;
-
-    let settings_path = settings::module_settings_path(&neebles_root(), name);
-
-    if let Err(error) = settings::update_from_default(&settings_path, &settings_default) {
-        /*
-         * Installation is not considered committed if Boss
-         * cannot establish the persistent settings contract.
-         */
-        let rollback_error = fs::remove_dir_all(&destination).err();
-
-        return match rollback_error {
-            None => Err(format!(
-                "could not initialize settings for module '{}': {}; module installation was rolled back",
-                name,
-                error
-            )),
-
-            Some(rollback_error) => Err(format!(
-                "CRITICAL: could not initialize settings for module '{}': {}; installation rollback also failed: {}",
-                name,
-                error,
-                rollback_error
-            )),
-        };
-    }
-
-    if let Err(error) = register_deactivate_entry(name, &manifest) {
-        let rollback_error = fs::remove_dir_all(&destination).err();
-
-        return match rollback_error {
-            None => Err(format!(
-                "could not register deactivate resources for module '{}': {}; module installation was rolled back and local settings were preserved",
-                name,
-                error
-            )),
-
-            Some(rollback_error) =>
-                Err(format!(
-                    "CRITICAL: could not register deactivate resources for module '{}': {}; installation rollback also failed: {}",
-                    name,
-                    error,
-                    rollback_error
-                )),
-        };
-    }
-
-    if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
-        "module.lifecycle",
-        "installed",
-        serde_json::json!({
-            "module": name,
-            "version": manifest.version
-        }),
-    ) {
-        eprintln!(
-            "N.E.E.B.L.E.S.: module '{}' installed but lifecycle event broadcast failed: {}",
-            name, error
-        );
-    }
-
-    Ok(())
+    install_require_tree(name, registry, &lifecycle_runtime)
 }
 
 pub fn module_has_local_state(name: &str) -> Result<bool, String> {
@@ -2387,6 +2801,20 @@ pub fn module_has_local_state(name: &str) -> Result<bool, String> {
 }
 
 pub fn uninstall(name: &str, remove_settings: bool) -> Result<(), String> {
+    let lifecycle_runtime = module_governor_lifecycle_runtime()?;
+
+    uninstall_internal(name, remove_settings, Some(&lifecycle_runtime))
+}
+
+fn uninstall_without_lifecycle(name: &str, remove_settings: bool) -> Result<(), String> {
+    uninstall_internal(name, remove_settings, None)
+}
+
+fn uninstall_internal(
+    name: &str,
+    remove_settings: bool,
+    lifecycle_runtime: Option<&crate::lifecycle_governor_runtime::GovernorLifecycleRuntime>,
+) -> Result<(), String> {
     /*
      * Uninstall is inherently destructive and therefore
      * owns the complete module lifecycle.
@@ -2394,6 +2822,12 @@ pub fn uninstall(name: &str, remove_settings: bool) -> Result<(), String> {
      * A module cannot remain alive after its installation
      * has been removed.
      */
+    if let Some(lifecycle_runtime) = lifecycle_runtime {
+        let lifecycle = installed_module_lifecycle_contract(name)?;
+
+        execute_module_governor_lifecycle(lifecycle_runtime, name, "uninstall", &lifecycle)?;
+    }
+
     deactivate_module(name, "uninstall")?;
 
     let path = find_module_dir(name)?;
@@ -2666,6 +3100,8 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
      */
     let manifest = read_manifest(&staging.path().join("manifest.json"))?;
 
+    let lifecycle = lifecycle_contract_from_module(staging.path(), &manifest)?;
+
     let settings_default = module_settings_default_from(staging.path(), &manifest)?;
 
     if manifest.name != name {
@@ -2750,6 +3186,48 @@ pub fn update(name: &str, close_running: bool) -> Result<(), String> {
         }
     }
 
+    let lifecycle_runtime = module_governor_lifecycle_runtime()?;
+
+    if let Err(lifecycle_error) =
+        execute_module_governor_lifecycle(&lifecycle_runtime, name, "update", &lifecycle)
+    {
+        let failed_update_path = root.join(format!(
+            ".neebles-failed-lifecycle-update-{name}-{transaction}"
+        ));
+
+        if let Err(error) = fs::rename(&current_path, &failed_update_path) {
+            return Err(format!(
+                "CRITICAL: update Lifecycle failed for module '{}': {}; new module could not be moved aside for rollback: {}",
+                name,
+                lifecycle_error,
+                error
+            ));
+        }
+
+        match fs::rename(&backup_path, &current_path) {
+            Ok(()) => {
+                let _ = fs::remove_dir_all(&failed_update_path);
+
+                return Err(format!(
+                    "update Lifecycle failed for module '{}': {}; previous module version was restored",
+                    name,
+                    lifecycle_error
+                ));
+            }
+
+            Err(rollback_error) => {
+                return Err(format!(
+                    "CRITICAL: update Lifecycle failed for module '{}': {}; rollback also failed: {}; previous version remains at {} and failed update remains at {}",
+                    name,
+                    lifecycle_error,
+                    rollback_error,
+                    backup_path.display(),
+                    failed_update_path.display()
+                ));
+            }
+        }
+    }
+
     /*
      * The new copy is now live.
      *
@@ -2825,7 +3303,15 @@ pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
 
     let previous = config::module_enabled(name)?;
 
+    let lifecycle = installed_module_lifecycle_contract(name)?;
+
+    let lifecycle_runtime = module_governor_lifecycle_runtime()?;
+
     if !enabled {
+        if previous {
+            execute_module_governor_lifecycle(&lifecycle_runtime, name, "disable", &lifecycle)?;
+        }
+
         deactivate_module(name, "disabled")?;
 
         config::set_module_enabled(name, false)?;
@@ -2862,6 +3348,34 @@ pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
     }
 
     if !previous {
+        if let Err(error) =
+            execute_module_governor_lifecycle(&lifecycle_runtime, name, "enable", &lifecycle)
+        {
+            let tray_cleanup = stop_tray_provider(name);
+
+            let config_cleanup = config::set_module_enabled(name, false);
+
+            let tray_text = match tray_cleanup {
+                Ok(_) => "tray compensation completed".to_string(),
+
+                Err(cleanup_error) => {
+                    format!("tray compensation failed: {cleanup_error}")
+                }
+            };
+
+            let config_text = match config_cleanup {
+                Ok(_) => "enabled flag was restored".to_string(),
+
+                Err(cleanup_error) => {
+                    format!("enabled flag compensation failed: {cleanup_error}")
+                }
+            };
+
+            return Err(format!(
+                "enable Lifecycle failed for module '{}': {}; {}; {}",
+                name, error, tray_text, config_text
+            ));
+        }
         if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
             "module.lifecycle",
             "enabled",
@@ -3616,11 +4130,7 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
      * Validate the referenced declarative contract before an
      * installation or update may commit.
      */
-    if let Some(lifecycle_path) = manifest.lifecycle.as_deref() {
-        let lifecycle_path = resolve_module_file(module_dir, lifecycle_path, "lifecycle")?;
-
-        let _ = crate::lifecycle::load(&lifecycle_path)?;
-    }
+    let _ = lifecycle_contract_from_module(module_dir, manifest)?;
 
     /*
      * Settings are part of the installed module contract.
@@ -3712,6 +4222,174 @@ fn _language_contract_example() -> Result<String, String> {
 }
 
 #[cfg(test)]
+mod require_candidate_contract_tests {
+    use super::*;
+
+    fn temporary_module_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "neebles-require-candidate-test-{}-{}-{}",
+            std::process::id(),
+            transaction_id(),
+            label
+        ));
+
+        fs::create_dir_all(&path).unwrap();
+
+        path
+    }
+
+    fn manifest(name: &str, lifecycle: Option<&str>) -> ModuleManifest {
+        ModuleManifest {
+            schema: MODULE_SCHEMA_VERSION,
+
+            name: name.to_string(),
+
+            version: "1.0.0".to_string(),
+
+            entrypoint: "entrypoint".to_string(),
+
+            lifecycle: lifecycle.map(str::to_string),
+
+            contracts: Vec::new(),
+
+            commands: BTreeMap::new(),
+
+            tray: None,
+
+            notifications: None,
+
+            settings: None,
+        }
+    }
+
+    #[test]
+    fn lifecycle_contract_from_module_returns_empty_contract_when_absent() {
+        let module_dir = temporary_module_dir("empty");
+
+        let manifest = manifest("alpha", None);
+
+        let contract = lifecycle_contract_from_module(&module_dir, &manifest).unwrap();
+
+        assert!(contract.require.is_empty());
+
+        assert!(contract.transitions.is_empty());
+
+        fs::remove_dir_all(module_dir).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_contract_from_module_loads_require_from_candidate_directory() {
+        let module_dir = temporary_module_dir("require");
+
+        fs::write(
+            module_dir.join("lifecycle.json"),
+            r#"{
+                "require": {
+                    "beta": {
+                        "future.channel": "stable"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let manifest = manifest("alpha", Some("lifecycle.json"));
+
+        let contract = lifecycle_contract_from_module(&module_dir, &manifest).unwrap();
+
+        assert_eq!(
+            contract.require.get("beta").unwrap().get("future.channel"),
+            Some(&"stable".to_string())
+        );
+
+        fs::remove_dir_all(module_dir).unwrap();
+    }
+
+    #[test]
+    fn candidate_inventory_represents_baseline_by_membership() {
+        let inventory = RequireCandidateInventory {
+            baseline: BTreeSet::from(["alpha".to_string()]),
+
+            staged: BTreeMap::new(),
+        };
+
+        assert!(inventory.baseline().contains("alpha"));
+
+        assert!(inventory.staged().is_empty());
+    }
+
+    #[test]
+    fn candidate_inventory_staged_ids_are_derived_from_map_membership() {
+        let staging_path = temporary_module_dir("staged");
+
+        fs::remove_dir_all(&staging_path).unwrap();
+
+        let staging = ModuleInstallStaging::prepare(staging_path.clone()).unwrap();
+
+        fs::create_dir_all(staging.path()).unwrap();
+
+        let candidate = RequireCandidate {
+            module_id: "beta".to_string(),
+
+            folder: "beta".to_string(),
+
+            staging,
+
+            manifest: manifest("beta", None),
+
+            lifecycle: crate::lifecycle::LifecycleContract::default(),
+        };
+
+        let inventory = RequireCandidateInventory {
+            baseline: BTreeSet::new(),
+
+            staged: BTreeMap::from([("beta".to_string(), candidate)]),
+        };
+
+        assert_eq!(inventory.staged_ids(), BTreeSet::from(["beta".to_string()]));
+
+        drop(inventory);
+
+        assert!(!staging_path.exists());
+    }
+
+    #[test]
+    fn candidate_keeps_module_identity_without_installation_flags() {
+        let staging_path = temporary_module_dir("identity");
+
+        fs::remove_dir_all(&staging_path).unwrap();
+
+        let staging = ModuleInstallStaging::prepare(staging_path.clone()).unwrap();
+
+        fs::create_dir_all(staging.path()).unwrap();
+
+        let candidate = RequireCandidate {
+            module_id: "gamma".to_string(),
+
+            folder: "gamma-folder".to_string(),
+
+            staging,
+
+            manifest: manifest("gamma", None),
+
+            lifecycle: crate::lifecycle::LifecycleContract::default(),
+        };
+
+        assert_eq!(candidate.module_id(), "gamma");
+
+        assert_eq!(candidate.folder(), "gamma-folder");
+
+        assert_eq!(candidate.manifest().name, "gamma");
+
+        assert!(candidate.staging_path().exists());
+
+        drop(candidate);
+
+        assert!(!staging_path.exists());
+    }
+}
+
+#[cfg(test)]
 mod lifecycle_contract_reference_tests {
     use super::*;
     use std::fs;
@@ -3756,8 +4434,22 @@ mod lifecycle_contract_reference_tests {
                 "hardcoded": {
                     "alpha": "one"
                 },
-                "start": "recipe start",
-                "stop": "recipe stop"
+                "transitions": {
+                    "start": {
+                        "operations": {
+                            "engage": {
+                                "artillery": "synthetic.capability",
+                                "objective": "synthetic.start",
+                                "munition": {},
+                                "tactics": {},
+                                "intelligence": {}
+                            }
+                        }
+                    },
+                    "stop": {
+                        "operations": {}
+                    }
+                }
             }"#,
         )
         .unwrap();
@@ -3768,7 +4460,12 @@ mod lifecycle_contract_reference_tests {
 
         assert_eq!(contract.hardcoded.get("alpha"), Some(&"one".to_string()));
 
-        assert_eq!(contract.start.as_deref(), Some("recipe start"));
+        assert!(contract
+            .transitions
+            .get("start")
+            .unwrap()
+            .operations
+            .contains_key("engage"));
 
         fs::remove_dir_all(module_dir).unwrap();
     }

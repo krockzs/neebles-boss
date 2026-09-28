@@ -4,51 +4,192 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+/*
+ * N.E.E.B.L.E.S. lore: operation
+ *
+ * Technical meaning:
+ * One independently addressable execution unit inside a battleplan.
+ *
+ * The macro structure is owned by Lifecycle.
+ * The internal String values are supplied dynamically by the module.
+ * Lifecycle must not hardcode concrete technologies, Rust dependencies,
+ * objective vocabularies, munition fields, tactics or intelligence fields.
+ */
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ObjectContract {
-    pub activate: String,
-    pub deactivate: String,
+pub struct Operation {
+    /*
+     * N.E.E.B.L.E.S. lore: artillery
+     *
+     * Technical meaning:
+     * Abstract execution capability selected through the module contract.
+     */
+    pub artillery: String,
+
+    /*
+     * N.E.E.B.L.E.S. lore: objective
+     *
+     * Technical meaning:
+     * Technical operation requested from the selected artillery.
+     */
+    pub objective: String,
+
+    /*
+     * N.E.E.B.L.E.S. lore: munition
+     *
+     * Technical meaning:
+     * Arbitrary technical String inputs supplied by the module.
+     */
+    #[serde(default)]
+    pub munition: BTreeMap<String, String>,
+
+    /*
+     * N.E.E.B.L.E.S. lore: tactics
+     *
+     * Technical meaning:
+     * Arbitrary technical execution information supplied by the module.
+     *
+     * Lifecycle owns only the map boundary at this layer.
+     */
+    #[serde(default)]
+    pub tactics: BTreeMap<String, String>,
+
+    /*
+     * N.E.E.B.L.E.S. lore: intelligence
+     *
+     * Technical meaning:
+     * Arbitrary technical output-selection information supplied by the module.
+     */
+    #[serde(default)]
+    pub intelligence: BTreeMap<String, String>,
 }
 
+/*
+ * N.E.E.B.L.E.S. lore: battleplan
+ *
+ * Technical meaning:
+ * Declarative collection of named operations for one lifecycle transition.
+ *
+ * The BTreeMap provides deterministic storage only.
+ * Its key order is not an execution-order contract.
+ */
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Battleplan {
+    #[serde(default)]
+    pub operations: BTreeMap<String, Operation>,
+}
+
+/*
+ * Technical meaning:
+ * Arbitrary lifecycle transitions exposed by one module-owned object.
+ *
+ * Lifecycle does not prescribe a fixed object anatomy.
+ */
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectContract {
+    #[serde(default)]
+    pub transitions: BTreeMap<String, Battleplan>,
+}
+
+/*
+ * Technical meaning:
+ * Opaque declaration attached to one required module.
+ *
+ * Lifecycle owns only the relation boundary.
+ * The module owns every technical String key and value inside it.
+ */
+pub type RequireDeclaration = BTreeMap<String, String>;
+
+/*
+ * N.E.E.B.L.E.S. lore: Lifecycle
+ *
+ * Technical meaning:
+ * Complete declarative lifecycle contract owned by one module.
+ *
+ * hardcoded remains neutral N.E.E.B.L.E.S. infrastructure.
+ * objects and transitions remain dynamically named maps.
+ */
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct LifecycleContract {
     #[serde(default)]
     pub hardcoded: BTreeMap<String, String>,
 
+    /*
+     * N.E.E.B.L.E.S. lore: require
+     *
+     * Technical meaning:
+     * Dynamically named inter-module requirements.
+     *
+     * The map key identifies the required module.
+     * The nested String map remains opaque module-owned information.
+     *
+     * Lifecycle does not prescribe versions, technologies, installers,
+     * activation flags or future requirement vocabulary here.
+     */
+    #[serde(default)]
+    pub require: BTreeMap<String, RequireDeclaration>,
+
     #[serde(default)]
     pub objects: BTreeMap<String, ObjectContract>,
 
     #[serde(default)]
-    pub install: Option<String>,
-
-    #[serde(default)]
-    pub update: Option<String>,
-
-    #[serde(default)]
-    pub uninstall: Option<String>,
-
-    #[serde(default)]
-    pub enable: Option<String>,
-
-    #[serde(default)]
-    pub disable: Option<String>,
-
-    #[serde(default)]
-    pub start: Option<String>,
-
-    #[serde(default)]
-    pub stop: Option<String>,
+    pub transitions: BTreeMap<String, Battleplan>,
 }
 
-fn validate_recipe(field: &str, value: &Option<String>) -> Result<(), String> {
-    let Some(value) = value else {
-        return Ok(());
-    };
-
+fn validate_non_empty_identifier(kind: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
-        return Err(format!("lifecycle field {field} cannot be empty"));
+        return Err(format!("lifecycle {kind} cannot be empty"));
+    }
+
+    Ok(())
+}
+
+fn validate_string_map(
+    owner: &str,
+    field: &str,
+    values: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    for key in values.keys() {
+        if key.trim().is_empty() {
+            return Err(format!("lifecycle {owner} {field} key cannot be empty"));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_operation(
+    owner: &str,
+    operation_id: &str,
+    operation: &Operation,
+) -> Result<(), String> {
+    validate_non_empty_identifier("operation id", operation_id)?;
+
+    if operation.artillery.trim().is_empty() {
+        return Err(format!(
+            "lifecycle {owner} operation '{operation_id}' artillery cannot be empty"
+        ));
+    }
+
+    if operation.objective.trim().is_empty() {
+        return Err(format!(
+            "lifecycle {owner} operation '{operation_id}' objective cannot be empty"
+        ));
+    }
+
+    validate_string_map(owner, "munition", &operation.munition)?;
+    validate_string_map(owner, "tactics", &operation.tactics)?;
+    validate_string_map(owner, "intelligence", &operation.intelligence)?;
+
+    Ok(())
+}
+
+fn validate_battleplan(owner: &str, battleplan: &Battleplan) -> Result<(), String> {
+    for (operation_id, operation) in &battleplan.operations {
+        validate_operation(owner, operation_id, operation)?;
     }
 
     Ok(())
@@ -61,31 +202,33 @@ pub fn validate(contract: &LifecycleContract) -> Result<(), String> {
         }
     }
 
-    for (object_id, object) in &contract.objects {
-        if object_id.trim().is_empty() {
-            return Err("lifecycle object id cannot be empty".to_string());
-        }
+    for (module_id, declaration) in &contract.require {
+        validate_non_empty_identifier("require module id", module_id)?;
 
-        if object.activate.trim().is_empty() {
-            return Err(format!(
-                "lifecycle object {object_id} activate recipe cannot be empty"
-            ));
-        }
+        let owner = format!("require '{module_id}'");
 
-        if object.deactivate.trim().is_empty() {
-            return Err(format!(
-                "lifecycle object {object_id} deactivate recipe cannot be empty"
-            ));
-        }
+        validate_string_map(&owner, "data", declaration)?;
     }
 
-    validate_recipe("install", &contract.install)?;
-    validate_recipe("update", &contract.update)?;
-    validate_recipe("uninstall", &contract.uninstall)?;
-    validate_recipe("enable", &contract.enable)?;
-    validate_recipe("disable", &contract.disable)?;
-    validate_recipe("start", &contract.start)?;
-    validate_recipe("stop", &contract.stop)?;
+    for (transition_id, battleplan) in &contract.transitions {
+        validate_non_empty_identifier("transition id", transition_id)?;
+
+        let owner = format!("transition '{transition_id}'");
+
+        validate_battleplan(&owner, battleplan)?;
+    }
+
+    for (object_id, object) in &contract.objects {
+        validate_non_empty_identifier("object id", object_id)?;
+
+        for (transition_id, battleplan) in &object.transitions {
+            validate_non_empty_identifier("object transition id", transition_id)?;
+
+            let owner = format!("object '{object_id}' transition '{transition_id}'");
+
+            validate_battleplan(&owner, battleplan)?;
+        }
+    }
 
     Ok(())
 }
@@ -140,170 +283,145 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_accepts_arbitrary_objects() {
+    fn lifecycle_accepts_arbitrary_transition_names() {
+        let contract = parse(
+            r#"{
+                "transitions": {
+                    "install": {
+                        "operations": {}
+                    },
+                    "open": {
+                        "operations": {}
+                    },
+                    "whatever_future_transition": {
+                        "operations": {}
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert!(contract.transitions.contains_key("install"));
+        assert!(contract.transitions.contains_key("open"));
+        assert!(contract
+            .transitions
+            .contains_key("whatever_future_transition"));
+    }
+
+    #[test]
+    fn lifecycle_accepts_arbitrary_objects_and_object_transitions() {
         let contract = parse(
             r#"{
                 "objects": {
                     "indicator": {
-                        "activate": "activate indicator",
-                        "deactivate": "deactivate indicator"
+                        "transitions": {
+                            "activate": {
+                                "operations": {}
+                            },
+                            "deactivate": {
+                                "operations": {}
+                            },
+                            "whatever": {
+                                "operations": {}
+                            }
+                        }
                     },
                     "worker": {
-                        "activate": "activate worker",
-                        "deactivate": "deactivate worker"
-                    },
-                    "whatever": {
-                        "activate": "activate whatever",
-                        "deactivate": "deactivate whatever"
+                        "transitions": {}
                     }
                 }
             }"#,
         )
         .unwrap();
 
-        assert_eq!(contract.objects.len(), 3);
         assert!(contract.objects.contains_key("indicator"));
         assert!(contract.objects.contains_key("worker"));
-        assert!(contract.objects.contains_key("whatever"));
+
+        let indicator = contract.objects.get("indicator").unwrap();
+
+        assert!(indicator.transitions.contains_key("activate"));
+        assert!(indicator.transitions.contains_key("deactivate"));
+        assert!(indicator.transitions.contains_key("whatever"));
     }
 
     #[test]
-    fn lifecycle_rejects_empty_object_id() {
-        let error = parse(
-            r#"{
-                "objects": {
-                    "": {
-                        "activate": "on",
-                        "deactivate": "off"
-                    }
-                }
-            }"#,
-        )
-        .unwrap_err();
-
-        assert!(error.contains("object id cannot be empty"));
-    }
-
-    #[test]
-    fn lifecycle_rejects_empty_object_activate_recipe() {
-        let error = parse(
-            r#"{
-                "objects": {
-                    "worker": {
-                        "activate": "   ",
-                        "deactivate": "off"
-                    }
-                }
-            }"#,
-        )
-        .unwrap_err();
-
-        assert!(error.contains("activate recipe cannot be empty"));
-    }
-
-    #[test]
-    fn lifecycle_rejects_empty_object_deactivate_recipe() {
-        let error = parse(
-            r#"{
-                "objects": {
-                    "worker": {
-                        "activate": "on",
-                        "deactivate": "   "
-                    }
-                }
-            }"#,
-        )
-        .unwrap_err();
-
-        assert!(error.contains("deactivate recipe cannot be empty"));
-    }
-
-    #[test]
-    fn lifecycle_rejects_unknown_object_field() {
-        let error = parse(
-            r#"{
-                "objects": {
-                    "worker": {
-                        "activate": "on",
-                        "deactivate": "off",
-                        "technology": "tray"
-                    }
-                }
-            }"#,
-        )
-        .unwrap_err();
-
-        assert!(error.contains("unknown field"));
-    }
-
-    #[test]
-    fn lifecycle_accepts_all_known_recipe_fields() {
+    fn lifecycle_accepts_dynamic_operation_maps() {
         let contract = parse(
             r#"{
-                "hardcoded": {},
-                "install": "recipe install",
-                "update": "recipe update",
-                "uninstall": "recipe uninstall",
-                "enable": "recipe enable",
-                "disable": "recipe disable",
-                "start": "recipe start",
-                "stop": "recipe stop"
+                "transitions": {
+                    "install": {
+                        "operations": {
+                            "infiltrate": {
+                                "artillery": "capability.one",
+                                "objective": "technical.operation",
+                                "munition": {
+                                    "input_a": "value-a",
+                                    "input_b": "value-b"
+                                },
+                                "tactics": {
+                                    "technical_key": "technical-value"
+                                },
+                                "intelligence": {
+                                    "technical_output": "technical-source"
+                                }
+                            }
+                        }
+                    }
+                }
             }"#,
         )
         .unwrap();
 
-        assert_eq!(contract.uninstall.as_deref(), Some("recipe uninstall"));
+        let operation = contract
+            .transitions
+            .get("install")
+            .unwrap()
+            .operations
+            .get("infiltrate")
+            .unwrap();
+
+        assert_eq!(operation.artillery, "capability.one");
+        assert_eq!(operation.objective, "technical.operation");
+        assert_eq!(operation.munition.len(), 2);
+        assert_eq!(operation.tactics.len(), 1);
+        assert_eq!(operation.intelligence.len(), 1);
     }
 
     #[test]
-    fn lifecycle_allows_absent_recipes() {
+    fn lifecycle_does_not_prescribe_artillery_or_objective_vocabulary() {
         let contract = parse(
             r#"{
-                "hardcoded": {}
+                "transitions": {
+                    "something": {
+                        "operations": {
+                            "anything": {
+                                "artillery": "future.capability.that.does.not.exist.today",
+                                "objective": "future.technical.objective",
+                                "munition": {},
+                                "tactics": {},
+                                "intelligence": {}
+                            }
+                        }
+                    }
+                }
             }"#,
         )
         .unwrap();
 
-        assert!(contract.install.is_none());
-        assert!(contract.stop.is_none());
-    }
+        let operation = contract
+            .transitions
+            .get("something")
+            .unwrap()
+            .operations
+            .get("anything")
+            .unwrap();
 
-    #[test]
-    fn lifecycle_rejects_empty_recipe() {
-        let error = parse(
-            r#"{
-                "start": "   "
-            }"#,
-        )
-        .unwrap_err();
+        assert_eq!(
+            operation.artillery,
+            "future.capability.that.does.not.exist.today"
+        );
 
-        assert!(error.contains("lifecycle field start cannot be empty"));
-    }
-
-    #[test]
-    fn lifecycle_rejects_non_string_hardcoded_value() {
-        let error = parse(
-            r#"{
-                "hardcoded": {
-                    "alpha": 7
-                }
-            }"#,
-        )
-        .unwrap_err();
-
-        assert!(error.contains("invalid type"));
-    }
-
-    #[test]
-    fn lifecycle_rejects_unknown_field() {
-        let error = parse(
-            r#"{
-                "unistall": "typo"
-            }"#,
-        )
-        .unwrap_err();
-
-        assert!(error.contains("unknown field"));
+        assert_eq!(operation.objective, "future.technical.objective");
     }
 
     #[test]
@@ -318,5 +436,270 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("hardcoded key cannot be empty"));
+    }
+
+    #[test]
+    fn lifecycle_rejects_empty_object_id() {
+        let error = parse(
+            r#"{
+                "objects": {
+                    "": {
+                        "transitions": {}
+                    }
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("object id cannot be empty"));
+    }
+
+    #[test]
+    fn lifecycle_rejects_empty_transition_id() {
+        let error = parse(
+            r#"{
+                "transitions": {
+                    "": {
+                        "operations": {}
+                    }
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("transition id cannot be empty"));
+    }
+
+    #[test]
+    fn lifecycle_rejects_empty_operation_id() {
+        let error = parse(
+            r#"{
+                "transitions": {
+                    "install": {
+                        "operations": {
+                            "": {
+                                "artillery": "anything",
+                                "objective": "anything"
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("operation id cannot be empty"));
+    }
+
+    #[test]
+    fn lifecycle_rejects_empty_artillery() {
+        let error = parse(
+            r#"{
+                "transitions": {
+                    "install": {
+                        "operations": {
+                            "infiltrate": {
+                                "artillery": "   ",
+                                "objective": "technical.operation"
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("artillery cannot be empty"));
+    }
+
+    #[test]
+    fn lifecycle_rejects_empty_objective() {
+        let error = parse(
+            r#"{
+                "transitions": {
+                    "install": {
+                        "operations": {
+                            "infiltrate": {
+                                "artillery": "capability",
+                                "objective": "   "
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("objective cannot be empty"));
+    }
+
+    #[test]
+    fn lifecycle_rejects_empty_dynamic_map_key() {
+        let error = parse(
+            r#"{
+                "transitions": {
+                    "install": {
+                        "operations": {
+                            "infiltrate": {
+                                "artillery": "capability",
+                                "objective": "technical.operation",
+                                "munition": {
+                                    "": "value"
+                                }
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("munition key cannot be empty"));
+    }
+
+    #[test]
+    fn lifecycle_rejects_non_string_dynamic_map_value() {
+        let error = parse(
+            r#"{
+                "transitions": {
+                    "install": {
+                        "operations": {
+                            "infiltrate": {
+                                "artillery": "capability",
+                                "objective": "technical.operation",
+                                "tactics": {
+                                    "anything": 7
+                                }
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("invalid type"));
+    }
+
+    #[test]
+    fn lifecycle_rejects_unknown_macro_field() {
+        let error = parse(
+            r#"{
+                "transitions": {},
+                "technology": "forbidden"
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("unknown field"));
+    }
+
+    #[test]
+    fn lifecycle_rejects_unknown_operation_macro_field() {
+        let error = parse(
+            r#"{
+                "transitions": {
+                    "install": {
+                        "operations": {
+                            "infiltrate": {
+                                "artillery": "capability",
+                                "objective": "technical.operation",
+                                "technology": "forbidden"
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("unknown field"));
+    }
+
+    #[test]
+    fn lifecycle_accepts_dynamic_require_map() {
+        let contract = parse(
+            r#"{
+                "require": {
+                    "module-alpha": {},
+                    "module-beta": {
+                        "future.intent": "anything",
+                        "opaque.data": "value"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(contract.require.len(), 2);
+
+        assert_eq!(
+            contract
+                .require
+                .get("module-beta")
+                .unwrap()
+                .get("future.intent"),
+            Some(&"anything".to_string())
+        );
+    }
+
+    #[test]
+    fn lifecycle_require_accepts_empty_declaration() {
+        let contract = parse(
+            r#"{
+                "require": {
+                    "module-alpha": {}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert!(contract.require.get("module-alpha").unwrap().is_empty());
+    }
+
+    #[test]
+    fn lifecycle_require_rejects_empty_module_id() {
+        let error = parse(
+            r#"{
+                "require": {
+                    "": {}
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("require module id cannot be empty"));
+    }
+
+    #[test]
+    fn lifecycle_require_rejects_empty_dynamic_key() {
+        let error = parse(
+            r#"{
+                "require": {
+                    "module-alpha": {
+                        "": "value"
+                    }
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("require 'module-alpha' data key cannot be empty"));
+    }
+
+    #[test]
+    fn lifecycle_require_rejects_non_string_dynamic_value() {
+        let error = parse(
+            r#"{
+                "require": {
+                    "module-alpha": {
+                        "future": 7
+                    }
+                }
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("invalid type"));
     }
 }
