@@ -32,7 +32,7 @@ BossController::BossController(QObject *parent)
 
     /*
      * DEMO:
-     * remote module update check every 30 seconds.
+     * remote update check.
      *
      * Production contract:
      * 5 minutes = 300000 ms.
@@ -46,7 +46,7 @@ BossController::BossController(QObject *parent)
         m_updatePollTimer,
         &QTimer::timeout,
         this,
-        &BossController::pollModuleUpdates
+        &BossController::pollUpdates
     );
 
     reload();
@@ -332,6 +332,53 @@ QByteArray BossController::run(
             }
         }
 
+        if (
+            arguments.size() >= 2
+            && arguments.at(0)
+                == QStringLiteral("--request-json")
+        ) {
+            const QJsonDocument document =
+                QJsonDocument::fromJson(
+                    arguments.at(1).toUtf8()
+                );
+
+            if (document.isObject()) {
+                const QJsonObject request =
+                    document.object();
+
+                const QString target =
+                    request.value(
+                        QStringLiteral("target")
+                    ).toString();
+
+                const QString action =
+                    request.value(
+                        QStringLiteral("action")
+                    ).toString();
+
+                if (
+                    target
+                        == QStringLiteral("boss")
+                    && action
+                        == QStringLiteral("update-execute")
+                ) {
+                    operation =
+                        QStringLiteral("update-boss");
+
+                    name =
+                        QStringLiteral(
+                            "N.E.E.B.L.E.S. Boss"
+                        );
+
+                    fromVersion =
+                        m_bossInstalledVersion;
+
+                    toVersion =
+                        m_bossRemoteVersion;
+                }
+            }
+        }
+
         QStringList elevated;
 
         elevated
@@ -581,6 +628,7 @@ void BossController::reload()
     loadLanguages();
     loadTranslations();
     loadModules();
+    loadBossUpdateStatus();
 }
 
 void BossController::loadConfig()
@@ -681,6 +729,117 @@ void BossController::loadTranslations()
     ++m_translationsRevision;
     emit translationsChanged();
 }
+
+void BossController::loadBossUpdateStatus()
+{
+    const QString request =
+        QStringLiteral(
+            "{\"target\":\"boss\","
+            "\"action\":\"update-status\","
+            "\"args\":[],"
+            "\"context\":{\"caller\":\"boss-ui\"}}"
+        );
+
+    bool ok = false;
+
+    const QVariant responseValue =
+        parseJson(
+            run(
+                {
+                    QStringLiteral(
+                        "--request-json"
+                    ),
+                    request
+                },
+                false,
+                10000,
+                &ok
+            )
+        );
+
+    if (
+        !ok
+        || !responseValue.canConvert<QVariantMap>()
+    ) {
+        return;
+    }
+
+    const QVariantMap response =
+        responseValue.toMap();
+
+    if (
+        !response.value(
+            QStringLiteral("ok")
+        ).toBool()
+    ) {
+        return;
+    }
+
+    const QVariant resultValue =
+        response.value(
+            QStringLiteral("result")
+        );
+
+    if (
+        !resultValue.canConvert<QVariantMap>()
+    ) {
+        return;
+    }
+
+    const QVariantMap result =
+        resultValue.toMap();
+
+    const QString installedVersion =
+        result.value(
+            QStringLiteral(
+                "installed_version"
+            )
+        ).toString().trimmed();
+
+    const QString remoteVersion =
+        result.value(
+            QStringLiteral(
+                "remote_version"
+            )
+        ).toString().trimmed();
+
+    if (
+        installedVersion.isEmpty()
+        || remoteVersion.isEmpty()
+    ) {
+        return;
+    }
+
+    const bool updateAvailable =
+        result.value(
+            QStringLiteral(
+                "update_available"
+            )
+        ).toBool();
+
+    if (
+        m_bossInstalledVersion
+            == installedVersion
+        && m_bossRemoteVersion
+            == remoteVersion
+        && m_bossUpdateAvailable
+            == updateAvailable
+    ) {
+        return;
+    }
+
+    m_bossInstalledVersion =
+        installedVersion;
+
+    m_bossRemoteVersion =
+        remoteVersion;
+
+    m_bossUpdateAvailable =
+        updateAvailable;
+
+    emit bossUpdateChanged();
+}
+
 
 void BossController::loadModules()
 {
@@ -1013,12 +1172,13 @@ void BossController::pollModuleRuntime()
     applyModuleLifecycle();
 }
 
-void BossController::pollModuleUpdates()
+void BossController::pollUpdates()
 {
     if (m_busy)
         return;
 
     loadModules();
+    loadBossUpdateStatus();
 }
 
 
@@ -1140,6 +1300,82 @@ void BossController::applyModuleLifecycle()
         }
     }
 }
+void BossController::installBossUpdate()
+{
+    if (
+        m_busy
+        || !m_bossUpdateAvailable
+        || m_bossInstalledVersion.isEmpty()
+        || m_bossRemoteVersion.isEmpty()
+    ) {
+        return;
+    }
+
+    const QJsonObject requestObject {
+        {
+            QStringLiteral("target"),
+            QStringLiteral("boss")
+        },
+        {
+            QStringLiteral("action"),
+            QStringLiteral("update-execute")
+        },
+        {
+            QStringLiteral("args"),
+            QJsonArray()
+        },
+        {
+            QStringLiteral("context"),
+            QJsonObject {
+                {
+                    QStringLiteral("caller"),
+                    QStringLiteral("boss-ui")
+                }
+            }
+        }
+    };
+
+    const QString request =
+        QString::fromUtf8(
+            QJsonDocument(
+                requestObject
+            ).toJson(
+                QJsonDocument::Compact
+            )
+        );
+
+    setBusy(true);
+
+    bool ok = false;
+
+    run(
+        {
+            QStringLiteral("--request-json"),
+            request
+        },
+        true,
+        600000,
+        &ok
+    );
+
+    setStatusText(
+        ok
+        ? text(
+            QStringLiteral("common.ok")
+        )
+        : text(
+            QStringLiteral("common.error")
+        )
+    );
+
+    if (!ok) {
+        loadBossUpdateStatus();
+    }
+
+    setBusy(false);
+}
+
+
 void BossController::saveConfig(const QString &language,
                                 bool trayEnabled,
                                 bool launcherEnabled,

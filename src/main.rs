@@ -1,6 +1,8 @@
+mod boss_update;
 mod cli;
 mod config;
 mod contracts;
+mod critical_update;
 mod dispatcher;
 mod external;
 mod ipc;
@@ -42,6 +44,7 @@ mod lifecycle_transition_executor;
 mod module_dependency_policy;
 mod module_ipc;
 mod modules;
+mod network_boundary;
 pub mod nightmare;
 mod notifications;
 mod privileges;

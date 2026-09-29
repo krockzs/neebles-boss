@@ -19,6 +19,9 @@ class BossController final : public QObject
     Q_PROPERTY(bool telemetryEnabled READ telemetryEnabled NOTIFY configChanged)
     Q_PROPERTY(QVariantList languages READ languages NOTIFY languagesChanged)
     Q_PROPERTY(QVariantList modules READ modules NOTIFY modulesChanged)
+    Q_PROPERTY(bool bossUpdateAvailable READ bossUpdateAvailable NOTIFY bossUpdateChanged)
+    Q_PROPERTY(QString bossInstalledVersion READ bossInstalledVersion NOTIFY bossUpdateChanged)
+    Q_PROPERTY(QString bossRemoteVersion READ bossRemoteVersion NOTIFY bossUpdateChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
     Q_PROPERTY(QVariantMap transactionOperation READ transactionOperation NOTIFY transactionOperationChanged)
@@ -34,6 +37,9 @@ public:
     bool telemetryEnabled() const { return m_telemetryEnabled; }
     QVariantList languages() const { return m_languages; }
     QVariantList modules() const { return m_modules; }
+    bool bossUpdateAvailable() const { return m_bossUpdateAvailable; }
+    QString bossInstalledVersion() const { return m_bossInstalledVersion; }
+    QString bossRemoteVersion() const { return m_bossRemoteVersion; }
     bool busy() const { return m_busy; }
     QString statusText() const { return m_statusText; }
     QVariantMap transactionOperation() const { return m_transactionOperation; }
@@ -43,6 +49,7 @@ public:
     Q_INVOKABLE QUrl assetUrl(const QString &name) const;
     Q_INVOKABLE QUrl flagUrl(const QString &name) const;
     Q_INVOKABLE void reload();
+    Q_INVOKABLE void installBossUpdate();
     Q_INVOKABLE void saveConfig(const QString &language,
                                 bool trayEnabled,
                                 bool launcherEnabled,
@@ -90,6 +97,7 @@ signals:
     void configChanged();
     void languagesChanged();
     void modulesChanged();
+    void bossUpdateChanged();
     void busyChanged();
     void statusTextChanged();
     void transactionOperationChanged();
@@ -105,8 +113,9 @@ private:
     void loadLanguages();
     void loadTranslations();
     void loadModules();
+    void loadBossUpdateStatus();
     void pollModuleRuntime();
-    void pollModuleUpdates();
+    void pollUpdates();
     void applyModuleLifecycle();
     void runModuleOperation(const QString &operation, const QString &name, bool privileged);
 
@@ -139,6 +148,9 @@ private:
     bool m_telemetryEnabled = false;
     QVariantList m_languages;
     QVariantList m_modules;
+    bool m_bossUpdateAvailable = false;
+    QString m_bossInstalledVersion;
+    QString m_bossRemoteVersion;
     QVariantMap m_strings;
     QVariantMap m_updateNotifications;
     QTimer *m_modulePollTimer = nullptr;

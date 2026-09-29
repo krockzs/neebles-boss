@@ -4,7 +4,9 @@
 
 Current source line: **1.0.15**
 
-Latest functional authority/settings closure commit: **`e3fd46a` — `refactor(boss): close point 2 authority and settings cleanup`**
+Published Point 2 closure baseline: **`e3fd46a` — `refactor(boss): close point 2 authority and settings cleanup`**
+
+Current macro closure: **Point 3 — Nightmare + Critical Update GREEN / CLOSED**.
 
 N.E.E.B.L.E.S. Boss is the governance and orchestration layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -25,7 +27,8 @@ Completed macro fronts:
 ```text
 Point 1  Contracts + Module IPC                GREEN / CLOSED
 Point 2  Settings + authority/persistence      GREEN / CLOSED
-Point 3  Nightmare + Critical Update           NEXT
+Point 3  Nightmare + Critical Update           GREEN / CLOSED
+Point 4  Notifications                         NEXT
 ```
 
 The Lifecycle and generic Surface front remains **GREEN / CLOSED** and is not reopened unless current source proves a real contradiction.
@@ -743,18 +746,178 @@ Point 2 is closed. There is no planned Point 2.6.
 
 ---
 
-# Pending roadmap
+# Point 3 — Nightmare + Critical Update
 
-Points 1 and 2 are closed.
+Point 3 is **GREEN / CLOSED**.
 
-The remaining Boss work starts at **Point 3**:
+The closure preserves a strict ownership boundary:
 
-3. **Nightmare + Critical Update — NEXT**
-   - preserve Nightmare as a transversal declarative transformation engine;
-   - audit the current implementation before changing code;
-   - integrate Critical Update as a real consumer;
-   - close publication, failure and rollback semantics for persistent transformations;
-   - do not turn Nightmare into update-specific logic.
+```text
+release/update owner
+    -> Critical Update coordination
+        -> opaque release-owned instructions
+            -> generic CriticalUpdateConsumer router
+                -> matching consumer
+                    -> generic transformation/execution engine
+```
+
+Critical Update owns update/release coordination. Nightmare remains a transversal declarative transformation engine and does not become update-specific logic.
+
+## Critical Update law
+
+Boss self-update is a **Critical Update**. There is no parallel "normal Boss update" architecture.
+
+Each release owner owns its own Critical Update manifest:
+
+```text
+<owner-repository>/critical-update/manifest.json
+```
+
+For Boss releases, the release pipeline materializes that owner file as:
+
+```text
+critical-update-manifest.json
+```
+
+A zero-byte owner manifest is valid and means:
+
+```text
+no Critical Update instructions for this release
+```
+
+A non-empty manifest is an ordered JSON array of opaque strings.
+
+Valid conceptual shape:
+
+```json
+[
+  "instruction.one",
+  "instruction.two"
+]
+```
+
+The contract does not expose typed action objects, `nightmare=true`, `required`, `order`, a consumer-specific DSL or any other second semantic schema.
+
+The consumer interprets the string.
+
+## Opaque instruction routing
+
+Critical Update owns a generic consumer boundary.
+
+The router:
+
+- receives opaque strings;
+- preserves instruction order;
+- requires exactly one accepting consumer;
+- rejects missing consumers;
+- rejects ambiguous consumers;
+- propagates consumer failure;
+- executes nothing for an empty manifest.
+
+The current productive consumer is the Nightmare adapter when the referenced formula is executable.
+
+Critical Update does not teach Nightmare about releases, versions or Boss-specific update semantics.
+
+Nightmare does not teach Critical Update transformation semantics.
+
+## Nightmare execution
+
+Nightmare remains generic.
+
+The existing formula model now supports optional generic execution metadata while preserving passive formulas as valid declarations.
+
+The productive execution surface resolves a formula into a generic execution plan and uses the existing Nightmare primitives for:
+
+- source;
+- target;
+- destination;
+- preserve rules;
+- logical `set`;
+- logical `add`;
+- logical `remove`;
+- logical `rename`;
+- atomic publication;
+- symlink refusal and existing filesystem safety rules.
+
+This capability is reusable by future consumers. It is not a Critical Update one-off.
+
+## Boss update boundary
+
+Boss update detection consumes the existing stable release bootstrap.
+
+Critical Update execution stages and verifies release assets before installation.
+
+The update boundary does not derive permission from physical host state.
+
+The obsolete hardcoded platform AuthoritySupply path was removed.
+
+Critical Update now consumes the AuthoritySupply reference already supplied to the running Boss process and transports that same explicit reference to the installer.
+
+The closed path therefore does not contain:
+
+- a hardcoded `/usr/lib/neebles/platform/authority/authority-supply.json` assumption;
+- a host fallback for AuthoritySupply;
+- direct host `curl` execution;
+- direct host `git` execution;
+- a `critical-update discover` command;
+- the removed `registry/critical-update.json` compatibility path.
+
+## Boss UI
+
+Boss exposes Critical Update only when a newer Boss release is available.
+
+The Boss-owned Critical Update control remains presentation over the governed backend path. It does not become a second update engine.
+
+## Point 3 certification
+
+The final Point 3 certification closed with:
+
+```text
+owner manifest exists                         GREEN
+owner manifest zero byte                      GREEN
+release materializes Critical Update manifest GREEN
+release verifies Critical Update manifest     GREEN
+Boss parses Critical Update manifest          GREEN
+Boss executes opaque instruction router       GREEN
+Nightmare consumer exists                     GREEN
+Nightmare productive executor exists          GREEN
+deprecated registry manifest absent           GREEN
+forbidden discovery command absent            GREEN
+hardcoded AuthoritySupply absent              GREEN
+process-supplied AuthoritySupply consumed     GREEN
+direct host curl absent                       GREEN
+direct host git absent                        GREEN
+```
+
+Regression closure:
+
+```text
+cargo fmt -- --check                  GREEN
+cargo check --locked                  GREEN
+boss_update                           10 passed
+critical_update                        9 passed
+nightmare                             41 passed
+library authority suite               37 passed
+domesticacion_elfica                  13 passed / 1 explicitly ignored
+git diff --check                      GREEN
+```
+
+Final verdict:
+
+```text
+FINAL :: GREEN
+POINT :: 3 NIGHTMARE + CRITICAL UPDATE CLOSED
+```
+
+Test Module remained frozen throughout Point 3 and did not drive Boss architecture.
+
+---
+
+# Remaining roadmap
+
+Points 1, 2 and 3 are closed.
+
+The remaining Boss work starts at **Point 4**:
 
 4. **Notifications**
    - close the generic notification contract and ownership model;
@@ -835,9 +998,13 @@ Normal Boss operation does not require a remote telemetry endpoint.
 
 ## Nightmare
 
-Nightmare is the declarative transformation engine for persistent state.
+Nightmare is the generic declarative transformation engine for persistent state and other formula-driven transformations.
 
-Its role is transversal: formulas describe transformations without forcing Boss to gain technology-specific branches for every consumer.
+Its role is transversal: formulas describe reusable transformations without forcing Boss to gain technology-specific branches for every consumer.
+
+Point 3 added a productive generic execution surface and connected Critical Update through a consumer adapter.
+
+Nightmare remains independent from Critical Update. Future Boss subsystems may consume Nightmare without changing Nightmare into update-specific infrastructure.
 
 ---
 
@@ -868,14 +1035,15 @@ CANONICAL OBJECT STATE         GREEN / CLOSED
 BOSS UI / LAUNCHER / TRAY      GREEN / CLOSED
 POINT 1 MODULE IPC             GREEN / CLOSED
 POINT 2 SETTINGS / AUTHORITY   GREEN / CLOSED
-POINT 3 NIGHTMARE              NEXT
+POINT 3 NIGHTMARE / CU         GREEN / CLOSED
+POINT 4 NOTIFICATIONS          NEXT
 TEST MODULE                    FROZEN
 BOSS CONTRACT CLOSED           NO
 ```
 
 Current rule for continuation:
 
-**Begin Point 3 with a current-state audit of Nightmare + Critical Update. Do not code until ownership, persistence, failure and rollback boundaries are proven from current source.**
+**Begin Point 4 with a current-state audit of Notifications. Do not code until ownership, emission, transport, state and capability boundaries are proven from current source.**
 
 ---
 

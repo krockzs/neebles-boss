@@ -13,6 +13,7 @@ pub mod spell_world;
 pub mod domestic_external_data_authority;
 pub mod domestic_filesystem_boundary;
 pub mod domestic_platform_authority;
+pub mod domestic_workspace_execution;
 pub mod domestic_writable_data_authority;
 
 pub mod domestic_boundary_execution;

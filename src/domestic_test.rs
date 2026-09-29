@@ -3618,6 +3618,151 @@ fn execute_recursive_closure_certification_case(
     Ok(outcome)
 }
 
+fn execute_workspace_execution_case(
+    select: &serde_json::Map<String, Value>,
+) -> Result<MatrixCaseOutcome, String> {
+    use crate::domestic_workspace_execution::{
+        validate_workspace_execution_request, WorkspaceExecutionRequest, WorkspaceReadonlyGrant,
+        WorkspaceWritableGrant,
+    };
+    use std::ffi::OsString;
+
+    let world = matrix_string(select, "world")?;
+    let manifest_path = matrix_string(select, "manifest_path")?;
+    let platform_path = matrix_string(select, "platform_path")?;
+    let readonly = matrix_string(select, "readonly")?;
+    let writable = matrix_string(select, "writable")?;
+    let chdir = matrix_string(select, "chdir")?;
+    let arguments = matrix_string(select, "arguments")?;
+
+    let world = match world {
+        "valid" => "boss.fixture.tool".to_string(),
+        "empty" => String::new(),
+        other => {
+            return Err(format!(
+                "unknown workspace execution world fixture: {other}"
+            ));
+        }
+    };
+
+    let manifest_path = match manifest_path {
+        "absolute" => PathBuf::from("/fixture/runtime.json"),
+        "relative" => PathBuf::from("runtime.json"),
+        other => {
+            return Err(format!("unknown workspace manifest path fixture: {other}"));
+        }
+    };
+
+    let platform_descriptor_path = match platform_path {
+        "absolute" => PathBuf::from("/fixture/platform.json"),
+        "relative" => PathBuf::from("platform.json"),
+        other => {
+            return Err(format!("unknown workspace platform path fixture: {other}"));
+        }
+    };
+
+    let readonly = match readonly {
+        "zero" => Vec::new(),
+
+        "multiple" => vec![
+            WorkspaceReadonlyGrant {
+                authority: "fixture.readonly.alpha".to_string(),
+                descriptor_path: PathBuf::from("/fixture/readonly-alpha.json"),
+            },
+            WorkspaceReadonlyGrant {
+                authority: "fixture.readonly.beta".to_string(),
+                descriptor_path: PathBuf::from("/fixture/readonly-beta.json"),
+            },
+        ],
+
+        other => {
+            return Err(format!("unknown workspace readonly fixture: {other}"));
+        }
+    };
+
+    let writable = match writable {
+        "zero" => Vec::new(),
+
+        "multiple" => vec![
+            WorkspaceWritableGrant {
+                authority: "fixture.writable.alpha".to_string(),
+                descriptor_path: PathBuf::from("/fixture/writable-alpha.json"),
+                source: PathBuf::from("/fixture/staging/alpha"),
+                destination: PathBuf::from("/work/alpha"),
+            },
+            WorkspaceWritableGrant {
+                authority: "fixture.writable.beta".to_string(),
+                descriptor_path: PathBuf::from("/fixture/writable-beta.json"),
+                source: PathBuf::from("/fixture/staging/beta"),
+                destination: PathBuf::from("/work/beta"),
+            },
+        ],
+
+        other => {
+            return Err(format!("unknown workspace writable fixture: {other}"));
+        }
+    };
+
+    let chdir = match chdir {
+        "absent" => None,
+        "absolute" => Some(PathBuf::from("/work")),
+        "relative" => Some(PathBuf::from("work")),
+        other => {
+            return Err(format!("unknown workspace chdir fixture: {other}"));
+        }
+    };
+
+    let arguments = match arguments {
+        "none" => Vec::new(),
+
+        "opaque_multiple" => vec![
+            OsString::from("--opaque-one"),
+            OsString::from("value with spaces"),
+            OsString::from("--opaque-two=literal"),
+        ],
+
+        other => {
+            return Err(format!("unknown workspace arguments fixture: {other}"));
+        }
+    };
+
+    let readonly_count = readonly.len();
+    let writable_count = writable.len();
+    let argument_count = arguments.len();
+    let chdir_state = if chdir.is_some() { "present" } else { "absent" };
+
+    let request = WorkspaceExecutionRequest {
+        manifest_path,
+        world,
+        platform_descriptor_path,
+        readonly,
+        writable,
+        mount_proc: false,
+        mount_dev: false,
+        mount_tmp: false,
+        chdir,
+        arguments,
+    };
+
+    match validate_workspace_execution_request(&request) {
+        Ok(()) => {
+            let evidence = vec![
+                format!("readonly:{readonly_count}"),
+                format!("writable:{writable_count}"),
+                format!("arguments:{argument_count}"),
+                format!("chdir:{chdir_state}"),
+            ];
+
+            Ok(MatrixCaseOutcome::observation(
+                "pass",
+                crate::domestic_observation::DomesticObservation::with_evidence(evidence),
+            ))
+        }
+
+        Err(_) => Ok(MatrixCaseOutcome::status("error")),
+    }
+}
+
 pub fn execute_tester_matrix(
     contract_path: &Path,
     tester_path: &Path,
@@ -3748,6 +3893,8 @@ pub fn execute_tester_matrix(
                 "effective_search_authority_projection" => {
                     execute_effective_search_authority_case(select)?
                 }
+
+                "workspace_execution" => execute_workspace_execution_case(select)?,
 
                 other => {
                     return Err(format!("matrix runner does not know generic spell {other}"));

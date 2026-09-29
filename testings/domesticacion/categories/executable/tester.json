@@ -406,6 +406,142 @@
           "expect": "error"
         }
       ]
+    },
+    {
+      "name": "boss.workspace_execution",
+      "options": {
+        "world": [
+          "valid",
+          "empty"
+        ],
+        "manifest_path": [
+          "absolute",
+          "relative"
+        ],
+        "platform_path": [
+          "absolute",
+          "relative"
+        ],
+        "readonly": [
+          "zero",
+          "multiple"
+        ],
+        "writable": [
+          "zero",
+          "multiple"
+        ],
+        "chdir": [
+          "absent",
+          "absolute",
+          "relative"
+        ],
+        "arguments": [
+          "none",
+          "opaque_multiple"
+        ]
+      },
+      "cases": [
+        {
+          "id": "minimal-workspace-is-valid",
+          "select": {
+            "world": "valid",
+            "manifest_path": "absolute",
+            "platform_path": "absolute",
+            "readonly": "zero",
+            "writable": "zero",
+            "chdir": "absent",
+            "arguments": "none"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 4
+          }
+        },
+        {
+          "id": "generic-multi-authority-workspace-is-valid",
+          "select": {
+            "world": "valid",
+            "manifest_path": "absolute",
+            "platform_path": "absolute",
+            "readonly": "multiple",
+            "writable": "multiple",
+            "chdir": "absolute",
+            "arguments": "opaque_multiple"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 4
+          }
+        },
+        {
+          "id": "opaque-arguments-do-not-change-workspace-contract",
+          "select": {
+            "world": "valid",
+            "manifest_path": "absolute",
+            "platform_path": "absolute",
+            "readonly": "zero",
+            "writable": "zero",
+            "chdir": "absolute",
+            "arguments": "opaque_multiple"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 4
+          }
+        },
+        {
+          "id": "empty-world-is-rejected",
+          "select": {
+            "world": "empty",
+            "manifest_path": "absolute",
+            "platform_path": "absolute",
+            "readonly": "zero",
+            "writable": "zero",
+            "chdir": "absent",
+            "arguments": "none"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "relative-runtime-manifest-is-rejected",
+          "select": {
+            "world": "valid",
+            "manifest_path": "relative",
+            "platform_path": "absolute",
+            "readonly": "zero",
+            "writable": "zero",
+            "chdir": "absent",
+            "arguments": "none"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "relative-platform-descriptor-is-rejected",
+          "select": {
+            "world": "valid",
+            "manifest_path": "absolute",
+            "platform_path": "relative",
+            "readonly": "zero",
+            "writable": "zero",
+            "chdir": "absent",
+            "arguments": "none"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "relative-working-directory-is-rejected",
+          "select": {
+            "world": "valid",
+            "manifest_path": "absolute",
+            "platform_path": "absolute",
+            "readonly": "multiple",
+            "writable": "multiple",
+            "chdir": "relative",
+            "arguments": "opaque_multiple"
+          },
+          "expect": "error"
+        }
+      ]
     }
   ]
 }

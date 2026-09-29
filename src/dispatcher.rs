@@ -512,6 +512,18 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
     match request.action.as_deref() {
         Some("version") => ExecutionResponse::ok(Some(json!({ "version": crate::VERSION }))),
 
+        Some("update-status") => match crate::boss_update::status_json() {
+            Ok(status) => ExecutionResponse::ok(Some(status)),
+
+            Err(error) => ExecutionResponse::fail(1, "boss_update_status", error),
+        },
+
+        Some("update-execute") => match crate::boss_update::execute_update_json() {
+            Ok(result) => ExecutionResponse::ok(Some(result)),
+
+            Err(error) => ExecutionResponse::fail(1, "boss_update_execute", error),
+        },
+
         Some("runtime-list") => match crate::module_ipc::runtime_registry().snapshot() {
             Ok(records) => match serde_json::to_value(records) {
                 Ok(value) => ExecutionResponse::ok(Some(value)),

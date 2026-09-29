@@ -509,6 +509,80 @@ ApplicationWindow {
                 }
 
                 Button {
+                    id: criticalUpdateButton
+
+                    visible:
+                        typeof boss !== "undefined"
+                        && boss.bossUpdateAvailable
+
+                    Layout.preferredWidth: 190
+                    Layout.preferredHeight: 42
+
+                    Layout.alignment:
+                        Qt.AlignTop | Qt.AlignHCenter
+
+                    hoverEnabled: true
+
+                    text:
+                        typeof boss !== "undefined"
+                        ? "Critical Update "
+                          + boss.bossRemoteVersion
+                        : "Critical Update"
+
+                    background: Rectangle {
+                        radius: 10
+
+                        color:
+                            criticalUpdateButton.down
+                            ? "#3F0A0A"
+                            : criticalUpdateButton.hovered
+                              ? "#2B1010"
+                              : "#180B0B"
+
+                        border.width: 2
+                        border.color: "#EF4444"
+
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: -3
+
+                            z: -1
+                            radius: 13
+                            color: "transparent"
+
+                            border.width: 4
+                            border.color: "#DC2626"
+
+                            opacity: 0.55
+                        }
+                    }
+
+                    contentItem: Text {
+                        text:
+                            criticalUpdateButton.text
+
+                        color: "#FCA5A5"
+
+                        font.pixelSize: 13
+                        font.bold: true
+
+                        horizontalAlignment:
+                            Text.AlignHCenter
+
+                        verticalAlignment:
+                            Text.AlignVCenter
+                    }
+
+                    enabled:
+                        typeof boss !== "undefined"
+                        && boss.bossUpdateAvailable
+                        && !boss.busy
+
+                    onClicked:
+                        boss.installBossUpdate()
+                }
+
+                Button {
                     id: telemetryButton
 
                     visible:

@@ -18,6 +18,7 @@ REQUIRED_ASSETS = {
     "install": "install.sh",
     "runtime_resolver": "neebles-runtime-resolve",
     "runtime_archive": "boss-runtime.tar.gz",
+    "critical_update": "critical-update-manifest.json",
 }
 
 EXECUTABLE_ASSETS = {
@@ -239,6 +240,49 @@ def validate_tar(path: Path) -> None:
             "client-data missing required files: "
             + ", ".join(sorted(missing_files))
         )
+
+
+def validate_critical_update_manifest(
+    path: Path,
+) -> list[str]:
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        fail(
+            "Critical Update manifest cannot be read: "
+            + str(exc)
+        )
+
+    if not payload:
+        return []
+
+    try:
+        value = json.loads(
+            payload.decode("utf-8")
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as exc:
+        fail(
+            "Critical Update manifest is invalid: "
+            + str(exc)
+        )
+
+    if not isinstance(value, list):
+        fail(
+            "Critical Update manifest must be an array of strings"
+        )
+
+    if not all(
+        isinstance(item, str)
+        for item in value
+    ):
+        fail(
+            "Critical Update manifest entries must be strings"
+        )
+
+    return value
 
 
 def validate_runtime_archive(path: Path) -> None:
@@ -475,6 +519,11 @@ def main() -> None:
                 fail(f"asset {key!r} is not executable: {filename}")
 
     validate_tar(dist / REQUIRED_ASSETS["client_data"])
+
+    validate_critical_update_manifest(
+        dist / REQUIRED_ASSETS["critical_update"]
+    )
+
     validate_runtime_archive(
         dist / REQUIRED_ASSETS["runtime_archive"]
     )

@@ -1442,54 +1442,6 @@ fn local_module_icon(module_dir: &Path) -> String {
     String::new()
 }
 
-fn build_network_boundary_command(
-    world_name: &str,
-    arguments: &[std::ffi::OsString],
-) -> Result<std::process::Command, String> {
-    let registry =
-        neebles_backend::domestic_authority_supply_process::process_supplied_authority_registry()?;
-
-    let grants = neebles_backend::domestic_authority_supply::build_authority_grant_set(
-        registry,
-        ["platform.filesystem_boundary", "system.dns_resolver_config"],
-    )?;
-
-    let platform_descriptor = grants.descriptor_path(registry, "platform.filesystem_boundary")?;
-
-    let dns_descriptor = grants.descriptor_path(registry, "system.dns_resolver_config")?;
-
-    let platform =
-        neebles_backend::domestic_platform_authority::load_platform_authority_descriptor(
-            &platform_descriptor,
-            "platform.filesystem_boundary",
-        )?;
-
-    let dns =
-        neebles_backend::domestic_external_data_authority::load_external_data_authority_descriptor(
-            &dns_descriptor,
-            "system.dns_resolver_config",
-        )?;
-
-    let runtime_manifest =
-        neebles_backend::domestic_runtime_authority::current_boss_runtime_manifest()?;
-
-    let plan =
-        neebles_backend::domestic_boundary_execution::compose_materialized_boundary_execution_plan(
-            &runtime_manifest,
-            world_name,
-            &platform,
-            &[dns],
-            true,
-            true,
-            true,
-            Some(std::path::Path::new("/tmp")),
-        )?;
-
-    neebles_backend::domestic_boundary_execution::build_pure_materialized_boundary_execution_command(
-        &plan, arguments,
-    )
-}
-
 fn github_raw_base(repo: &str, revision: &str) -> Option<String> {
     let repo = repo
         .strip_prefix("https://github.com/")?
@@ -1516,7 +1468,7 @@ fn remote_module_icon(repo: &str, commit: &str) -> String {
             std::ffi::OsString::from(url.as_str()),
         ];
 
-        let mut command = match build_network_boundary_command("boss.curl", &arguments) {
+        let mut command = match crate::network_boundary::command("boss.curl", &arguments) {
             Ok(command) => command,
             Err(_) => return String::new(),
         };
@@ -2453,7 +2405,7 @@ fn registry_url() -> Result<String, String> {
         std::ffi::OsString::from("refs/heads/main"),
     ];
 
-    let output = build_network_boundary_command("boss.git", &arguments)?
+    let output = crate::network_boundary::command("boss.git", &arguments)?
         .output()
         .map_err(|error| format!("could not resolve N.E.E.B.L.E.S. registry revision: {error}"))?;
 
@@ -2494,7 +2446,7 @@ pub fn fetch_registry() -> Result<Registry, String> {
         std::ffi::OsString::from(url.as_str()),
     ];
 
-    let output = build_network_boundary_command("boss.curl", &arguments)?
+    let output = crate::network_boundary::command("boss.curl", &arguments)?
         .output()
         .map_err(|error| format!("could not start curl: {error}"))?;
 

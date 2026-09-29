@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const CACHED_NIGHTMARE_CATALOG_PATH: &str =
     "/opt/neebles/shared/cache/nightmare/insert.nightmare.json";
@@ -453,6 +453,7 @@ pub struct ResolvedFormula {
     pub id: String,
     pub reader: Map<String, Value>,
     pub writer: Map<String, Value>,
+    pub execution: Option<Map<String, Value>>,
 }
 
 pub fn resolve_formula_from_catalog(
@@ -485,10 +486,18 @@ pub fn resolve_formula_from_catalog(
             format!("Nightmare formula '{formula_id}' must contain a 'writer' object")
         })?;
 
+    let execution = match formula.get("execution") {
+        Some(value) => Some(value.as_object().cloned().ok_or_else(|| {
+            format!("Nightmare formula '{formula_id}' execution must be an Object")
+        })?),
+        None => None,
+    };
+
     Ok(ResolvedFormula {
         id: formula_id.to_string(),
         reader,
         writer,
+        execution,
     })
 }
 
@@ -842,6 +851,178 @@ pub fn preserve_logical_values(
     }
 
     Ok(result)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NightmareExecutionPlan {
+    pub source: PathBuf,
+    pub target: PathBuf,
+    pub destination: PathBuf,
+    pub preserve: Vec<String>,
+    pub operations: Vec<LogicalOperation>,
+}
+
+fn execution_string(execution: &Map<String, Value>, key: &str) -> Result<String, String> {
+    let value = execution
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("Nightmare execution.{key} must be a String"))?
+        .trim();
+
+    if value.is_empty() {
+        return Err(format!("Nightmare execution.{key} must not be empty"));
+    }
+
+    Ok(value.to_string())
+}
+
+fn parse_logical_operation(value: &Value) -> Result<LogicalOperation, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "Nightmare execution operation must be an Object".to_string())?;
+
+    let operation = object
+        .get("op")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Nightmare execution operation.op must be a String".to_string())?;
+
+    let string = |key: &str| -> Result<String, String> {
+        let value = object
+            .get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("Nightmare execution operation.{key} must be a String"))?
+            .to_string();
+
+        if value.is_empty() {
+            return Err(format!(
+                "Nightmare execution operation.{key} must not be empty"
+            ));
+        }
+
+        Ok(value)
+    };
+
+    match operation {
+        "set" => Ok(LogicalOperation::Set {
+            key: string("key")?,
+            value: string("value")?,
+        }),
+
+        "add" => Ok(LogicalOperation::Add {
+            key: string("key")?,
+            value: string("value")?,
+        }),
+
+        "remove" => Ok(LogicalOperation::Remove {
+            key: string("key")?,
+        }),
+
+        "rename" => Ok(LogicalOperation::Rename {
+            from: string("from")?,
+            to: string("to")?,
+        }),
+
+        other => Err(format!(
+            "Nightmare execution operation '{other}' is unknown"
+        )),
+    }
+}
+
+pub fn resolve_execution_plan(formula: &ResolvedFormula) -> Result<NightmareExecutionPlan, String> {
+    let execution = formula
+        .execution
+        .as_ref()
+        .ok_or_else(|| format!("Nightmare formula '{}' has no execution plan", formula.id))?;
+
+    let preserve = match execution.get("preserve") {
+        None => Vec::new(),
+
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| "Nightmare execution.preserve must be an Array".to_string())?
+            .iter()
+            .map(|item| {
+                let value = item
+                    .as_str()
+                    .ok_or_else(|| {
+                        "Nightmare execution.preserve entries must be Strings".to_string()
+                    })?
+                    .to_string();
+
+                if value.is_empty() {
+                    return Err(
+                        "Nightmare execution.preserve entries must not be empty".to_string()
+                    );
+                }
+
+                Ok(value)
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+    };
+
+    let operations = match execution.get("operations") {
+        None => Vec::new(),
+
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| "Nightmare execution.operations must be an Array".to_string())?
+            .iter()
+            .map(parse_logical_operation)
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+
+    Ok(NightmareExecutionPlan {
+        source: PathBuf::from(execution_string(execution, "source")?),
+
+        target: PathBuf::from(execution_string(execution, "target")?),
+
+        destination: PathBuf::from(execution_string(execution, "destination")?),
+
+        preserve,
+        operations,
+    })
+}
+
+pub fn execute_formula_from_catalog(catalog: &Value, formula_id: &str) -> Result<(), String> {
+    let formula = resolve_formula_from_catalog(catalog, formula_id)?;
+
+    let plan = resolve_execution_plan(&formula)?;
+
+    let reader = resolve_reader_contract(&formula.reader)?;
+
+    let writer = resolve_writer_contract(&formula.writer)?;
+
+    let source_raw = std::fs::read_to_string(&plan.source).map_err(|error| {
+        format!(
+            "Nightmare could not read execution source {}: {error}",
+            plan.source.display()
+        )
+    })?;
+
+    let target_raw = std::fs::read_to_string(&plan.target).map_err(|error| {
+        format!(
+            "Nightmare could not read execution target {}: {error}",
+            plan.target.display()
+        )
+    })?;
+
+    let source = read_logical_document(&source_raw, &reader)?;
+
+    let target = read_logical_document(&target_raw, &reader)?;
+
+    let preserved = preserve_logical_values(&source, &target, &plan.preserve)?;
+
+    let migrated = apply_logical_operations(&preserved, &plan.operations)?;
+
+    let rendered = write_logical_document(&migrated, &writer)?;
+
+    atomic_replace_file(&plan.destination, &rendered)
+}
+
+pub fn execute_formula(formula_id: &str) -> Result<(), String> {
+    let catalog = load_catalog()?;
+
+    execute_formula_from_catalog(&catalog, formula_id)
 }
 
 pub fn atomic_replace_file(path: &Path, content: &str) -> Result<(), String> {
@@ -1734,6 +1915,186 @@ mod tests {
         assert_eq!(published, rendered);
 
         std::fs::remove_dir_all(&directory).expect("end-to-end test directory must be removed");
+    }
+
+    #[test]
+    fn formula_execution_plan_resolves_all_primitives() {
+        let catalog = serde_json::json!({
+            "formulas": {
+                "nightmare.execution.v1": {
+                    "reader": {
+                        "record_separator": "\n",
+                        "field_separator": "=",
+                        "trim": true
+                    },
+                    "writer": {
+                        "record_separator": "\n",
+                        "field_separator": "=",
+                        "final_record_separator": true
+                    },
+                    "execution": {
+                        "source": "/tmp/source",
+                        "target": "/tmp/target",
+                        "destination": "/tmp/destination",
+                        "preserve": [
+                            "USER",
+                            "THEME"
+                        ],
+                        "operations": [
+                            {
+                                "op": "set",
+                                "key": "FLAG",
+                                "value": "false"
+                            },
+                            {
+                                "op": "add",
+                                "key": "NEW",
+                                "value": "yes"
+                            },
+                            {
+                                "op": "remove",
+                                "key": "OLD"
+                            },
+                            {
+                                "op": "rename",
+                                "from": "A",
+                                "to": "B"
+                            }
+                        ]
+                    }
+                }
+            }
+        });
+
+        let formula = resolve_formula_from_catalog(&catalog, "nightmare.execution.v1")
+            .expect("formula must resolve");
+
+        let plan = resolve_execution_plan(&formula).expect("execution plan must resolve");
+
+        assert_eq!(plan.source, PathBuf::from("/tmp/source"));
+
+        assert_eq!(plan.target, PathBuf::from("/tmp/target"));
+
+        assert_eq!(plan.destination, PathBuf::from("/tmp/destination"));
+
+        assert_eq!(
+            plan.preserve,
+            vec!["USER".to_string(), "THEME".to_string(),]
+        );
+
+        assert_eq!(plan.operations.len(), 4);
+    }
+
+    #[test]
+    fn formula_without_execution_remains_valid_but_not_executable() {
+        let catalog = serde_json::json!({
+            "formulas": {
+                "nightmare.reader-writer.v1": {
+                    "reader": {},
+                    "writer": {
+                        "record_separator": "\n",
+                        "field_separator": "="
+                    }
+                }
+            }
+        });
+
+        validate_catalog(&catalog).expect("execution must remain optional");
+
+        let formula = resolve_formula_from_catalog(&catalog, "nightmare.reader-writer.v1")
+            .expect("formula must resolve");
+
+        assert!(formula.execution.is_none());
+
+        assert!(resolve_execution_plan(&formula).is_err());
+    }
+
+    #[test]
+    fn executable_formula_runs_end_to_end() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock must work")
+            .as_nanos();
+
+        let directory = std::env::temp_dir().join(format!(
+            "neebles-nightmare-execution-{}-{}",
+            std::process::id(),
+            unique
+        ));
+
+        std::fs::create_dir(&directory).expect("fixture directory must exist");
+
+        let source = directory.join("source.conf");
+
+        let target = directory.join("target.conf");
+
+        let destination = directory.join("destination.conf");
+
+        std::fs::write(&source, "USER=Pablo\nTHEME=dark\nOLD=yes\n").expect("source must exist");
+
+        std::fs::write(&target, "USER=default\nTHEME=light\nFLAG=true\n")
+            .expect("target must exist");
+
+        std::fs::write(&destination, "USER=default\nTHEME=light\nFLAG=true\n")
+            .expect("destination must exist");
+
+        let catalog = serde_json::json!({
+            "formulas": {
+                "nightmare.execution.v1": {
+                    "reader": {
+                        "record_separator": "\n",
+                        "field_separator": "=",
+                        "trim": true
+                    },
+                    "writer": {
+                        "record_separator": "\n",
+                        "field_separator": "=",
+                        "final_record_separator": true
+                    },
+                    "execution": {
+                        "source":
+                            source.to_string_lossy(),
+
+                        "target":
+                            target.to_string_lossy(),
+
+                        "destination":
+                            destination.to_string_lossy(),
+
+                        "preserve": [
+                            "USER",
+                            "THEME"
+                        ],
+
+                        "operations": [
+                            {
+                                "op": "set",
+                                "key": "FLAG",
+                                "value": "false"
+                            },
+                            {
+                                "op": "add",
+                                "key": "NEW",
+                                "value": "enabled"
+                            }
+                        ]
+                    }
+                }
+            }
+        });
+
+        execute_formula_from_catalog(&catalog, "nightmare.execution.v1")
+            .expect("formula execution must succeed");
+
+        let published =
+            std::fs::read_to_string(&destination).expect("destination must remain readable");
+
+        assert_eq!(
+            published,
+            "USER=Pablo\nTHEME=dark\nFLAG=false\nNEW=enabled\n"
+        );
+
+        std::fs::remove_dir_all(&directory).expect("fixture must clean");
     }
 
     #[test]

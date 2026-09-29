@@ -71,6 +71,7 @@ RELEASE_ASSETS = {
     "install": "install.sh",
     "runtime_resolver": "neebles-runtime-resolve",
     "runtime_archive": "boss-runtime.tar.gz",
+    "critical_update": "critical-update-manifest.json",
 }
 
 
@@ -281,6 +282,13 @@ def main():
         "Domestic runtime archive",
     )
 
+    critical_update_manifest = require_file(
+        ROOT
+        / "critical-update"
+        / "manifest.json",
+        "Critical Update manifest",
+    )
+
     if not launcher.is_dir():
         raise SystemExit(
             "Launcher plugin build missing: "
@@ -336,6 +344,11 @@ def main():
         shutil.copy2(
             runtime_archive,
             dist / "boss-runtime.tar.gz",
+        )
+
+        shutil.copy2(
+            critical_update_manifest,
+            dist / "critical-update-manifest.json",
         )
 
         domesticate(
