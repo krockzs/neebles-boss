@@ -275,10 +275,6 @@ impl SurfaceProjection {
         self.items.get(id)
     }
 
-    pub fn get_mut(&mut self, id: &str) -> Option<&mut SurfaceProjectionItem> {
-        self.items.get_mut(id)
-    }
-
     pub fn items(&self) -> &BTreeMap<String, SurfaceProjectionItem> {
         &self.items
     }

@@ -433,101 +433,78 @@ fn dispatch_settings(request: ExecutionRequest) -> ExecutionResponse {
 
 fn dispatch_module(module: &str, request: ExecutionRequest) -> ExecutionResponse {
     /*
-     * The normal CLI module/action surface maps to the
-     * "commands" contract.
+     * Module actions resolve exclusively through the dynamic
+     * "commands" contract and Module IPC.
      *
-     * This is surface semantics, not router semantics:
-     * invoke_declared remains generic over arbitrary
-     * contract types.
+     * No direct-entrypoint execution fallback exists.
      */
-    if let Some(action) = request.action.as_deref() {
-        match modules::installed_module_contract_endpoint(module, "commands", action) {
-            Ok(Some(_)) => {
-                let mut context = BTreeMap::<String, serde_json::Value>::new();
+    let action = request.action.as_deref().unwrap_or("default");
 
-                context.insert("caller".to_string(), json!(request.context.caller));
+    match modules::installed_module_contract_endpoint(module, "commands", action) {
+        Ok(Some(_)) => {
+            let mut context = BTreeMap::<String, serde_json::Value>::new();
 
-                return match crate::module_ipc::invoke_declared(
-                    module,
-                    "commands",
-                    action,
-                    request.args,
-                    None,
-                    context,
-                    None,
-                ) {
-                    Ok(ModuleMessage::Response {
-                        ok,
-                        code,
-                        result,
-                        error,
-                        ..
-                    }) => {
-                        if ok {
-                            ExecutionResponse {
-                                ok: true,
-                                code,
-                                result,
-                                error: None,
-                            }
-                        } else {
-                            let message = error.map(|error| error.message).unwrap_or_else(|| {
-                                format!("module '{}' endpoint '{}' failed", module, action)
-                            });
+            context.insert("caller".to_string(), json!(request.context.caller));
 
-                            ExecutionResponse::fail(code, "module_runtime", message)
+            match crate::module_ipc::invoke_declared(
+                module,
+                "commands",
+                action,
+                request.args,
+                None,
+                context,
+                None,
+            ) {
+                Ok(ModuleMessage::Response {
+                    ok,
+                    code,
+                    result,
+                    error,
+                    ..
+                }) => {
+                    if ok {
+                        ExecutionResponse {
+                            ok: true,
+                            code,
+                            result,
+                            error: None,
                         }
-                    }
+                    } else {
+                        let message = error.map(|error| error.message).unwrap_or_else(|| {
+                            format!("module '{}' endpoint '{}' failed", module, action)
+                        });
 
-                    Ok(ModuleMessage::Error { error, .. }) => {
-                        ExecutionResponse::fail(1, error.kind, error.message)
+                        ExecutionResponse::fail(code, "module_runtime", message)
                     }
+                }
 
-                    Ok(message) => ExecutionResponse::fail(
-                        1,
-                        "unexpected_module_response",
-                        format!(
-                            "module '{}' returned unexpected runtime message: {:?}",
-                            module, message
-                        ),
+                Ok(ModuleMessage::Error { error, .. }) => {
+                    ExecutionResponse::fail(1, error.kind, error.message)
+                }
+
+                Ok(message) => ExecutionResponse::fail(
+                    1,
+                    "unexpected_module_response",
+                    format!(
+                        "module '{}' returned unexpected runtime message: {:?}",
+                        module, message
                     ),
+                ),
 
-                    Err(error) => ExecutionResponse::fail(1, "module_runtime", error),
-                };
-            }
-
-            /*
-             * Dynamic endpoint not declared.
-             * Preserve Schema 3 legacy execution.
-             */
-            Ok(None) => {}
-
-            Err(error) => {
-                return ExecutionResponse::fail(1, "module_contract", error);
+                Err(error) => ExecutionResponse::fail(1, "module_runtime", error),
             }
         }
-    }
 
-    let mut args = Vec::new();
-
-    if let Some(action) = request.action {
-        args.push(action);
-    }
-
-    args.extend(request.args);
-
-    match modules::execute(module, &args, &request.context.caller) {
-        Ok(code) if code == 0 => ExecutionResponse::ok(Some(json!({
-            "exit_code": code
-        }))),
-
-        Ok(code) => ExecutionResponse::fail(
-            code,
-            "module_exit",
-            format!("module exited with code {code}"),
+        Ok(None) => ExecutionResponse::fail(
+            2,
+            "unknown_module_action",
+            format!(
+                "module '{}' does not declare dynamic commands endpoint '{}'",
+                module, action
+            ),
         ),
 
-        Err(error) => ExecutionResponse::fail(1, "module_execution", error),
+        Err(error) => ExecutionResponse::fail(1, "module_contract", error),
     }
 }
 

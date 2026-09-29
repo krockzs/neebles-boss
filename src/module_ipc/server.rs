@@ -421,31 +421,36 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
      * enabled installation and that every advertised endpoint
      * exists in that module's dynamic contracts.
      */
-    if let Err(error) = validate_registration(&module, &session_id, &endpoints)
-        .and_then(|_| modules::verify_module_runtime_process(&module, peer.pid))
-    {
-        let response = ModuleMessage::Error {
-            id: None,
+    let (runtime_pid, runtime_start_time_ticks) =
+        match validate_registration(&module, &session_id, &endpoints)
+            .and_then(|_| modules::verify_module_runtime_process(&module, peer.pid))
+        {
+            Ok(identity) => identity,
 
-            module: if module.trim().is_empty() {
-                None
-            } else {
-                Some(module.clone())
-            },
+            Err(error) => {
+                let response = ModuleMessage::Error {
+                    id: None,
 
-            error: ModuleError {
-                kind: "register_rejected".to_string(),
+                    module: if module.trim().is_empty() {
+                        None
+                    } else {
+                        Some(module.clone())
+                    },
 
-                message: error.clone(),
+                    error: ModuleError {
+                        kind: "register_rejected".to_string(),
 
-                details: None,
-            },
+                        message: error.clone(),
+
+                        details: None,
+                    },
+                };
+
+                let _ = write_message(&mut stream, &response);
+
+                return Err(error);
+            }
         };
-
-        let _ = write_message(&mut stream, &response);
-
-        return Err(error);
-    }
 
     /*
      * Una conexión Unix persistente necesita un lector
@@ -478,6 +483,10 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         session_id: session_id.clone(),
 
         protocol,
+
+        pid: runtime_pid,
+
+        start_time_ticks: runtime_start_time_ticks,
 
         endpoints,
 

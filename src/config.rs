@@ -710,15 +710,14 @@ mod boss_seed_persistence_tests {
 
         assert_eq!(after, before);
 
-        let _ = fs::remove_dir_all(parent.parent().unwrap());
+        let _ = fs::remove_dir_all(parent);
     }
 
     #[test]
     fn full_local_writer_keeps_values_even_when_equal_to_schema() {
         let path = temp_path("full-writer");
         std::fs::create_dir_all(
-            path
-                .parent()
+            path.parent()
                 .expect("temporary Boss settings path must have a parent"),
         )
         .expect("temporary Boss settings directory must be created");
@@ -751,7 +750,7 @@ mod boss_seed_persistence_tests {
             Some("true")
         );
 
-        let _ = fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 }
 

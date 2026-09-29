@@ -11,6 +11,16 @@ pub struct ModuleRuntimeRecord {
     pub protocol: u32,
 
     /*
+     * Physical identity authenticated by the kernel through
+     * SO_PEERCRED and captured at registration time.
+     *
+     * start_time_ticks prevents PID reuse from transferring
+     * ownership to an unrelated later process.
+     */
+    pub pid: u32,
+    pub start_time_ticks: u64,
+
+    /*
      * contract -> runtime endpoints realmente disponibles.
      */
     pub endpoints: BTreeMap<String, Vec<String>>,
@@ -270,6 +280,8 @@ mod certification_tests {
                 module: module.to_string(),
                 session_id: session_id.to_string(),
                 protocol: MODULES_PROTOCOL_VERSION,
+                pid: 4242,
+                start_time_ticks: 1,
                 endpoints: BTreeMap::new(),
                 subscriptions: subscriptions
                     .iter()

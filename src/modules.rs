@@ -3,51 +3,24 @@ use crate::contracts::{
     load_module_contracts, ContractDefinition, ContractEndpoint, ContractReference, ModuleContracts,
 };
 use crate::languages;
-use crate::privileges;
 use crate::settings;
-use neebles_backend::domestic_environment::parse_environment_lines;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const MODULE_SCHEMA_VERSION: u32 = 3;
+pub const MODULE_SCHEMA_VERSION: u32 = 4;
 pub const MODULE_LANGUAGE_SCHEMA_VERSION: u32 = 1;
 pub const MODULE_NOTIFICATIONS_PROTOCOL_VERSION: u32 = 1;
 pub const REGISTRY_SCHEMA_VERSION: u32 = 2;
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum CommandLifecycle {
-    #[default]
-    Oneshot,
-    Tracked,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CommandContract {
-    #[serde(default)]
-    pub requires_root: bool,
-
-    #[serde(default)]
-    pub lifecycle: CommandLifecycle,
-
-    #[serde(default)]
-    pub launcher: bool,
-
-    #[serde(default)]
-    pub allowed_session_inputs: Vec<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrayContract {
@@ -108,20 +81,10 @@ pub struct ModuleManifest {
      * declaring contract files without requiring Boss to be
      * recompiled for each module, command or contract type.
      *
-     * Legacy Schema 3 manifests without this field remain
-     * valid and resolve to an empty contract list.
+     * Schema 4 uses this generic list as the module contract extension index.
      */
     #[serde(default)]
     pub contracts: Vec<ContractReference>,
-
-    /*
-     * Legacy embedded command contracts.
-     *
-     * Kept for Schema 3 compatibility while the dynamic
-     * contract architecture is introduced.
-     */
-    #[serde(default)]
-    pub commands: BTreeMap<String, CommandContract>,
 
     #[serde(default)]
     pub tray: Option<TrayContract>,
@@ -503,30 +466,6 @@ fn surface_content_item_json(
     }))
 }
 
-pub fn installed_module_surface_content(
-    name: &str,
-    surface: &str,
-) -> Result<Vec<crate::surface_content::SurfaceContentItem>, String> {
-    let projection = installed_module_surface_projection(name)?;
-
-    Ok(crate::surface_content::resolve_for_surface(
-        &projection,
-        surface,
-    ))
-}
-
-pub fn installed_module_visible_surface_content(
-    name: &str,
-    surface: &str,
-) -> Result<Vec<crate::surface_content::SurfaceContentItem>, String> {
-    let projection = installed_module_surface_projection(name)?;
-
-    Ok(crate::surface_content::resolve_visible_for_surface(
-        &projection,
-        surface,
-    ))
-}
-
 /*
  * Load every dynamic contract declared by an installed module.
  *
@@ -733,20 +672,8 @@ struct RequireCandidate {
 }
 
 impl RequireCandidate {
-    fn module_id(&self) -> &str {
-        &self.module_id
-    }
-
     fn folder(&self) -> &str {
         &self.folder
-    }
-
-    fn staging_path(&self) -> &Path {
-        self.staging.path()
-    }
-
-    fn manifest(&self) -> &ModuleManifest {
-        &self.manifest
     }
 
     fn lifecycle(&self) -> &crate::lifecycle::LifecycleContract {
@@ -953,8 +880,8 @@ fn validate_require_publication_destinations(
  * Publish one already staged and validated candidate.
  *
  * This is the same installation boundary the normal Governor
- * owns: module tree, settings contract, deactivate registry and
- * lifecycle installation event.
+ * owns: module tree, settings contract and lifecycle installation
+ * event.
  *
  * The caller owns multi-module rollback.
  */
@@ -1019,30 +946,7 @@ fn publish_require_candidate(
                 )
             ),
         };
-    }
-
-    if let Err(error) = register_deactivate_entry(&module_id, &manifest) {
-        let rollback_error = fs::remove_dir_all(&destination).err();
-
-        return match rollback_error {
-            None => Err(
-                format!(
-                    "could not register deactivate resources for required module '{}': {}; module publication was rolled back and local settings were preserved",
-                    module_id,
-                    error
-                )
-            ),
-
-            Some(rollback_error) => Err(
-                format!(
-                    "CRITICAL: could not register deactivate resources for required module '{}': {}; publication rollback also failed: {}",
-                    module_id,
-                    error,
-                    rollback_error
-                )
-            ),
-        };
-    }
+    };
 
     if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
         "module.lifecycle",
@@ -1100,18 +1004,6 @@ fn execute_module_governor_lifecycle(
             observer,
         )
         .map(|_| ())
-}
-
-pub fn execute_governor_action(name: &str, action: &str) -> Result<(), String> {
-    execute_governor_action_with_observer(name, action, None)
-}
-
-pub fn execute_governor_action_observed(
-    name: &str,
-    action: &str,
-    observer_factory: &ModuleLifecycleObserverFactory,
-) -> Result<(), String> {
-    execute_governor_action_with_observer(name, action, Some(observer_factory))
 }
 
 pub fn execute_governor_target(
@@ -1191,36 +1083,6 @@ fn execute_governor_target_with_observer(
     }
 
     Ok(())
-}
-
-fn execute_governor_action_with_observer(
-    name: &str,
-    action: &str,
-    observer_factory: Option<&ModuleLifecycleObserverFactory>,
-) -> Result<(), String> {
-    let action = action.trim();
-
-    if action.is_empty() {
-        return Err("module Governor action cannot be empty".to_string());
-    }
-
-    /*
-     * Presence of the installed module and ownership of
-     * its Lifecycle contract are resolved here.
-     *
-     * No action vocabulary is interpreted here.
-     */
-    let lifecycle = installed_module_lifecycle_contract(name)?;
-
-    let lifecycle_runtime = module_governor_lifecycle_runtime()?;
-
-    execute_module_governor_lifecycle(
-        &lifecycle_runtime,
-        name,
-        action,
-        &lifecycle,
-        observer_factory,
-    )
 }
 
 fn require_install_failure(
@@ -1679,315 +1541,38 @@ pub fn modules_root() -> PathBuf {
     neebles_root().join("modules")
 }
 
-const DEACTIVATE_RESOURCE_RUNTIME: &str = "runtime";
-const DEACTIVATE_RESOURCE_TRAY: &str = "tray";
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct DeactivateEntry {
-    resources: Vec<String>,
-}
-
-static DEACTIVATE_REGISTRY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-fn deactivate_registry_path() -> PathBuf {
-    neebles_root().join("shared/deactivate.json")
-}
-
-fn deactivate_registry_lock() -> &'static Mutex<()> {
-    DEACTIVATE_REGISTRY_LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn validate_deactivate_registry(
-    registry: &BTreeMap<String, DeactivateEntry>,
-) -> Result<(), String> {
-    for (module, entry) in registry {
-        if !valid_module_id(module) {
-            return Err(format!(
-                "deactivate registry contains invalid module id: {module}"
-            ));
-        }
-
-        let mut seen = HashSet::new();
-
-        for resource in &entry.resources {
-            if resource != DEACTIVATE_RESOURCE_RUNTIME && resource != DEACTIVATE_RESOURCE_TRAY {
-                return Err(format!(
-                    "module '{module}' declares unknown deactivate resource '{resource}'"
-                ));
-            }
-
-            if !seen.insert(resource.as_str()) {
-                return Err(format!(
-                    "module '{module}' declares duplicate deactivate resource '{resource}'"
-                ));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn load_deactivate_registry_unlocked() -> Result<BTreeMap<String, DeactivateEntry>, String> {
-    let path = deactivate_registry_path();
-
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => Some(metadata),
-
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-
-        Err(error) => {
-            return Err(format!(
-                "could not inspect deactivate registry {}: {error}",
-                path.display()
-            ));
-        }
-    };
-
-    let Some(metadata) = metadata else {
-        return Ok(BTreeMap::new());
-    };
-
-    if metadata.file_type().is_symlink() {
-        return Err(format!(
-            "refusing symlinked deactivate registry: {}",
-            path.display()
-        ));
-    }
-
-    if !metadata.is_file() {
-        return Err(format!(
-            "deactivate registry is not a regular file: {}",
-            path.display()
-        ));
-    }
-
-    let raw = fs::read_to_string(&path).map_err(|error| {
-        format!(
-            "could not read deactivate registry {}: {error}",
-            path.display()
-        )
-    })?;
-
-    let registry: BTreeMap<String, DeactivateEntry> =
-        serde_json::from_str(&raw).map_err(|error| {
-            format!(
-                "invalid deactivate registry JSON {}: {error}",
-                path.display()
-            )
-        })?;
-
-    validate_deactivate_registry(&registry)?;
-
-    Ok(registry)
-}
-
-fn write_deactivate_registry_unlocked(
-    registry: &BTreeMap<String, DeactivateEntry>,
-) -> Result<(), String> {
-    validate_deactivate_registry(registry)?;
-
-    let path = deactivate_registry_path();
-
-    let parent = path.parent().ok_or_else(|| {
-        format!(
-            "deactivate registry has no parent directory: {}",
-            path.display()
-        )
-    })?;
-
-    fs::create_dir_all(parent).map_err(|error| {
-        format!(
-            "could not create deactivate registry directory {}: {error}",
-            parent.display()
-        )
-    })?;
-
-    if let Ok(metadata) = fs::symlink_metadata(&path) {
-        if metadata.file_type().is_symlink() {
-            return Err(format!(
-                "refusing symlinked deactivate registry: {}",
-                path.display()
-            ));
-        }
-
-        if !metadata.is_file() {
-            return Err(format!(
-                "deactivate registry is not a regular file: {}",
-                path.display()
-            ));
-        }
-    }
-
-    let temporary = parent.join(format!(
-        ".deactivate.json.tmp.{}.{}",
-        std::process::id(),
-        transaction_id()
-    ));
-
-    let mut payload = serde_json::to_vec_pretty(registry)
-        .map_err(|error| format!("could not serialize deactivate registry: {error}"))?;
-
-    payload.push(b'\n');
-
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&temporary)
-        .map_err(|error| {
-            format!(
-                "could not create deactivate registry temporary {}: {error}",
-                temporary.display()
-            )
-        })?;
-
-    if let Err(error) = file.write_all(&payload) {
-        let _ = fs::remove_file(&temporary);
-
-        return Err(format!(
-            "could not write deactivate registry temporary {}: {error}",
-            temporary.display()
-        ));
-    }
-
-    if let Err(error) = file.sync_all() {
-        let _ = fs::remove_file(&temporary);
-
-        return Err(format!(
-            "could not sync deactivate registry temporary {}: {error}",
-            temporary.display()
-        ));
-    }
-
-    drop(file);
-
-    fs::rename(&temporary, &path).map_err(|error| {
-        let _ = fs::remove_file(&temporary);
-
-        format!(
-            "could not publish deactivate registry {}: {error}",
-            path.display()
-        )
-    })?;
-
-    let directory = fs::File::open(parent).map_err(|error| {
-        format!(
-            "could not open deactivate registry directory {}: {error}",
-            parent.display()
-        )
-    })?;
-
-    directory.sync_all().map_err(|error| {
-        format!(
-            "deactivate registry was published but directory {} could not be synchronized: {error}",
-            parent.display()
-        )
-    })?;
-
-    Ok(())
-}
-
-fn deactivate_resources_for_manifest(manifest: &ModuleManifest) -> Vec<String> {
-    let mut resources = vec![DEACTIVATE_RESOURCE_RUNTIME.to_string()];
-
-    if manifest.tray.is_some() {
-        resources.push(DEACTIVATE_RESOURCE_TRAY.to_string());
-    }
-
-    resources
-}
-
-fn register_deactivate_entry(name: &str, manifest: &ModuleManifest) -> Result<(), String> {
-    let expected = DeactivateEntry {
-        resources: deactivate_resources_for_manifest(manifest),
-    };
-
-    let _guard = deactivate_registry_lock()
-        .lock()
-        .map_err(|_| "deactivate registry lock poisoned".to_string())?;
-
-    let mut registry = load_deactivate_registry_unlocked()?;
-
-    if registry.get(name) == Some(&expected) {
-        return Ok(());
-    }
-
-    registry.insert(name.to_string(), expected);
-
-    write_deactivate_registry_unlocked(&registry)
-}
-
-fn remove_deactivate_entry(name: &str) -> Result<(), String> {
-    let _guard = deactivate_registry_lock()
-        .lock()
-        .map_err(|_| "deactivate registry lock poisoned".to_string())?;
-
-    let mut registry = load_deactivate_registry_unlocked()?;
-
-    if registry.remove(name).is_none() {
-        return Ok(());
-    }
-
-    write_deactivate_registry_unlocked(&registry)
-}
-
-fn ensure_deactivate_entry(name: &str) -> Result<DeactivateEntry, String> {
-    let manifest = installed_module_manifest(name)?;
-
-    let expected = DeactivateEntry {
-        resources: deactivate_resources_for_manifest(&manifest),
-    };
-
-    let _guard = deactivate_registry_lock()
-        .lock()
-        .map_err(|_| "deactivate registry lock poisoned".to_string())?;
-
-    let mut registry = load_deactivate_registry_unlocked()?;
-
-    if registry.get(name) != Some(&expected) {
-        registry.insert(name.to_string(), expected.clone());
-
-        write_deactivate_registry_unlocked(&registry)?;
-    }
-
-    Ok(expected)
-}
-
-fn deactivate_resource_active(name: &str, resource: &str) -> Result<bool, String> {
-    match resource {
-        DEACTIVATE_RESOURCE_RUNTIME => {
-            if probe_module_pid(name)?.is_some() {
-                return Ok(true);
-            }
-
-            Ok(crate::module_ipc::runtime_registry().get(name)?.is_some())
-        }
-
-        DEACTIVATE_RESOURCE_TRAY => Ok(probe_tray_provider_pid(name)?.is_some()),
-
-        other => Err(format!(
-            "module '{name}' declares unsupported deactivate resource '{other}'"
-        )),
-    }
-}
-
 fn module_has_active_resources(name: &str) -> Result<bool, String> {
-    let entry = ensure_deactivate_entry(name)?;
+    let runtime_active = crate::module_ipc::runtime_registry().get(name)?.is_some();
 
-    for resource in &entry.resources {
-        if deactivate_resource_active(name, resource)? {
-            return Ok(true);
-        }
+    if runtime_active {
+        return Ok(true);
     }
 
-    Ok(false)
+    /*
+     * Tray provider runtime is infrastructure owned by
+     * Tray Manager and intentionally remains independent
+     * from the normal Module IPC runtime.
+     */
+    Ok(probe_tray_provider_pid(name)?.is_some())
 }
 
 fn request_runtime_shutdown(name: &str, reason: &str) -> Result<(), String> {
     let Some(record) = crate::module_ipc::runtime_registry().get(name)? else {
         return Ok(());
     };
+
+    let identity = ProcessIdentity {
+        pid: record.pid,
+        start_time_ticks: record.start_time_ticks,
+    };
+
+    /*
+     * If the authenticated process incarnation is already gone,
+     * there is nothing physical left to stop.
+     */
+    if !process_identity_is_alive(identity)? {
+        return Ok(());
+    }
 
     if let Err(error) = record
         .writer
@@ -1998,59 +1583,126 @@ fn request_runtime_shutdown(name: &str, reason: &str) -> Result<(), String> {
         })
     {
         eprintln!(
-            "N.E.E.B.L.E.S.: cooperative shutdown delivery failed for module '{}' session '{}': {}; governed process shutdown will continue",
+            "N.E.E.B.L.E.S.: cooperative shutdown delivery failed for module '{}' session '{}': {}; authenticated process shutdown will continue",
             name,
             record.session_id,
             error
         );
     }
 
+    /*
+     * Give the exact registered runtime a cooperative window.
+     *
+     * We intentionally track BOTH:
+     * - the exact session incarnation;
+     * - the exact kernel process incarnation.
+     *
+     * A later session or reused PID can never inherit ownership.
+     */
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
 
     while std::time::Instant::now() < deadline {
-        let registered = crate::module_ipc::runtime_registry().get(name)?.is_some();
+        let same_session = matches!(
+            crate::module_ipc::runtime_registry()
+                .get(name)?,
+            Some(ref current)
+                if current.session_id
+                    == record.session_id
+        );
 
-        let tracked = probe_module_pid(name)?.is_some();
+        let process_alive = process_identity_is_alive(identity)?;
 
-        if !registered && !tracked {
+        if !same_session && !process_alive {
+            return Ok(());
+        }
+
+        if !process_alive {
             return Ok(());
         }
 
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
+    /*
+     * Cooperative shutdown failed.
+     * Terminate ONLY the exact kernel-authenticated process
+     * incarnation captured during registration.
+     */
+    if !process_identity_is_alive(identity)? {
+        return Ok(());
+    }
+
+    let signal_result = unsafe { libc::kill(identity.pid as libc::pid_t, libc::SIGTERM) };
+
+    if signal_result != 0 {
+        return Err(format!(
+            "could not send SIGTERM to authenticated module '{}' runtime process {}: {}",
+            name,
+            identity.pid,
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+
+    while process_identity_is_alive(identity)? && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    if !process_identity_is_alive(identity)? {
+        return Ok(());
+    }
+
+    let signal_result = unsafe { libc::kill(identity.pid as libc::pid_t, libc::SIGKILL) };
+
+    if signal_result != 0 {
+        return Err(format!(
+            "could not send SIGKILL to authenticated module '{}' runtime process {}: {}",
+            name,
+            identity.pid,
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+
+    while process_identity_is_alive(identity)? && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    if process_identity_is_alive(identity)? {
+        return Err(format!(
+            "authenticated module '{}' runtime process {} did not terminate after SIGKILL",
+            name, identity.pid
+        ));
+    }
+
     Ok(())
 }
 
 fn deactivate_module(name: &str, reason: &str) -> Result<(), String> {
-    let entry = ensure_deactivate_entry(name)?;
+    /*
+     * No intermediate resource registry exists here.
+     *
+     * Normal module runtime belongs to Module IPC.
+     * Tray provider runtime belongs to Tray Manager.
+     */
+    request_runtime_shutdown(name, reason)?;
 
-    for resource in &entry.resources {
-        match resource.as_str() {
-            DEACTIVATE_RESOURCE_RUNTIME => {
-                request_runtime_shutdown(name, reason)?;
+    stop_tray_provider(name)?;
 
-                stop_module(name)?;
-            }
-
-            DEACTIVATE_RESOURCE_TRAY => {
-                stop_tray_provider(name)?;
-            }
-
-            other => {
-                return Err(format!(
-                    "module '{name}' declares unsupported deactivate resource '{other}'"
-                ));
-            }
-        }
+    if crate::module_ipc::runtime_registry().get(name)?.is_some() {
+        return Err(format!(
+            "module '{}' runtime is still registered after deactivation",
+            name
+        ));
     }
 
-    for resource in &entry.resources {
-        if deactivate_resource_active(name, resource)? {
-            return Err(format!(
-                "module '{name}' resource '{resource}' is still active after deactivation"
-            ));
-        }
+    if probe_tray_provider_pid(name)?.is_some() {
+        return Err(format!(
+            "module '{}' tray provider is still active after deactivation",
+            name
+        ));
     }
 
     Ok(())
@@ -2096,47 +1748,6 @@ fn runtime_modules_root() -> PathBuf {
     env::temp_dir()
         .join(format!("neebles-runtime-{}", runtime_identity()))
         .join("modules")
-}
-
-fn runtime_marker_path(name: &str) -> PathBuf {
-    runtime_modules_root().join(format!("{name}.pid"))
-}
-
-fn clear_runtime_marker(name: &str) {
-    let _ = fs::remove_file(runtime_marker_path(name));
-}
-
-fn clear_runtime_marker_if_pid(name: &str, pid: u32) {
-    let path = runtime_marker_path(name);
-
-    let matches = fs::read_to_string(&path)
-        .ok()
-        .and_then(|value| value.trim().parse::<u32>().ok())
-        == Some(pid);
-
-    if matches {
-        let _ = fs::remove_file(path);
-    }
-}
-
-fn write_runtime_marker(name: &str, pid: u32) -> Result<(), String> {
-    let root = runtime_modules_root();
-
-    fs::create_dir_all(&root).map_err(|error| {
-        format!(
-            "could not create module runtime directory {}: {error}",
-            root.display()
-        )
-    })?;
-
-    let path = runtime_marker_path(name);
-
-    fs::write(&path, format!("{pid}\n")).map_err(|error| {
-        format!(
-            "could not write module runtime marker {}: {error}",
-            path.display()
-        )
-    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2216,130 +1827,15 @@ fn process_identity_is_alive(identity: ProcessIdentity) -> Result<bool, String> 
     ))
 }
 
-fn probe_module_pid(name: &str) -> Result<Option<u32>, String> {
-    let path = runtime_marker_path(name);
-
-    let raw = match fs::read_to_string(&path) {
-        Ok(value) => value,
-
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(None);
-        }
-
-        Err(error) => {
-            return Err(format!(
-                "could not read module runtime marker {}: {error}",
-                path.display()
-            ));
-        }
-    };
-
-    let pid = raw.trim().parse::<u32>().map_err(|error| {
-        format!(
-            "module '{}' has an invalid runtime marker {}: {error}",
-            name,
-            path.display()
-        )
-    })?;
-
-    let process_path = PathBuf::from(format!("/proc/{pid}"));
-
-    if !process_path.exists() {
-        clear_runtime_marker_if_pid(name, pid);
-
-        return Ok(None);
-    }
-
-    /*
-     * From here onward a live PID exists.
-     *
-     * Failure to prove ownership must NEVER be converted
-     * into "not running". That would allow destructive
-     * operations to proceed while an unknown process may
-     * still be using the installed module.
-     */
-
-    let module_dir = find_module_dir(name).map_err(|error| {
-        format!(
-            "module '{}' runtime process {} exists, but its installation cannot be resolved: {}",
-            name, pid, error
-        )
-    })?;
-
-    let manifest = read_manifest(&module_dir.join("manifest.json")).map_err(|error| {
-        format!(
-            "module '{}' runtime process {} exists, but its manifest cannot be verified: {}",
-            name, pid, error
-        )
-    })?;
-
-    let expected = resolve_entrypoint(&module_dir, &manifest.entrypoint).map_err(|error| {
-        format!(
-            "module '{}' runtime process {} exists, but its entrypoint cannot be verified: {}",
-            name, pid, error
-        )
-    })?;
-
-    /*
-     * Native executable.
-     */
-    let proc_exe = PathBuf::from(format!("/proc/{pid}/exe"));
-
-    if let Ok(actual_exe) = fs::read_link(&proc_exe) {
-        if let Ok(actual_exe) = actual_exe.canonicalize() {
-            if actual_exe == expected {
-                return Ok(Some(pid));
-            }
-        }
-    }
-
-    /*
-     * Interpreted entrypoint:
-     * Bash/Python/Node/etc.
-     */
-    let cmdline =
-        fs::read(
-            format!("/proc/{pid}/cmdline")
-        )
-        .map_err(|error| {
-            format!(
-                "module '{}' runtime process {} exists, but its command line cannot be inspected: {error}",
-                name,
-                pid
-            )
-        })?;
-
-    let expected_bytes = expected.as_os_str().as_bytes();
-
-    let matches_entrypoint = cmdline
-        .split(|byte| *byte == 0)
-        .filter(|argument| !argument.is_empty())
-        .any(|argument| argument == expected_bytes);
-
-    if matches_entrypoint {
-        return Ok(Some(pid));
-    }
-
-    /*
-     * PID exists, marker exists, but ownership cannot be
-     * proven. Preserve the marker and fail closed.
-     */
-    Err(format!(
-        "module '{}' runtime marker points to live process {}, but Boss cannot verify that the process still belongs to the declared entrypoint",
-        name,
-        pid
-    ))
-}
-
 pub fn module_running(name: &str) -> bool {
-    match probe_module_pid(name) {
+    match crate::module_ipc::runtime_registry().get(name) {
         Ok(Some(_)) => true,
         Ok(None) => false,
 
         /*
-         * Unknown runtime state is treated as running in
-         * non-destructive views. This prevents the UI from
-         * presenting an unsafe false "stopped" state.
+         * Unknown registry state is reported as running
+         * to avoid presenting an unsafe false "stopped"
+         * state in non-destructive views.
          */
         Err(_) => true,
     }
@@ -2351,11 +1847,11 @@ pub fn module_running(name: &str) -> bool {
  * The kernel PID obtained through SO_PEERCRED is checked directly
  * against the installed module entrypoint.
  *
- * Runtime registration and tracked-process lifecycle are deliberately
- * independent authorities. This verifier therefore MUST NOT consult
- * the tracked runtime marker.
+ * Module IPC registration is the runtime ownership authority.
+ * Physical identity is retained by RuntimeRegistry after this
+ * verification succeeds.
  */
-pub fn verify_module_runtime_process(name: &str, pid: u32) -> Result<(), String> {
+pub fn verify_module_runtime_process(name: &str, pid: u32) -> Result<(u32, u64), String> {
     if pid == 0 {
         return Err(format!(
             "module '{}' IPC peer reported invalid process id 0",
@@ -2363,14 +1859,17 @@ pub fn verify_module_runtime_process(name: &str, pid: u32) -> Result<(), String>
         ));
     }
 
-    let process_path = PathBuf::from(format!("/proc/{pid}"));
-
-    if !process_path.exists() {
+    /*
+     * Capture the exact process incarnation before ownership
+     * verification. PID alone is never sufficient because Linux
+     * may reuse it after a process exits.
+     */
+    let Some(identity) = capture_process_identity(pid)? else {
         return Err(format!(
             "module '{}' IPC peer process {} does not exist",
             name, pid
         ));
-    }
+    };
 
     let module_dir = find_module_dir(name).map_err(|error| {
         format!(
@@ -2400,110 +1899,54 @@ pub fn verify_module_runtime_process(name: &str, pid: u32) -> Result<(), String>
         )
     })?;
 
-    /*
-     * Native entrypoint.
-     */
     let proc_exe = PathBuf::from(format!("/proc/{pid}/exe"));
+
+    let mut ownership_verified = false;
 
     if let Ok(actual_exe) = fs::read_link(&proc_exe) {
         if let Ok(actual_exe) = actual_exe.canonicalize() {
             if actual_exe == expected {
-                return Ok(());
+                ownership_verified = true;
             }
         }
     }
 
-    /*
-     * Interpreted entrypoint.
-     *
-     * Python, Bash, Node and similar runtimes expose the interpreter
-     * through /proc/<pid>/exe. The installed module entrypoint must
-     * therefore appear as one exact argv entry.
-     */
-    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).map_err(|error| {
-        format!(
-            "could not inspect IPC peer process {} for module '{}': {error}",
+    if !ownership_verified {
+        let cmdline = fs::read(format!("/proc/{pid}/cmdline")).map_err(|error| {
+            format!(
+                "could not inspect IPC peer process {} for module '{}': {error}",
+                pid, name
+            )
+        })?;
+
+        let expected_bytes = expected.as_os_str().as_bytes();
+
+        ownership_verified = cmdline
+            .split(|byte| *byte == 0)
+            .filter(|argument| !argument.is_empty())
+            .any(|argument| argument == expected_bytes);
+    }
+
+    if !ownership_verified {
+        return Err(format!(
+            "process {} is not the installed entrypoint declared by module '{}'",
             pid, name
-        )
-    })?;
-
-    let expected_bytes = expected.as_os_str().as_bytes();
-
-    let matches_entrypoint = cmdline
-        .split(|byte| *byte == 0)
-        .filter(|argument| !argument.is_empty())
-        .any(|argument| argument == expected_bytes);
-
-    if matches_entrypoint {
-        return Ok(());
-    }
-
-    Err(format!(
-        "process {} is not the installed entrypoint declared by module '{}'",
-        pid, name
-    ))
-}
-
-fn stop_module(name: &str) -> Result<(), String> {
-    let Some(pid) = probe_module_pid(name)? else {
-        return Ok(());
-    };
-
-    let Some(identity) = capture_process_identity(pid)? else {
-        clear_runtime_marker_if_pid(name, pid);
-        return Ok(());
-    };
-
-    if probe_module_pid(name)? != Some(pid) || !process_identity_is_alive(identity)? {
-        return Err(format!(
-            "module '{name}' process {pid} changed identity while lifecycle ownership was being verified"
         ));
     }
 
-    let signal_result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-
-    if signal_result != 0 {
-        return Err(format!(
-            "could not send SIGTERM to module '{name}' process {pid}: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-
-    while process_identity_is_alive(identity)? && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-
+    /*
+     * Close the PID-reuse race:
+     * the process verified above must still be the same
+     * incarnation captured before verification.
+     */
     if !process_identity_is_alive(identity)? {
-        clear_runtime_marker_if_pid(name, pid);
-        return Ok(());
-    }
-
-    let signal_result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-
-    if signal_result != 0 {
         return Err(format!(
-            "could not send SIGKILL to module '{name}' process {pid}: {}",
-            std::io::Error::last_os_error()
+            "module '{}' IPC peer process {} changed identity during registration verification",
+            name, pid
         ));
     }
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-
-    while process_identity_is_alive(identity)? && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-
-    if process_identity_is_alive(identity)? {
-        return Err(format!(
-            "module '{name}' process {pid} did not terminate after SIGKILL"
-        ));
-    }
-
-    clear_runtime_marker_if_pid(name, pid);
-
-    Ok(())
+    Ok((identity.pid, identity.start_time_ticks))
 }
 
 fn tray_runtime_marker_path(name: &str) -> PathBuf {
@@ -3205,24 +2648,6 @@ fn installed_dependency_graph(
     crate::module_dependency_policy::InstalledDependencyGraph::from_contracts(&contracts)
 }
 
-pub fn module_uninstall_blockers(name: &str) -> Result<Vec<String>, String> {
-    let _ = find_module_dir(name)?;
-
-    installed_dependency_graph()?.uninstall_blockers(name)
-}
-
-pub fn module_disable_plan(name: &str) -> Result<Vec<String>, String> {
-    let _ = find_module_dir(name)?;
-
-    installed_dependency_graph()?.disable_order(name)
-}
-
-pub fn module_enable_plan(name: &str) -> Result<Vec<String>, String> {
-    let _ = find_module_dir(name)?;
-
-    installed_dependency_graph()?.enable_order(name)
-}
-
 pub fn module_dependency_preflight(action: &str, name: &str) -> Result<Value, String> {
     let _ = find_module_dir(name)?;
 
@@ -3571,8 +2996,6 @@ fn uninstall_internal(
         }
     }
 
-    remove_deactivate_entry(name)?;
-
     if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
         "module.lifecycle",
         "uninstalled",
@@ -3669,14 +3092,14 @@ fn update_with_observer(
     checkout_registry_commit(name, entry, staging.path(), "boss.modules.update_staging")?;
 
     /*
-     * read_manifest() is now the schema-3 gate.
+     * read_manifest() is the schema-4 gate.
      *
      * Before touching the installed copy this validates:
      * - schema
      * - name format
      * - semantic version
      * - entrypoint
-     * - commands
+     * - dynamic contracts
      * - lifecycle values through serde
      * - launcher contract
      * - tray contract
@@ -3878,14 +3301,6 @@ fn update_with_observer(
         );
     }
 
-    if let Err(error) = register_deactivate_entry(name, &manifest) {
-        eprintln!(
-            "N.E.E.B.L.E.S.: module '{}' update committed, but deactivate registry refresh failed: {}; Boss will reconcile it on the next lifecycle operation",
-            name,
-            error
-        );
-    }
-
     Ok(())
 }
 fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
@@ -4039,7 +3454,7 @@ fn resolve_module_language(module_dir: &Path, requested: &str) -> Result<String,
     let manifest_path = module_dir.join("languages").join("manifest.json");
 
     /*
-     * Schema 3 modules always have a validated language
+     * Schema 4 modules always have a validated language
      * contract. No implicit legacy behavior exists here.
      */
     validate_module_language_contract(module_dir)?;
@@ -4085,256 +3500,6 @@ fn resolve_module_language(module_dir: &Path, requested: &str) -> Result<String,
     Ok(language.code.clone())
 }
 
-fn desktop_session_environment(
-    desktop_uid: libc::uid_t,
-    desktop_gid: libc::gid_t,
-) -> Result<(BTreeMap<String, String>, String, String), String> {
-    let runtime_dir = format!("/run/user/{desktop_uid}");
-
-    let session_bus = format!("unix:path={runtime_dir}/bus");
-
-    let current_uid = unsafe { libc::geteuid() };
-
-    let mut command;
-
-    let protocol_environment = BTreeMap::from([
-        ("XDG_RUNTIME_DIR".to_string(), runtime_dir.clone()),
-        ("DBUS_SESSION_BUS_ADDRESS".to_string(), session_bus.clone()),
-    ]);
-
-    if current_uid == desktop_uid {
-        command = neebles_backend::domestic_environment::build_process_command(
-            neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.systemctl")?,
-            neebles_backend::domestic_environment::ProcessEnvironmentClass::SystemInterface,
-            &protocol_environment,
-            &BTreeMap::new(),
-            &std::collections::BTreeSet::new(),
-        )?;
-
-        command.arg("--user").arg("show-environment");
-    } else if current_uid == 0 {
-        command = neebles_backend::domestic_environment::build_process_command(
-            neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.setpriv")?,
-            neebles_backend::domestic_environment::ProcessEnvironmentClass::SystemInterface,
-            &protocol_environment,
-            &BTreeMap::new(),
-            &std::collections::BTreeSet::new(),
-        )?;
-
-        command
-            .arg(format!("--reuid={desktop_uid}"))
-            .arg(format!("--regid={desktop_gid}"))
-            .arg("--init-groups")
-            .arg(
-                neebles_backend::domestic_runtime_authority::resolve_boss_executable(
-                    "boss.systemctl",
-                )?,
-            )
-            .arg("--user")
-            .arg("show-environment");
-    } else {
-        return Err(format!(
-            "Boss process uid {current_uid} cannot inspect desktop session for uid {desktop_uid}"
-        ));
-    }
-
-    let output = command
-        .output()
-        .map_err(|error| format!("could not inspect desktop user session environment: {error}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        return Err(format!(
-            "desktop user manager rejected environment query with status {}: {}",
-            output.status,
-            stderr.trim()
-        ));
-    }
-
-    let raw = String::from_utf8(output.stdout).map_err(|error| {
-        format!("desktop user manager returned non-UTF-8 environment data: {error}")
-    })?;
-
-    Ok((parse_environment_lines(&raw), runtime_dir, session_bus))
-}
-
-fn build_module_execution_command(
-    entrypoint: &Path,
-    args: &[String],
-    contract: &CommandContract,
-    language: &str,
-    caller: &str,
-    name: &str,
-    config_path: &Path,
-) -> Result<Command, String> {
-    let mut domestic = BTreeMap::<String, String>::new();
-
-    domestic.insert("NEEBLES_LANGUAGE".to_string(), language.to_string());
-
-    domestic.insert("NEEBLES_CALLER".to_string(), caller.to_string());
-
-    domestic.insert("NEEBLES_MODULE".to_string(), name.to_string());
-
-    domestic.insert(
-        "NEEBLES_CONFIG".to_string(),
-        config_path.display().to_string(),
-    );
-
-    if contract.requires_root {
-        let mut command = neebles_backend::domestic_environment::build_process_command(
-            entrypoint,
-            neebles_backend::domestic_environment::ProcessEnvironmentClass::Pure,
-            &domestic,
-            &BTreeMap::new(),
-            &std::collections::BTreeSet::new(),
-        )?;
-
-        command.args(args);
-
-        return Ok(command);
-    }
-
-    let (session_environment, runtime_dir, session_bus) = desktop_session_environment(
-        crate::runtime_identity::desktop_identity()?.0,
-        crate::runtime_identity::desktop_identity()?.1,
-    )?;
-
-    domestic.insert("XDG_RUNTIME_DIR".to_string(), runtime_dir);
-
-    domestic.insert("DBUS_SESSION_BUS_ADDRESS".to_string(), session_bus);
-
-    let allowed_session_inputs = contract
-        .allowed_session_inputs
-        .iter()
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-
-    let (desktop_uid, desktop_gid) = crate::runtime_identity::desktop_identity()?;
-
-    let current_uid = unsafe { libc::geteuid() };
-
-    if current_uid == desktop_uid {
-        let mut command = neebles_backend::domestic_environment::build_process_command(
-            entrypoint,
-            neebles_backend::domestic_environment::ProcessEnvironmentClass::Session,
-            &domestic,
-            &session_environment,
-            &allowed_session_inputs,
-        )?;
-
-        command.args(args);
-
-        return Ok(command);
-    }
-
-    if current_uid != 0 {
-        return Err(
-            format!(
-                "Boss process uid {current_uid} cannot execute non-root module action as desktop uid {desktop_uid}"
-            )
-        );
-    }
-
-    let sealed = neebles_backend::domestic_environment::build_process_environment(
-        neebles_backend::domestic_environment::ProcessEnvironmentClass::Session,
-        &domestic,
-        &session_environment,
-        &allowed_session_inputs,
-    )?;
-
-    let mut command = neebles_backend::domestic_environment::build_pure_process_command(
-        neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.setpriv")?,
-    )?;
-
-    command
-        .arg(format!("--reuid={desktop_uid}"))
-        .arg(format!("--regid={desktop_gid}"))
-        .arg("--init-groups")
-        .arg("--reset-env")
-        .arg(neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.env")?);
-
-    for (key, value) in sealed {
-        command.arg(format!("{key}={value}"));
-    }
-
-    command.arg(entrypoint).args(args);
-
-    Ok(command)
-}
-
-pub fn execute(name: &str, args: &[String], caller: &str) -> Result<i32, String> {
-    if !config::module_enabled(name)? {
-        return Err(format!("module '{name}' is disabled"));
-    }
-
-    let module_dir = find_module_dir(name)?;
-
-    let manifest = read_manifest(&module_dir.join("manifest.json"))?;
-
-    let action = args.first().map(String::as_str).unwrap_or("default");
-
-    let contract = manifest
-        .commands
-        .get(action)
-        .ok_or_else(|| format!("module '{}' does not declare command '{}'", name, action))?;
-
-    let track_runtime = contract.lifecycle == CommandLifecycle::Tracked;
-
-    if track_runtime && module_running(name) {
-        return Err(format!("module '{name}' is already running"));
-    }
-
-    privileges::ensure_root(contract.requires_root)?;
-
-    let entrypoint = resolve_entrypoint(&module_dir, &manifest.entrypoint)?;
-
-    let requested_language = config::load_or_initialize()?.language;
-
-    let language = resolve_module_language(&module_dir, &requested_language)?;
-
-    let config_path = config::config_path()?;
-
-    let mut command = build_module_execution_command(
-        &entrypoint,
-        args,
-        contract,
-        &language,
-        caller,
-        name,
-        &config_path,
-    )?;
-
-    command
-        .current_dir(&module_dir)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("could not launch module '{name}': {error}"))?;
-
-    if track_runtime {
-        if let Err(error) = write_runtime_marker(name, child.id()) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error);
-        }
-    }
-
-    let result = child
-        .wait()
-        .map_err(|error| format!("could not wait for module '{name}': {error}"));
-
-    if track_runtime {
-        clear_runtime_marker(name);
-    }
-
-    let status = result?;
-
-    Ok(status.code().unwrap_or(1))
-}
 pub fn find_module_dir(name: &str) -> Result<PathBuf, String> {
     if !valid_module_id(name) {
         return Err(format!("invalid module id: {name}"));
@@ -4366,9 +3531,10 @@ pub fn find_module_dir(name: &str) -> Result<PathBuf, String> {
     }
 
     /*
-     * Compatibility path: registry entries may install a
-     * module under a folder whose name differs from its
-     * manifest identity.
+     * Registry folder-resolution path:
+     *
+     * a registry entry may declare an installation folder
+     * whose name differs from the module manifest identity.
      *
      * Do not fully validate every unrelated module while
      * searching. One broken installation must not poison
@@ -4582,37 +3748,11 @@ fn resolve_module_file(module_dir: &Path, value: &str, field: &str) -> Result<Pa
     Ok(canonical)
 }
 
-/*
- * Resolve the single logical action that Boss may expose through
- * its global Quick Access / Launcher surface.
- *
- * Modules do not own launchers.
- *
- * A module may mark one action as launcher-capable through:
- *
- *   1. legacy Schema 3 manifest.commands.<action>.launcher
- *   2. dynamic "commands" contract endpoint <action>.launcher
- *
- * During migration the same logical action may be declared by both
- * sources. That is one action, not two. The dispatcher already gives
- * the dynamic "commands" endpoint execution precedence.
- *
- * launcher=true is invalid in every dynamic contract other than
- * "commands", because the Boss Launcher invokes the normal module
- * command surface.
- */
-fn launcher_action_from_sources(
+fn launcher_action_from_contracts(
     module_name: &str,
-    legacy_commands: &BTreeMap<String, CommandContract>,
     contracts: &ModuleContracts,
 ) -> Result<Option<String>, String> {
     let mut actions = std::collections::BTreeSet::<String>::new();
-
-    for (name, command) in legacy_commands {
-        if command.launcher {
-            actions.insert(name.clone());
-        }
-    }
 
     for (contract_type, contract) in &contracts.contracts {
         for (name, endpoint) in &contract.endpoints {
@@ -4623,7 +3763,9 @@ fn launcher_action_from_sources(
             if contract_type != "commands" {
                 return Err(format!(
                     "module '{}' marks endpoint '{}.{}' as launcher=true, but Boss Launcher actions must belong to the 'commands' contract",
-                    module_name, contract_type, name
+                    module_name,
+                    contract_type,
+                    name
                 ));
             }
 
@@ -4650,18 +3792,7 @@ fn launcher_action_from(
 ) -> Result<Option<String>, String> {
     let contracts = load_module_contracts(&manifest.name, module_dir, &manifest.contracts)?;
 
-    launcher_action_from_sources(&manifest.name, &manifest.commands, &contracts)
-}
-
-pub fn installed_module_launcher_action(name: &str) -> Result<Option<String>, String> {
-    if !valid_module_id(name) {
-        return Err(format!("invalid module id: {name}"));
-    }
-
-    let module_dir = find_module_dir(name)?;
-    let manifest = read_manifest(&module_dir.join("manifest.json"))?;
-
-    launcher_action_from(&module_dir, &manifest)
+    launcher_action_from_contracts(&manifest.name, &contracts)
 }
 
 fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Result<(), String> {
@@ -4706,40 +3837,15 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
     }
 
     /*
-     * A module may expose capabilities through legacy embedded
-     * commands, dynamic contracts, or both.
-     *
-     * Boss must not require a specific contract type such as
-     * "commands": contract names are intentionally generic.
-     */
-    if manifest.commands.is_empty() && manifest.contracts.is_empty() {
-        return Err(format!(
-            "module '{}' must declare at least one legacy command or dynamic contract",
-            manifest.name
-        ));
-    }
-
-    for action in manifest.commands.keys() {
-        if !valid_module_id(action) {
-            return Err(format!(
-                "module '{}' declares invalid command id '{}'",
-                manifest.name, action
-            ));
-        }
-    }
-
-    /*
      * Dynamic contracts are validated here as part of the installed
      * module contract, not lazily after installation.
      *
      * This also certifies the Boss Launcher invariant:
      * only the dynamic "commands" contract may expose launcher=true,
-     * and legacy + dynamic declarations must resolve to one logical
-     * launcher action.
      */
     let contracts = load_module_contracts(&manifest.name, module_dir, &manifest.contracts)?;
 
-    let _ = launcher_action_from_sources(&manifest.name, &manifest.commands, &contracts)?;
+    let _ = launcher_action_from_contracts(&manifest.name, &contracts)?;
 
     if let Some(tray) = &manifest.tray {
         if tray.protocol != crate::tray::protocol::TRAY_PROTOCOL_VERSION {
@@ -4795,7 +3901,21 @@ fn read_manifest(path: &Path) -> Result<ModuleManifest, String> {
     let raw = fs::read_to_string(path)
         .map_err(|error| format!("could not read module manifest {}: {error}", path.display()))?;
 
-    let manifest: ModuleManifest = serde_json::from_str(&raw)
+    let raw_value: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("invalid module manifest {}: {error}", path.display()))?;
+
+    if raw_value
+        .as_object()
+        .is_some_and(|object| object.contains_key("commands"))
+    {
+        return Err(format!(
+            "module manifest {} contains deprecated field 'commands'; schema {} uses dynamic contracts",
+            path.display(),
+            MODULE_SCHEMA_VERSION
+        ));
+    }
+
+    let manifest: ModuleManifest = serde_json::from_value(raw_value)
         .map_err(|error| format!("invalid module manifest {}: {error}", path.display()))?;
 
     let module_dir = path.parent().ok_or_else(|| {
@@ -4901,8 +4021,6 @@ mod require_candidate_contract_tests {
             surfaces: None,
 
             contracts: Vec::new(),
-
-            commands: BTreeMap::new(),
 
             tray: None,
 
@@ -5025,13 +4143,13 @@ mod require_candidate_contract_tests {
             lifecycle: crate::lifecycle::LifecycleContract::default(),
         };
 
-        assert_eq!(candidate.module_id(), "gamma");
+        assert_eq!(candidate.module_id, "gamma");
 
         assert_eq!(candidate.folder(), "gamma-folder");
 
-        assert_eq!(candidate.manifest().name, "gamma");
+        assert_eq!(candidate.manifest.name, "gamma");
 
-        assert!(candidate.staging_path().exists());
+        assert!(candidate.staging.path().exists());
 
         drop(candidate);
 
@@ -5066,7 +4184,6 @@ mod lifecycle_contract_reference_tests {
             lifecycle: Some(path.to_string()),
             surfaces: None,
             contracts: Vec::new(),
-            commands: BTreeMap::new(),
             tray: None,
             notifications: None,
             settings: None,
@@ -5167,46 +4284,11 @@ mod launcher_contract_tests {
             "contract": contract_type,
             "endpoints": endpoints
         }))
-        .expect("test dynamic contract must parse")
+        .expect("dynamic contract must parse")
     }
 
     #[test]
     fn launcher_contract_resolves_dynamic_commands_endpoint() {
-        let legacy = BTreeMap::<String, CommandContract>::new();
-
-        let mut contracts = ModuleContracts::default();
-        contracts.contracts.insert(
-            "commands".to_string(),
-            dynamic_contract(
-                "commands",
-                json!({
-                    "open": {
-                        "endpoint": "ui.open",
-                        "launcher": true
-                    }
-                }),
-            ),
-        );
-
-        assert_eq!(
-            launcher_action_from_sources("test-module", &legacy, &contracts)
-                .expect("dynamic launcher action must resolve"),
-            Some("open".to_string())
-        );
-    }
-
-    #[test]
-    fn launcher_contract_deduplicates_same_legacy_and_dynamic_action() {
-        let mut legacy = BTreeMap::<String, CommandContract>::new();
-
-        legacy.insert(
-            "open".to_string(),
-            CommandContract {
-                launcher: true,
-                ..Default::default()
-            },
-        );
-
         let mut contracts = ModuleContracts::default();
 
         contracts.contracts.insert(
@@ -5223,24 +4305,14 @@ mod launcher_contract_tests {
         );
 
         assert_eq!(
-            launcher_action_from_sources("test-module", &legacy, &contracts)
-                .expect("same logical action must be migration-compatible"),
+            launcher_action_from_contracts("test-module", &contracts)
+                .expect("dynamic Launcher action must resolve"),
             Some("open".to_string())
         );
     }
 
     #[test]
-    fn launcher_contract_rejects_two_distinct_launcher_actions() {
-        let mut legacy = BTreeMap::<String, CommandContract>::new();
-
-        legacy.insert(
-            "open".to_string(),
-            CommandContract {
-                launcher: true,
-                ..Default::default()
-            },
-        );
-
+    fn launcher_contract_rejects_two_dynamic_launcher_actions() {
         let mut contracts = ModuleContracts::default();
 
         contracts.contracts.insert(
@@ -5248,6 +4320,10 @@ mod launcher_contract_tests {
             dynamic_contract(
                 "commands",
                 json!({
+                    "open": {
+                        "endpoint": "ui.open",
+                        "launcher": true
+                    },
                     "settings": {
                         "endpoint": "ui.settings",
                         "launcher": true
@@ -5256,18 +4332,14 @@ mod launcher_contract_tests {
             ),
         );
 
-        let error = launcher_action_from_sources("test-module", &legacy, &contracts)
-            .expect_err("distinct launcher actions must be rejected");
+        let error = launcher_action_from_contracts("test-module", &contracts)
+            .expect_err("multiple Launcher actions must be rejected");
 
         assert!(error.contains("more than one launcher action"));
-        assert!(error.contains("open"));
-        assert!(error.contains("settings"));
     }
 
     #[test]
-    fn launcher_contract_rejects_launcher_flag_outside_commands_contract() {
-        let legacy = BTreeMap::<String, CommandContract>::new();
-
+    fn launcher_contract_rejects_launcher_outside_commands_contract() {
         let mut contracts = ModuleContracts::default();
 
         contracts.contracts.insert(
@@ -5283,21 +4355,19 @@ mod launcher_contract_tests {
             ),
         );
 
-        let error = launcher_action_from_sources("test-module", &legacy, &contracts)
-            .expect_err("non-command launcher flag must be rejected");
+        let error = launcher_action_from_contracts("test-module", &contracts)
+            .expect_err("launcher=true outside commands must fail");
 
         assert!(error.contains("'commands' contract"));
-        assert!(error.contains("service.start"));
     }
 
     #[test]
-    fn launcher_contract_allows_module_without_launcher_action() {
-        let legacy = BTreeMap::<String, CommandContract>::new();
+    fn launcher_contract_allows_no_launcher_action() {
         let contracts = ModuleContracts::default();
 
         assert_eq!(
-            launcher_action_from_sources("test-module", &legacy, &contracts)
-                .expect("launcher capability is optional"),
+            launcher_action_from_contracts("test-module", &contracts)
+                .expect("Launcher is optional"),
             None
         );
     }
