@@ -8,7 +8,7 @@ use neebles_backend::domestic_platform_control::{
     load_platform_controlled_authority_supply, register_platform_controlled_authorities,
 };
 use neebles_backend::domestic_workspace_execution::{
-    build_workspace_execution_command, WorkspaceExecutionRequest, WorkspaceReadonlyGrant,
+    execute_workspace_execution_request, WorkspaceExecutionRequest, WorkspaceReadonlyGrant,
     WorkspaceWritableGrant,
 };
 
@@ -194,11 +194,7 @@ fn main_result() -> Result<i32, String> {
         arguments,
     };
 
-    let status = build_workspace_execution_command(&request)?
-        .status()
-        .map_err(|error| format!("could not execute domestic workspace: {error}"))?;
-
-    Ok(status.code().unwrap_or(125))
+    execute_workspace_execution_request(&request)
 }
 
 fn main() -> ExitCode {

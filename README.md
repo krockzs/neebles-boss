@@ -4,9 +4,9 @@
 
 Current source line: **1.0.15**
 
-Published Point 2 closure baseline: **`e3fd46a` — `refactor(boss): close point 2 authority and settings cleanup`**
+Published Point 6 closure baseline: **`17281b9` — `feat(boss): close points 5 and 6`**
 
-Current macro closure: **Point 6 — Registry / module catalog GREEN / CLOSED**.
+Current macro state: **Point 7 — CUSTOM v2 technical implementation CERTIFIED**. Final closure remains an explicit project decision.
 
 N.E.E.B.L.E.S. Boss is the governance and orchestration layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -31,7 +31,7 @@ Point 3  Nightmare + Critical Update           GREEN / CLOSED
 Point 4  Notifications                         GREEN / CLOSED
 Point 5  Auth / privileges                     GREEN / CLOSED
 Point 6  Registry / module catalog             GREEN / CLOSED
-Point 7  CUSTOM v2 integration                 NEXT
+Point 7  CUSTOM v2 integration                 TECHNICALLY CERTIFIED
 ```
 
 The Lifecycle and generic Surface front remains **GREEN / CLOSED** and is not reopened unless current source proves a real contradiction.
@@ -134,6 +134,7 @@ platform.filesystem_boundary
 system.dns_resolver_config
 boss.modules.install_staging
 boss.modules.update_staging
+neebles.domestic_workspace
 ```
 
 AuthoritySupply enters the Boss process before normal dispatch.
@@ -178,7 +179,7 @@ Lifecycle does **not** domesticate runtimes.
 
 Lifecycle does **not** validate module technology.
 
-The future `world Modules` belongs to CUSTOM v2 / Esbirro.
+`world Modules` belongs to CUSTOM v2 / Esbirro.
 
 Boss receives material already built, domesticated and certified.
 
@@ -1495,17 +1496,306 @@ Test Module remained frozen throughout Point 6 and did not drive Boss architectu
 
 ---
 
+# Point 7 — CUSTOM v2 integration
+
+Point 7 technical implementation is **GREEN / CERTIFIED**.
+
+The final project-level closure decision remains explicit and is not inferred merely from successful tests.
+
+Point 7 connected CUSTOM v2 to Boss without turning Boss into a module-technology interpreter.
+
+The final ownership map is:
+
+```text
+N.E.E.B.L.E.S. CUSTOM
+    -> certified domestic material
+    -> module package membership
+    -> module material integrity
+    -> domestic construction declarations
+    -> Esbirro / world Modules semantics
+
+N.E.E.B.L.E.S. OS
+    -> canonical platform authority
+    -> neebles.domestic_workspace
+
+N.E.E.B.L.E.S. BUILD
+    -> image-side authority materialization
+    -> /opt/neebles-build/modules shared territory
+    -> opaque construction-declaration publication
+    -> independent neebles-check recovery
+
+N.E.E.B.L.E.S. Boss
+    -> supplied authority authentication
+    -> explicit registration and grants
+    -> generic domestic construction loading
+    -> generic workspace execution
+```
+
+## Generic domestic workspace authority
+
+OS defines:
+
+```text
+authority = neebles.domestic_workspace
+family    = neebles-writable-data-authority
+root      = /opt/neebles-build
+```
+
+Boss does not hardcode this authority identity into the generic workspace engine.
+
+Authority identity arrives through the normal AuthoritySupply path.
+
+The permanent law remains:
+
+```text
+AVAILABLE != REGISTERED != GRANTED != USED
+```
+
+Filesystem presence does not manufacture authority.
+
+## Domestic construction
+
+Boss now supports a generic `DomesticConstructionDeclaration`.
+
+A declaration contains generic construction steps and explicit authority references.
+
+It does not contain compiler, framework, package-manager or module-technology semantics that Boss must understand.
+
+The productive projection is:
+
+```text
+CUSTOM construction declaration
+    -> Boss canonical declaration loader
+        -> registered AuthoritySupply
+            -> WorkspaceExecutionRequest
+                -> existing domestic workspace execution engine
+```
+
+Canonical installed declarations live below:
+
+```text
+/usr/lib/neebles/domestic/construction/
+```
+
+The dispatcher exposes the generic action:
+
+```text
+domestic-construction-execute
+```
+
+and the CLI surface:
+
+```text
+neebles domestic execute <subject> <step>
+```
+
+The loader validates safe subject identity, canonical location, platform-controlled ownership and declaration identity before execution.
+
+Consumer declarations cannot supply authority-descriptor paths directly.
+
+Boss resolves those paths from the authenticated supplied authority registry.
+
+## CUSTOM construction publication
+
+CUSTOM owns canonical construction declarations below:
+
+```text
+runtime/construction/
+```
+
+BUILD materializes those files opaquely into the image.
+
+BUILD does not parse construction JSON or learn module technology.
+
+An empty construction namespace remains valid.
+
+## Shared Modules material
+
+CUSTOM owns the shared module source pools:
+
+```text
+runtime/modules/packages/
+runtime/modules/rootfs/
+```
+
+BUILD owns the image-side shared territory:
+
+```text
+/opt/neebles-build/modules/
+```
+
+with:
+
+```text
+modules   root:root 0755
+packages  root:root 0775
+rootfs    root:root 0755
+```
+
+Material is shared across modules instead of being physically duplicated per module.
+
+## Module membership and integrity
+
+CUSTOM owns the dynamic module manifest namespace:
+
+```text
+runtime/manifests/modules/
+```
+
+Package membership and material integrity are intentionally different contracts.
+
+Membership:
+
+```text
+<module_id>.packages.tsv
+```
+
+with exactly:
+
+```text
+package
+version
+arch
+filename
+sha256
+```
+
+Integrity:
+
+```text
+<module_id>.manifest.json
+```
+
+with required entries using the established inventory contract:
+
+```text
+path
+type
+mode
+size
+sha256
+target
+```
+
+For required DEBs, filename membership and SHA256 must agree between the TSV and JSON authorities.
+
+Rootfs integrity remains represented by the JSON integrity manifest.
+
+## `neebles-check --module`
+
+The independent BUILD-owned recovery engine now supports:
+
+```text
+neebles-check --module <module_id>
+```
+
+Module checking remains dynamic; Modules is not a third static checker component beside Boss and Calamares.
+
+The checker:
+
+- validates the dynamic module identity before building remote paths;
+- fetches package membership and integrity data from the same remote revision;
+- inventories only required paths for the requested module;
+- ignores unrelated shared material;
+- detects missing or changed required material;
+- detects mode, size, SHA256, type and symlink-target mismatches;
+- rejects package membership disagreement;
+- rejects TSV-vs-JSON SHA disagreement;
+- rejects absolute paths and parent traversal;
+- rejects symlink-ancestor escape;
+- prevents a module from claiming the shared `packages` or `rootfs` roots.
+
+Privileged module inventory is fixed to:
+
+```text
+/opt/neebles-build/modules
+```
+
+The caller cannot substitute another root.
+
+## Point 7 architectural laws
+
+Point 7 preserves all prior boundaries:
+
+```text
+Boss governs generic execution.
+CUSTOM owns construction semantics.
+Esbirro stays outside Lifecycle.
+Lifecycle does not domesticate runtimes.
+Lifecycle does not validate module technology.
+OS defines platform authority.
+BUILD materializes.
+Boss authenticates, registers, grants and consumes.
+Stage 8 host independence remains permanent.
+```
+
+Point 7 did not introduce:
+
+- a second Lifecycle;
+- a second Registry;
+- a second authority engine;
+- a static Modules checker component;
+- host-tool discovery as semantic authority;
+- Test Module specialization in productive Boss code.
+
+The only `neebles-test-module` reference in the Point 7 Boss construction source remains a generic safe-identity unit-test fixture.
+
+## Point 7 technical certification
+
+Final technical certification produced:
+
+```text
+Python source syntax                        GREEN
+OS domestic workspace authority            GREEN
+BUILD module shared territory              GREEN
+dynamic module checker contract            GREEN
+package selector contract                  GREEN
+integrity manifest contract                GREEN
+same-branch TSV + JSON lookup              GREEN
+TSV package membership                     GREEN
+TSV / JSON SHA cross-check                 GREEN
+shared-pool subset semantics               GREEN
+unrelated shared material ignored          GREEN
+missing required package rejected          GREEN
+undeclared module package rejected         GREEN
+productive Test Module specialization      ABSENT
+cargo fmt --all -- --check                 GREEN
+cargo check --locked --all-targets         GREEN
+Rust lib suite                             68 passed / 0 failed
+neebles-backend suite                      571 passed / 0 failed
+domesticacion_elfica                       13 passed / 1 explicitly ignored
+git diff --check across 4 repositories     GREEN
+```
+
+The explicitly ignored domestic test requires an explicit domestic-root certification context and is not a failing test.
+
+Final technical result:
+
+```text
+GLOBAL: PASS
+STEP 2AY: GREEN
+POINT 7 TECHNICAL IMPLEMENTATION: CERTIFIED
+```
+
+No productive `neebles-check --module` invocation against a real module was required for Point 7.
+
+Test Module remains frozen as an architecture driver. Its real adaptation and certification belong to Points 9 and 10 after the Boss contract is closed.
+
+---
+
 # Remaining roadmap
 
 Points 1, 2, 3, 4, 5 and 6 are closed.
 
-The remaining Boss work starts at **Point 7**:
+Point 7 technical implementation is certified. The remaining Boss-wide engineering roadmap proceeds to Point 8 after the explicit Point 7 closure decision:
 
 7. **CUSTOM v2 integration into Boss**
-   - integrate certified CUSTOM v2 output without making Boss understand module technologies;
-   - keep Esbirro outside Lifecycle;
-   - keep `world Modules` in CUSTOM v2 / Esbirro;
-   - preserve Stage 8 host independence.
+   - technical implementation certified;
+   - certified CUSTOM v2 output is integrated without making Boss understand module technologies;
+   - Esbirro remains outside Lifecycle;
+   - `world Modules` remains in CUSTOM v2 / Esbirro;
+   - Stage 8 host independence remains preserved;
+   - final Point 7 closure remains an explicit project decision.
 
 8. **Final Boss integration and certification**
    - cross-certify Module IPC, Settings, Nightmare/Critical Update, Notifications, Auth, Registry and CUSTOM v2 against the already-closed Lifecycle/surface architecture;
@@ -1606,14 +1896,14 @@ POINT 3 NIGHTMARE / CU         GREEN / CLOSED
 POINT 4 NOTIFICATIONS          GREEN / CLOSED
 POINT 5 AUTH / PRIVILEGES      GREEN / CLOSED
 POINT 6 REGISTRY / CATALOG     GREEN / CLOSED
-POINT 7 CUSTOM V2              NEXT
+POINT 7 CUSTOM V2              TECHNICALLY CERTIFIED
 TEST MODULE                    FROZEN
 BOSS CONTRACT CLOSED           NO
 ```
 
 Current rule for continuation:
 
-**Points 5 and 6 are closed. The next planned front is Point 7 — CUSTOM v2 integration into Boss. Begin Point 7 in a fresh work context from current source and current CUSTOM/Esbirro evidence; do not unfreeze Test Module and do not let CUSTOM v2 teach Boss module technology.**
+**Point 7 technical implementation is certified. Do not unfreeze Test Module. After the explicit Point 7 closure decision, the next engineering front is Point 8 — final Boss integration and certification. Point 8 cross-certifies the already-closed and technically-certified subsystems as one Boss contract before Test Module adaptation begins.**
 
 ---
 

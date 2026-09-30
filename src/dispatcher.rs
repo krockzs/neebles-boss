@@ -525,6 +525,87 @@ fn dispatch_module(module: &str, request: ExecutionRequest) -> ExecutionResponse
     }
 }
 
+fn dispatch_domestic_construction(request: &ExecutionRequest) -> ExecutionResponse {
+    if request.args.len() != 2 {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_domestic_construction_arguments",
+            "Boss domestic-construction-execute requires exactly: <subject> <step>",
+        );
+    }
+
+    let subject = &request.args[0];
+    let step = &request.args[1];
+
+    let declaration =
+        match neebles_backend::domestic_construction::
+            load_canonical_domestic_construction_declaration(subject)
+        {
+            Ok(declaration) => declaration,
+
+            Err(error) => {
+                return ExecutionResponse::fail(
+                    1,
+                    "domestic_construction_declaration",
+                    error,
+                );
+            }
+        };
+
+    let registry =
+        match neebles_backend::domestic_authority_supply_process::
+            process_supplied_authority_registry()
+        {
+            Ok(registry) => registry,
+
+            Err(error) => {
+                return ExecutionResponse::fail(
+                    1,
+                    "domestic_construction_authority",
+                    error,
+                );
+            }
+        };
+
+    let runtime_manifest =
+        match neebles_backend::domestic_runtime_authority::current_boss_runtime_manifest() {
+            Ok(runtime_manifest) => runtime_manifest,
+
+            Err(error) => {
+                return ExecutionResponse::fail(1, "domestic_construction_runtime", error);
+            }
+        };
+
+    let exit_code = match neebles_backend::domestic_construction::execute_construction_step(
+        &declaration,
+        step,
+        &runtime_manifest,
+        registry,
+    ) {
+        Ok(exit_code) => exit_code,
+
+        Err(error) => {
+            return ExecutionResponse::fail(1, "domestic_construction_execution", error);
+        }
+    };
+
+    if exit_code != 0 {
+        return ExecutionResponse::fail(
+            exit_code,
+            "domestic_construction_process",
+            format!(
+                "domestic construction process failed: subject={subject} step={step} exit_code={exit_code}"
+            ),
+        );
+    }
+
+    ExecutionResponse::ok(Some(json!({
+        "subject": subject,
+        "step": step,
+        "exit_code": exit_code
+    })))
+}
+
 fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
     match request.action.as_deref() {
         Some("version") => ExecutionResponse::ok(Some(json!({ "version": crate::VERSION }))),
@@ -540,6 +621,8 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
 
             Err(error) => ExecutionResponse::fail(1, "boss_update_execute", error),
         },
+
+        Some("domestic-construction-execute") => dispatch_domestic_construction(&request),
 
         Some("runtime-list") => match crate::module_ipc::runtime_registry().snapshot() {
             Ok(records) => match serde_json::to_value(records) {
@@ -685,5 +768,57 @@ fn dispatch_notification(request: ExecutionRequest) -> ExecutionResponse {
     match result {
         Ok(()) => ExecutionResponse::ok(None),
         Err(error) => ExecutionResponse::fail(1, "notification", error),
+    }
+}
+
+#[cfg(test)]
+mod domestic_construction_dispatch_tests {
+    use super::*;
+    use crate::request::ExecutionContext;
+
+    fn request(args: Vec<&str>) -> ExecutionRequest {
+        ExecutionRequest {
+            target: "boss".to_string(),
+            action: Some("domestic-construction-execute".to_string()),
+            args: args.into_iter().map(str::to_string).collect(),
+            context: ExecutionContext::default(),
+        }
+    }
+
+    #[test]
+    fn construction_dispatch_rejects_missing_arguments_before_execution() {
+        let response = dispatch_domestic_construction(&request(Vec::new()));
+
+        assert!(!response.ok);
+        assert_eq!(response.code, 2);
+
+        let error = response.error.expect("contract error expected");
+        assert_eq!(error.kind, "invalid_domestic_construction_arguments");
+    }
+
+    #[test]
+    fn construction_dispatch_rejects_single_argument_before_execution() {
+        let response = dispatch_domestic_construction(&request(vec!["fixture.subject"]));
+
+        assert!(!response.ok);
+        assert_eq!(response.code, 2);
+
+        let error = response.error.expect("contract error expected");
+        assert_eq!(error.kind, "invalid_domestic_construction_arguments");
+    }
+
+    #[test]
+    fn construction_dispatch_rejects_extra_arguments_before_execution() {
+        let response = dispatch_domestic_construction(&request(vec![
+            "fixture.subject",
+            "build",
+            "unexpected",
+        ]));
+
+        assert!(!response.ok);
+        assert_eq!(response.code, 2);
+
+        let error = response.error.expect("contract error expected");
+        assert_eq!(error.kind, "invalid_domestic_construction_arguments");
     }
 }

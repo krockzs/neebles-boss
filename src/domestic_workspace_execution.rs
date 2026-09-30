@@ -130,6 +130,16 @@ pub fn build_workspace_execution_command(
     build_pure_materialized_boundary_execution_command(&plan, &request.arguments)
 }
 
+pub fn execute_workspace_execution_request(
+    request: &WorkspaceExecutionRequest,
+) -> Result<i32, String> {
+    let status = build_workspace_execution_command(request)?
+        .status()
+        .map_err(|error| format!("could not execute domestic workspace: {error}"))?;
+
+    Ok(status.code().unwrap_or(125))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +214,26 @@ mod tests {
         };
 
         assert!(build_workspace_execution_command(&request).is_err());
+    }
+
+    #[test]
+    fn shared_execution_primitive_reuses_workspace_validation() {
+        let request = WorkspaceExecutionRequest {
+            manifest_path: PathBuf::from("/fixture/runtime.json"),
+            world: String::new(),
+            platform_descriptor_path: PathBuf::from("/fixture/platform.json"),
+            readonly: Vec::new(),
+            writable: Vec::new(),
+            mount_proc: false,
+            mount_dev: false,
+            mount_tmp: false,
+            chdir: None,
+            arguments: Vec::new(),
+        };
+
+        let error = execute_workspace_execution_request(&request)
+            .expect_err("invalid workspace request must fail before process execution");
+
+        assert!(error.contains("world"));
     }
 }

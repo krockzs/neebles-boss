@@ -26,6 +26,7 @@ pub fn run(args: Vec<String>) -> i32 {
         "--request-json" => request_json(&args),
         "start" => result(start_boss()),
         "config" => config_command(&args[1..]),
+        "domestic" => domestic_command(&args[1..]),
         "external" => external_command(&args[1..]),
         "i18n" => i18n_command(&args[1..]),
         "modules" => modules_command(&args[1..]),
@@ -1076,6 +1077,55 @@ fn notify_command(args: &[String]) -> i32 {
     }
 }
 
+fn domestic_command(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("execute") => {
+            if args.len() != 3 {
+                return fail("usage: neebles domestic execute <subject> <step>".to_string());
+            }
+
+            let request = ExecutionRequest {
+                target: "boss".to_string(),
+                action: Some("domestic-construction-execute".to_string()),
+                args: vec![args[1].clone(), args[2].clone()],
+                context: ExecutionContext {
+                    caller: "cli.domestic".to_string(),
+                },
+            };
+
+            let response = match ipc::request(&request) {
+                Ok(response) => response,
+
+                Err(error) => {
+                    return fail(error);
+                }
+            };
+
+            if response.ok {
+                if let Some(value) = &response.result {
+                    if !value.is_null() {
+                        match serde_json::to_string_pretty(value) {
+                            Ok(json) => println!("{json}"),
+
+                            Err(error) => {
+                                return fail(format!(
+                                    "could not serialize domestic response: {error}"
+                                ));
+                            }
+                        }
+                    }
+                }
+            } else if let Some(error) = &response.error {
+                eprintln!("N.E.E.B.L.E.S.: {}", error.message);
+            }
+
+            response.code
+        }
+
+        _ => fail("usage: neebles domestic execute <subject> <step>".to_string()),
+    }
+}
+
 fn module_command(target: &str, args: &[String]) -> i32 {
     let action = args.first().cloned();
 
@@ -1177,6 +1227,7 @@ fn print_help() {
     println!("  neebles config set <key> <value>");
     println!("  neebles config surface-item-visibility <surface> <module> <item-id> <true|false>");
     println!("  neebles config module-update-notified <module> <version>");
+    println!("  neebles domestic execute <subject> <step>");
     println!("  neebles modules available|installed");
     println!("  neebles modules install|update|uninstall <module>");
     println!("  neebles modules update <module> --close-running");
