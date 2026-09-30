@@ -4,9 +4,9 @@
 
 Current source line: **1.0.15**
 
-Published Point 6 closure baseline: **`17281b9` — `feat(boss): close points 5 and 6`**
+Historical published closure baseline before the final Point 7/8 work: **`17281b9` — `feat(boss): close points 5 and 6`**
 
-Current macro state: **Point 7 — CUSTOM v2 technical implementation CERTIFIED**. Final closure remains an explicit project decision.
+Current macro state: **Point 8 — Final Boss integration and certification GREEN / CLOSED**. **BOSS CONTRACT CLOSED**.
 
 N.E.E.B.L.E.S. Boss is the governance and orchestration layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -31,7 +31,8 @@ Point 3  Nightmare + Critical Update           GREEN / CLOSED
 Point 4  Notifications                         GREEN / CLOSED
 Point 5  Auth / privileges                     GREEN / CLOSED
 Point 6  Registry / module catalog             GREEN / CLOSED
-Point 7  CUSTOM v2 integration                 TECHNICALLY CERTIFIED
+Point 7  CUSTOM v2 integration                 GREEN / CLOSED
+Point 8  Final Boss integration / pre-VM gate        GREEN / CLOSED
 ```
 
 The Lifecycle and generic Surface front remains **GREEN / CLOSED** and is not reopened unless current source proves a real contradiction.
@@ -61,7 +62,7 @@ PASS - 1.X SURFACE/LIFECYCLE FRONT CLOSED
 
 `launcher_action` legacy compatibility has already been reconciled during Point 2. Launcher exposure is now resolved from the dynamic `commands` contract with `launcher=true`; the removed top-level `manifest.commands` model must not be revived.
 
-Test Module remains **frozen** until **BOSS CONTRACT CLOSED**.
+The Boss contract is now **CLOSED**. Test Module may be unfrozen only for **Point 9 adaptation** and remains forbidden from driving Boss architecture.
 
 ---
 
@@ -1189,7 +1190,7 @@ git diff --check                         GREEN
 
 Point 4 closes the source contract, implementation and regression certification for Notifications.
 
-A later real Boss E2E may still exercise visual/desktop behavior as part of **Point 8 Final Boss integration and certification**. Point 4 does not claim a separate manual visual pass for every individual Plasma notification instance.
+Real visual/desktop behavior remains for the dedicated full-system VM acceptance phase. Point 8 closed the pre-VM Boss contract without falsely claiming that later machine-level acceptance had already been executed.
 
 Final verdict:
 
@@ -1498,9 +1499,9 @@ Test Module remained frozen throughout Point 6 and did not drive Boss architectu
 
 # Point 7 — CUSTOM v2 integration
 
-Point 7 technical implementation is **GREEN / CERTIFIED**.
+Point 7 is **GREEN / CLOSED**.
 
-The final project-level closure decision remains explicit and is not inferred merely from successful tests.
+Its technical certification was accepted into the final Boss contract during Point 8 global integration.
 
 Point 7 connected CUSTOM v2 to Boss without turning Boss into a module-technology interpreter.
 
@@ -1775,33 +1776,236 @@ Final technical result:
 GLOBAL: PASS
 STEP 2AY: GREEN
 POINT 7 TECHNICAL IMPLEMENTATION: CERTIFIED
+POINT 7 FINAL STATUS: GREEN / CLOSED
 ```
 
 No productive `neebles-check --module` invocation against a real module was required for Point 7.
 
-Test Module remains frozen as an architecture driver. Its real adaptation and certification belong to Points 9 and 10 after the Boss contract is closed.
+Test Module remained frozen as an architecture driver throughout Point 7. With the Boss contract now closed by Point 8, its adaptation belongs to Point 9 and its full certification to Point 10.
 
 ---
 
-# Remaining roadmap
+# Point 8 — Final Boss integration and certification
 
-Points 1, 2, 3, 4, 5 and 6 are closed.
+Point 8 is **GREEN / CLOSED**.
 
-Point 7 technical implementation is certified. The remaining Boss-wide engineering roadmap proceeds to Point 8 after the explicit Point 7 closure decision:
+This front did not redesign Boss. It cross-certified the architecture already closed in Points 1 through 7, reconciled the last productive divergences found by current evidence and established the final pre-VM contract baseline.
 
-7. **CUSTOM v2 integration into Boss**
-   - technical implementation certified;
+The closure was intentionally performed with Test Module frozen so that Boss architecture remained independent from a sample module.
+
+## Point 8 scope
+
+The final audit covered:
+
+- owner and source-of-truth boundaries;
+- productive seam graph across Boss subsystems;
+- AVAILABLE / REQUESTED / REGISTERED / USED capability separation;
+- supplied authority vs explicit grant separation;
+- persistence and duplicate-truth census;
+- transaction, rollback and compensation behavior;
+- runtime identity and privilege boundaries;
+- UI / Launcher / Tray convergence over canonical state;
+- module notification return ownership;
+- CUSTOM v2 / Esbirro boundary;
+- deprecated and diverging productive paths;
+- full Rust regression;
+- controlled Qt 6.8.2 builds from the current Boss source;
+- BUILD materialization behavior;
+- exact final worktree audit.
+
+## Cross-surface convergence
+
+Point 8 certified that productive module state/action mutations publish a Boss surface invalidation event through:
+
+```text
+module.lifecycle
+```
+
+BossEventClient subscribes to that event family.
+
+Launcher and Tray refresh their module projections from Boss rather than maintaining independent functional truth.
+
+The permanent law remains:
+
+```text
+UI / Launcher / Tray
+    -> same governed action path
+    -> same canonical functional state
+    -> cross-surface invalidation
+```
+
+Presentation may cache rendering data temporarily, but it does not own a second functional boolean.
+
+## Final legacy reconciliation
+
+Point 8 removed the remaining productive module-level `launcher_action` projection.
+
+Launcher exposure is now derived exclusively from the Schema 4 dynamic `commands` contract and canonical `surface_content`.
+
+The helper that validates a launcher-capable dynamic commands contract remains legitimate validation logic; the removed productive compatibility projection must not return.
+
+Final deprecated/divergence census was GREEN.
+
+## BUILD transactional and authority materialization
+
+Point 8 hardened BUILD publication in three ways.
+
+First, stale platform authority material was reconciled so that:
+
+```text
+neebles.domestic_workspace
+```
+
+is present in the image-side AuthoritySupply material.
+
+Second, CUSTOM construction publication and OS platform-authority publication were made transactional: failed publication restores the previous valid material instead of exposing a partially replaced tree.
+
+Third, platform-controlled JSON authority material is normalized by BUILD to:
+
+```text
+root:root 0644
+```
+
+while platform providers remain:
+
+```text
+root:root 0755
+```
+
+This is required by Boss platform-controlled path authentication, which rejects group-writable or other-writable authority components.
+
+BUILD changes permissions without changing the material bytes.
+
+## Qt 6.8.2 current-source certification
+
+Point 8 did not certify a stale historical copy of Boss.
+
+The current tracked Boss working tree was projected into a disposable controlled CUSTOM Qt world and verified byte-for-byte before compilation.
+
+Final source parity:
+
+```text
+tracked regular files checked   491
+missing                           0
+different                         0
+```
+
+The controlled Qt identity was:
+
+```text
+Qt                 6.8.2
+C++ compiler       /usr/bin/g++
+build tool         /usr/bin/gmake
+build type         Release
+```
+
+Final productive consumers built GREEN:
+
+```text
+Boss UI            GREEN
+Launcher plugin    GREEN
+Tray Host          GREEN
+```
+
+The final artifact set contained the Boss UI executable, Tray Host executable and both Launcher shared objects.
+
+During this certification, a latent C++ include defect in Tray compilation was found and fixed by explicitly including `QJsonObject` where `QJsonValue::toObject()` is consumed.
+
+## Point 8 corrective fixes
+
+Point 8 required **zero architectural redesigns**.
+
+It found and closed six local corrective issues:
+
+1. stale BUILD materialization for `neebles.domestic_workspace`;
+2. non-transactional BUILD publication paths;
+3. missing cross-surface invalidation after productive module mutations;
+4. obsolete productive module-level `launcher_action` projection;
+5. missing `QJsonObject` include exposed by the real controlled Qt build;
+6. BUILD authority JSON mode normalization to `0644`.
+
+None changed the governing architecture of Boss.
+
+## Point 8 final certification
+
+Final pre-VM gate:
+
+```text
+cargo fmt --all -- --check                 GREEN
+cargo check --locked --all-targets         GREEN
+Rust lib suite                             68 passed / 0 failed
+neebles-backend suite                      571 passed / 0 failed
+domesticacion_elfica                       13 passed / 1 explicitly ignored
+productive deprecated census               GREEN
+productive host-discovery recertification  0 matches
+normal Boss -> neebles-check dependency    ABSENT
+BUILD Python syntax                        GREEN
+disposable CUSTOM publication              GREEN
+disposable platform publication            GREEN
+platform authority modes                   GREEN
+current Boss -> Qt lab source parity       491 / 491
+controlled Qt                              6.8.2
+Boss UI build                              GREEN
+Launcher plugin build                      GREEN
+Tray Host build                            GREEN
+Boss git diff --check                      GREEN
+BUILD git diff --check                     GREEN
+Point 8 worktree contract                  GREEN
+```
+
+The explicitly ignored domestic test still requires its explicit domestic-root certification context and is not a failing test.
+
+The first broad host-discovery sensor produced a false RED because it matched the ordinary English word `which` inside comments. The corrected precise sensor found:
+
+```text
+PRECISE HOST DISCOVERY MATCHES :: 0
+```
+
+No product change was required for that recertification.
+
+## VM acceptance boundary
+
+Point 8 is the final **pre-VM Boss contract gate**.
+
+It does not claim that complete installed-system behavior has already been exercised inside the final N.E.E.B.L.E.S. virtual machine.
+
+The later VM phase remains responsible for real installed-system acceptance, including service startup, desktop integration, sockets, persistence, notifications, Launcher/Tray behavior and full multi-component behavior under the actual image.
+
+A VM finding may expose a real implementation defect and may require correction. It does not reopen or replace the Boss architecture by assumption; current evidence must demonstrate the contradiction first.
+
+## Point 8 final verdict
+
+```text
+FINAL :: GREEN
+POINT :: 8 FINAL BOSS INTEGRATION / PRE-VM CERTIFICATION CLOSED
+BOSS CONTRACT CLOSED :: YES
+ARCHITECTURAL REDESIGNS REQUIRED :: 0
+LOCAL CORRECTIVE FIXES :: 6
+```
+
+Test Module did not drive Point 8.
+
+Boss is now the fixed architecture source for Point 9 adaptation.
+
+
+---
+
+# Post-Boss roadmap
+
+Points 1 through 8 are **GREEN / CLOSED**. The Boss contract is closed. The remaining roadmap begins with Test Module adaptation:
+
+7. **CUSTOM v2 integration into Boss — CLOSED**
    - certified CUSTOM v2 output is integrated without making Boss understand module technologies;
    - Esbirro remains outside Lifecycle;
    - `world Modules` remains in CUSTOM v2 / Esbirro;
-   - Stage 8 host independence remains preserved;
-   - final Point 7 closure remains an explicit project decision.
+   - Stage 8 host independence remains preserved.
 
-8. **Final Boss integration and certification**
-   - cross-certify Module IPC, Settings, Nightmare/Critical Update, Notifications, Auth, Registry and CUSTOM v2 against the already-closed Lifecycle/surface architecture;
-   - run the real Boss E2E;
-   - remove any remaining duplicate or diverging contracts;
-   - declare **BOSS CONTRACT CLOSED** only after global GREEN.
+8. **Final Boss integration and certification — CLOSED**
+   - cross-certified Module IPC, Settings, Nightmare/Critical Update, Notifications, Auth, Registry, CUSTOM v2 and the closed Lifecycle/surface architecture as one Boss contract;
+   - removed remaining duplicate or diverging productive contracts;
+   - completed the final pre-VM global gate;
+   - declared **BOSS CONTRACT CLOSED** after global GREEN;
+   - real machine / VM acceptance remains a later execution phase and does not get falsely represented as completed by Point 8.
 
 9. **Adapt Test Module to what Boss dictates**
    - unfreeze Test Module only after **BOSS CONTRACT CLOSED**;
@@ -1870,6 +2074,7 @@ Nightmare remains independent from Critical Update. Future Boss subsystems may c
 For the current N.E.E.B.L.E.S. workflow:
 
 - commands/casters must avoid shell input patterns known to crash the working Konsole session;
+- commands/casters must not contain the shell `$` character;
 - do not use shell `set`;
 - one implementation step should produce one consolidated validation artifact when evidence is required;
 - GREEN advances immediately;
@@ -1877,7 +2082,7 @@ For the current N.E.E.B.L.E.S. workflow:
 - never claim a path was tested without current evidence;
 - current source plus the latest certification evidence are the source of truth;
 - historical documents do not override current source;
-- Test Module stays frozen as an architecture driver until **BOSS CONTRACT CLOSED**.
+- after **BOSS CONTRACT CLOSED**, Test Module may be adapted only as a consumer of the closed contract and must never become an architecture driver.
 
 ---
 
@@ -1896,14 +2101,15 @@ POINT 3 NIGHTMARE / CU         GREEN / CLOSED
 POINT 4 NOTIFICATIONS          GREEN / CLOSED
 POINT 5 AUTH / PRIVILEGES      GREEN / CLOSED
 POINT 6 REGISTRY / CATALOG     GREEN / CLOSED
-POINT 7 CUSTOM V2              TECHNICALLY CERTIFIED
-TEST MODULE                    FROZEN
-BOSS CONTRACT CLOSED           NO
+POINT 7 CUSTOM V2              GREEN / CLOSED
+POINT 8 FINAL BOSS GATE        GREEN / CLOSED
+TEST MODULE                    NEXT: POINT 9 ADAPTATION
+BOSS CONTRACT CLOSED           YES
 ```
 
 Current rule for continuation:
 
-**Point 7 technical implementation is certified. Do not unfreeze Test Module. After the explicit Point 7 closure decision, the next engineering front is Point 8 — final Boss integration and certification. Point 8 cross-certifies the already-closed and technically-certified subsystems as one Boss contract before Test Module adaptation begins.**
+**Boss contract is CLOSED. Points 1 through 8 are GREEN / CLOSED. The next engineering front is Point 9 — adapt Test Module to the contract Boss already dictates. Test Module may demonstrate the contract, but it must not redefine Boss architecture. Real full-system execution in a virtual machine remains a later acceptance phase.**
 
 ---
 
