@@ -143,7 +143,8 @@ void BossEventClient::sendSubscribe()
             QStringLiteral("args"),
             QJsonArray{
                 QStringLiteral("boss-ui"),
-                QStringLiteral("settings.boss")
+                QStringLiteral("settings.boss"),
+                QStringLiteral("module.lifecycle")
             }
         },
         {
@@ -278,6 +279,14 @@ void BossEventClient::processLine(
         message.value(
             QStringLiteral("payload")
         ).toObject();
+
+    if (
+        topic
+            == QStringLiteral("module.lifecycle")
+    ) {
+        emit modulesChanged();
+        return;
+    }
 
     if (
         topic

@@ -52,6 +52,7 @@ signals:
     void bossUiStateChanged();
     void launcherEnabledChanged();
     void trayEnabledChanged();
+    void modulesChanged();
     void settingsChanged();
 
 private slots:

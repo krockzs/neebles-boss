@@ -1007,6 +1007,17 @@ fn publish_require_candidate(
     ]))
 }
 
+fn broadcast_surface_module_change(name: &str, reason: &str) {
+    crate::ipc::broadcast_event(
+        "module.lifecycle",
+        "state_changed",
+        serde_json::json!({
+            "module": name,
+            "reason": reason
+        }),
+    );
+}
+
 fn module_governor_lifecycle_runtime(
 ) -> Result<crate::lifecycle_governor_runtime::GovernorLifecycleRuntime, String> {
     let available = crate::lifecycle_available_capabilities::productive_catalog()?;
@@ -1047,7 +1058,14 @@ pub fn execute_governor_target(
     object_id: Option<&str>,
     transition_id: Option<&str>,
 ) -> Result<(), String> {
-    execute_governor_target_with_observer(name, action, object_id, transition_id, None)
+    let result =
+        execute_governor_target_with_observer(name, action, object_id, transition_id, None);
+
+    if result.is_ok() {
+        broadcast_surface_module_change(name, action);
+    }
+
+    result
 }
 
 pub fn execute_governor_target_observed(
@@ -1057,13 +1075,19 @@ pub fn execute_governor_target_observed(
     transition_id: Option<&str>,
     observer_factory: &ModuleLifecycleObserverFactory,
 ) -> Result<(), String> {
-    execute_governor_target_with_observer(
+    let result = execute_governor_target_with_observer(
         name,
         action,
         object_id,
         transition_id,
         Some(observer_factory),
-    )
+    );
+
+    if result.is_ok() {
+        broadcast_surface_module_change(name, action);
+    }
+
+    result
 }
 
 fn execute_governor_target_with_observer(
@@ -2529,8 +2553,6 @@ pub fn installed_modules_json() -> Result<Value, String> {
         let icon = local_module_icon(&entry.path());
         let running = module_running(&manifest.name);
 
-        let launcher_action = launcher_action_from(&entry.path(), &manifest)?;
-
         /*
          * Generic Boss surface content.
          *
@@ -2550,8 +2572,6 @@ pub fn installed_modules_json() -> Result<Value, String> {
             "running": running,
             "path": entry.path(),
             "icon": icon,
-            "launcher_action": launcher_action,
-
             "surface_content": surface_content,
 
             "notifications": manifest.notifications.as_ref().map(|contract| {
@@ -2685,14 +2705,26 @@ pub fn module_dependency_preflight(action: &str, name: &str) -> Result<Value, St
 }
 
 pub fn install(name: &str) -> Result<(), String> {
-    install_with_observer(name, None)
+    let result = install_with_observer(name, None);
+
+    if result.is_ok() {
+        broadcast_surface_module_change(name, "install");
+    }
+
+    result
 }
 
 pub fn install_observed(
     name: &str,
     observer_factory: &ModuleLifecycleObserverFactory,
 ) -> Result<(), String> {
-    install_with_observer(name, Some(observer_factory))
+    let result = install_with_observer(name, Some(observer_factory));
+
+    if result.is_ok() {
+        broadcast_surface_module_change(name, "install");
+    }
+
+    result
 }
 
 fn install_with_observer(
@@ -2744,7 +2776,13 @@ pub fn module_has_local_state(name: &str) -> Result<bool, String> {
 }
 
 pub fn uninstall(name: &str, remove_settings: bool) -> Result<(), String> {
-    uninstall_with_observer(name, remove_settings, None)
+    let result = uninstall_with_observer(name, remove_settings, None);
+
+    if result.is_ok() {
+        broadcast_surface_module_change(name, "uninstall");
+    }
+
+    result
 }
 
 pub fn uninstall_observed(
@@ -2752,7 +2790,13 @@ pub fn uninstall_observed(
     remove_settings: bool,
     observer_factory: &ModuleLifecycleObserverFactory,
 ) -> Result<(), String> {
-    uninstall_with_observer(name, remove_settings, Some(observer_factory))
+    let result = uninstall_with_observer(name, remove_settings, Some(observer_factory));
+
+    if result.is_ok() {
+        broadcast_surface_module_change(name, "uninstall");
+    }
+
+    result
 }
 
 fn uninstall_with_observer(
@@ -3001,7 +3045,13 @@ fn uninstall_internal(
 }
 
 pub fn update(name: &str, close_running: bool) -> Result<(), String> {
-    update_with_observer(name, close_running, None)
+    let result = update_with_observer(name, close_running, None);
+
+    if result.is_ok() {
+        broadcast_surface_module_change(name, "update");
+    }
+
+    result
 }
 
 pub fn update_observed(
@@ -3009,7 +3059,13 @@ pub fn update_observed(
     close_running: bool,
     observer_factory: &ModuleLifecycleObserverFactory,
 ) -> Result<(), String> {
-    update_with_observer(name, close_running, Some(observer_factory))
+    let result = update_with_observer(name, close_running, Some(observer_factory));
+
+    if result.is_ok() {
+        broadcast_surface_module_change(name, "update");
+    }
+
+    result
 }
 
 fn update_with_observer(
@@ -3434,6 +3490,8 @@ pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
         |module_id| set_enabled_single(module_id, !enabled),
     )?;
 
+    broadcast_surface_module_change(name, if enabled { "enabled" } else { "disabled" });
+
     Ok(())
 }
 
@@ -3775,15 +3833,6 @@ fn launcher_action_from_contracts(
             actions.into_iter().collect::<Vec<_>>().join(", ")
         )),
     }
-}
-
-fn launcher_action_from(
-    module_dir: &Path,
-    manifest: &ModuleManifest,
-) -> Result<Option<String>, String> {
-    let contracts = load_module_contracts(&manifest.name, module_dir, &manifest.contracts)?;
-
-    launcher_action_from_contracts(&manifest.name, &contracts)
 }
 
 fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Result<(), String> {

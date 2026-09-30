@@ -80,6 +80,9 @@ PlasmoidItem {
 
         onSettingsChanged:
             root.refresh()
+
+        onModulesChanged:
+            root.refresh()
     }
 
     /*

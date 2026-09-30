@@ -679,6 +679,18 @@ Window {
         }
     }
 
+    Connections {
+        target: bossEvents
+
+        function onSettingsChanged() {
+            bossCommands.refreshModules()
+        }
+
+        function onModulesChanged() {
+            bossCommands.refreshModules()
+        }
+    }
+
     Component.onCompleted: {
         bossCommands.refreshModules()
     }
