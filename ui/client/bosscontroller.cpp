@@ -183,6 +183,20 @@ QStringList BossController::runtimeAuthorityArguments() const
 
 
 
+QString BossController::authoritySupplyPath() const
+{
+    /*
+     * Transport only.
+     *
+     * Qt does not load, authenticate, register, interpret or grant this
+     * AuthoritySupply. The Boss child process owns all of those decisions.
+     */
+    return qEnvironmentVariable(
+        "NEEBLES_AUTHORITY_SUPPLY"
+    ).trimmed();
+}
+
+
 QByteArray BossController::run(
     const QStringList &arguments,
     bool privileged,
@@ -211,6 +225,29 @@ QByteArray BossController::run(
 
         return {};
     }
+
+    const QString authoritySupply =
+        authoritySupplyPath();
+
+    if (authoritySupply.isEmpty()) {
+        if (ok)
+            *ok = false;
+
+        setStatusText(
+            QStringLiteral(
+                "N.E.E.B.L.E.S. AuthoritySupply transport is unavailable"
+            )
+        );
+
+        return {};
+    }
+
+    QStringList bossArguments = {
+        QStringLiteral("--authority-supply"),
+        authoritySupply
+    };
+
+    bossArguments.append(arguments);
 
     if (privileged) {
         const QString authAgent =
@@ -436,7 +473,7 @@ QByteArray BossController::run(
             << QStringLiteral("--")
             << bossCommand;
 
-        elevated << arguments;
+        elevated << bossArguments;
 
         process.start(
             authAgent,
@@ -445,7 +482,7 @@ QByteArray BossController::run(
     } else {
         process.start(
             bossCommand,
-            arguments
+            bossArguments
         );
     }
 
@@ -1287,7 +1324,7 @@ void BossController::applyModuleLifecycle()
                 name,
                 remoteVersion
             },
-            true,
+            false,
             5000,
             &markOk
         );
@@ -1884,6 +1921,34 @@ void BossController::startModuleProcess(
         extraArguments
     );
 
+    const QString authoritySupply =
+        authoritySupplyPath();
+
+    if (authoritySupply.isEmpty()) {
+        appendTransactionOperationLog(
+            QStringLiteral(
+                "N.E.E.B.L.E.S. AuthoritySupply transport is unavailable"
+            )
+        );
+
+        setTransactionOperationField(
+            QStringLiteral("running"),
+            false
+        );
+
+        setBusy(false);
+        return;
+    }
+
+    QStringList bossArguments = {
+        QStringLiteral("--authority-supply"),
+        authoritySupply
+    };
+
+    bossArguments.append(
+        commandArguments
+    );
+
     QString program;
     QStringList arguments;
 
@@ -2037,14 +2102,14 @@ void BossController::startModuleProcess(
             << commandPath();
 
         arguments.append(
-            commandArguments
+            bossArguments
         );
     } else {
         program =
             commandPath();
 
         arguments =
-            commandArguments;
+            bossArguments;
     }
 
     QProcess *process =
@@ -2144,7 +2209,7 @@ void BossController::startModuleProcess(
                         QStringLiteral("enable"),
                         name
                     },
-                    true,
+                    false,
                     5000,
                     &enabled
                 );
@@ -2338,8 +2403,10 @@ void BossController::saveConfigValue(
     bool ok = false;
 
     /*
-     * Escritura administrativa:
-     * pasa por el auth-agent.
+     * Boss-owned settings write.
+     *
+     * UI transports intent only and does not add an independent
+     * privilege policy.
      */
     run(
         {
@@ -2348,7 +2415,7 @@ void BossController::saveConfigValue(
             key,
             normalized
         },
-        true,
+        false,
         5000,
         &ok
     );
@@ -2794,7 +2861,7 @@ void BossController::setModuleEnabled(const QString &name, bool enabled)
             ? QStringLiteral("enable")
             : QStringLiteral("disable"),
         name,
-        true
+        false
     );
 }
 
@@ -2818,7 +2885,7 @@ void BossController::setSurfaceItemVisibility(
                 ? QStringLiteral("true")
                 : QStringLiteral("false")
         },
-        true,
+        false,
         5000,
         &ok
     );

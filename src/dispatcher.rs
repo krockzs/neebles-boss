@@ -31,6 +31,19 @@ pub fn launch_ui() -> Result<(), String> {
     let runtime_manifest =
         neebles_backend::domestic_runtime_authority::current_boss_runtime_manifest()?;
 
+    /*
+     * Boss UI does not discover, authenticate or grant Platform Authority.
+     *
+     * The running Boss process already owns the authenticated process-scoped
+     * AuthoritySupply. UI receives only that exact transport reference so any
+     * Boss child process can re-enter the canonical Rust registration/grant
+     * boundary.
+     */
+    let authority_supply =
+        neebles_backend::domestic_authority_supply_process::authority_supply_process_state()?
+            .supply_path()
+            .to_path_buf();
+
     if !runtime_resolver.is_file() {
         return Err(format!(
             "installed runtime resolver is missing: {}",
@@ -74,6 +87,10 @@ pub fn launch_ui() -> Result<(), String> {
         .arg(format!(
             "--setenv=NEEBLES_RUNTIME_MANIFEST={}",
             runtime_manifest.display()
+        ))
+        .arg(format!(
+            "--setenv=NEEBLES_AUTHORITY_SUPPLY={}",
+            authority_supply.display()
         ))
         .arg(&ui_path)
         .status();

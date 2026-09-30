@@ -6,7 +6,7 @@ Current source line: **1.0.15**
 
 Published Point 2 closure baseline: **`e3fd46a` — `refactor(boss): close point 2 authority and settings cleanup`**
 
-Current macro closure: **Point 4 — Notifications GREEN / CLOSED**.
+Current macro closure: **Point 6 — Registry / module catalog GREEN / CLOSED**.
 
 N.E.E.B.L.E.S. Boss is the governance and orchestration layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -29,7 +29,9 @@ Point 1  Contracts + Module IPC                GREEN / CLOSED
 Point 2  Settings + authority/persistence      GREEN / CLOSED
 Point 3  Nightmare + Critical Update           GREEN / CLOSED
 Point 4  Notifications                         GREEN / CLOSED
-Point 5  Auth / privileges                     NEXT
+Point 5  Auth / privileges                     GREEN / CLOSED
+Point 6  Registry / module catalog             GREEN / CLOSED
+Point 7  CUSTOM v2 integration                 NEXT
 ```
 
 The Lifecycle and generic Surface front remains **GREEN / CLOSED** and is not reopened unless current source proves a real contradiction.
@@ -1199,21 +1201,305 @@ Test Module remained frozen throughout Point 4 and did not drive Boss architectu
 
 ---
 
+# Point 5 — Auth / privileges
+
+Point 5 is **GREEN / CLOSED**.
+
+The final privilege boundary keeps Boss as the authority owner and keeps Qt as a transport/presentation consumer.
+
+The canonical flow is:
+
+```text
+authenticated Boss process
+    -> process-owned AuthoritySupply
+        -> scoped projection to Boss UI
+            -> opaque --authority-supply transport
+                -> child Boss process
+                    -> Rust authentication / privilege enforcement
+```
+
+Qt does not authenticate, register or grant AuthoritySupply.
+
+The UI receives only the exact AuthoritySupply reference already owned by the authenticated parent Boss process. Child Boss invocations transport that same opaque reference back through the canonical Rust entry boundary.
+
+## Privilege ownership
+
+Privilege policy remains backend-owned.
+
+Installed contract endpoint metadata owns `requires_root`.
+
+Module IPC runtime advertisement cannot invent or weaken that requirement.
+
+The module router resolves the installed declaration first and then applies:
+
+```text
+requires_root
+    -> Rust privilege boundary
+```
+
+Runtime advertisement remains availability only.
+
+The Qt client no longer acts as a second privilege-policy authority for ordinary operations that the backend does not require to be elevated.
+
+The cleaned presentation paths include:
+
+- module enable / disable;
+- settings writes;
+- Surface visibility;
+- module-update-notified;
+- post-install enable.
+
+Install, update and uninstall remain governed through the existing backend root boundary.
+
+Critical Update remains a privileged governed path and continues to consume the process-supplied AuthoritySupply reference.
+
+## AuthoritySupply transport
+
+The Boss dispatcher projects the authenticated process AuthoritySupply reference into the desktop UI boundary without placing it in the global runtime environment.
+
+The UI forwards that exact reference as:
+
+```text
+--authority-supply <opaque supplied path>
+```
+
+to child Boss invocations.
+
+The child Boss process performs normal Rust-side authentication again.
+
+Therefore:
+
+```text
+transporting a reference != authenticating authority
+transporting a reference != registering authority
+transporting a reference != granting authority
+```
+
+The existing auth-agent remains a privilege transport mechanism. It does not become a second authority engine.
+
+## Point 5 certification
+
+Point 5 closed with:
+
+```text
+Rust lib suite                         54 passed / 0 failed
+full neebles-backend suite            568 passed / 0 failed
+domesticacion_elfica                  13 passed / 1 explicitly ignored
+cargo fmt -- --check                  GREEN
+cargo check --locked --all-targets    GREEN
+git diff --check                      GREEN
+Boss UI canonical Qt 6.8.2 build      GREEN
+```
+
+The Qt certification used the controlled **Qt 6.8.2** world supplied through N.E.E.B.L.E.S. CUSTOM. The host Qt version is not used as a compatibility fallback.
+
+Final law:
+
+> **Privilege policy belongs to Boss. UI transports intent and explicit authority references; it does not manufacture privilege.**
+
+Test Module remained frozen throughout Point 5 and did not drive Boss architecture.
+
+---
+
+# Point 6 — Registry / module catalog
+
+Point 6 is **GREEN / CLOSED**.
+
+Point 6 certified that Boss contains several registry/catalog structures with different semantic domains and that those structures do not collapse into one another merely because they share registry-like naming.
+
+The closed ownership map is:
+
+```text
+Remote Registry
+    -> external module catalog / discovery / immutable source selection
+
+Installed module inventory
+    -> committed material below modules_root() + validated local manifests
+
+Module IPC RuntimeRegistry
+    -> authenticated live runtime/session state
+
+AVAILABLE capability catalog
+    -> Rust capabilities that exist and may be requested
+
+LifecycleArsenal
+    -> operation-scoped REGISTERED execution pair
+
+FireControl
+    -> route from artillery + objective to implementation id
+
+CapabilityRegistry
+    -> implementation id to executable Rust handler
+
+SuppliedAuthorityRegistry
+    -> authenticated process-scoped supplied authorities
+
+AuthorityGrantSet
+    -> explicit GRANTED subset
+```
+
+These are intentionally different truths.
+
+## Remote Registry vs installed truth
+
+Remote Registry membership is not installation state.
+
+The remote registry supplies catalog/discovery information and immutable source selection for governed install/update operations.
+
+Installed truth is resolved from committed local material below:
+
+```text
+modules_root()
+```
+
+and validated module manifests.
+
+`available_modules_json()` may annotate remote catalog entries with local installed state, but it obtains that installed state from the local installed inventory. The remote registry does not manufacture it.
+
+Staged `require` candidates are explicitly transaction-local and are not installed until publication into `modules_root()` succeeds.
+
+Moving a module out of `modules_root()` during uninstall removes it from installed truth before final destructive cleanup.
+
+## RuntimeRegistry
+
+Module IPC RuntimeRegistry is authenticated live-runtime state.
+
+Before registration, Boss validates the real Unix peer and installed module identity.
+
+Installed contract JSON remains the declarative source of truth.
+
+A runtime may advertise only a subset of declared endpoints.
+
+It may not advertise an undeclared contract or endpoint.
+
+The routing law remains:
+
+```text
+installed declaration
+    -> privilege policy / endpoint identity
+
+runtime registration
+    -> authenticated live availability
+```
+
+Therefore:
+
+> **Runtime advertisement is availability, not authority.**
+
+`RuntimeRegistry` and `PendingRegistry` are process-local runtime structures. They are not durable installation truth.
+
+## AVAILABLE, REQUESTED and REGISTERED
+
+The Lifecycle capability states remain deliberately separated:
+
+```text
+AVAILABLE != REQUESTED != REGISTERED != USED
+```
+
+A capability existing in `AvailableCapabilityCatalog` does not automatically enter the productive arsenal.
+
+`LifecycleArsenal::register_requested()` performs the explicit operation-scoped conversion for the requested artillery/objective.
+
+That conversion pairs:
+
+```text
+FireControl route
++
+CapabilityRegistry handler
+```
+
+as one productive execution unit.
+
+An AVAILABLE but unrequested capability remains unregistered.
+
+FireControl cannot manufacture a handler.
+
+CapabilityRegistry cannot manufacture a route.
+
+Neither layer manufactures AuthoritySupply grants.
+
+## REGISTERED vs GRANTED authority
+
+Authority registration and authority grant remain separate operations:
+
+```text
+AuthoritySupply
+    -> authenticated supplied descriptors
+        -> SuppliedAuthorityRegistry
+            -> explicit grant construction
+                -> AuthorityGrantSet
+```
+
+Boss rejects a requested grant when the authority was not previously supplied and registered.
+
+Filesystem presence by itself is therefore insufficient to create permission.
+
+The permanent law remains:
+
+> **Physical availability is not permission.**
+
+## Legacy and duplicate truth audit
+
+Point 6 found no productive deprecated registry path and no duplicate registry owning the same semantic source of truth.
+
+Top-level legacy:
+
+```text
+manifest.commands
+```
+
+continues to be rejected by `read_manifest()`.
+
+The valid dynamic contract type:
+
+```text
+"commands"
+```
+
+remains independent from that removed top-level schema.
+
+Historical names such as registry-related folder resolution do not change ownership: installed module lookup still resolves local material below `modules_root()`.
+
+## Point 6 certification
+
+Point 6 closed through ownership census, cross-domain boundary audit, semantic closure and global certification.
+
+Final certification:
+
+```text
+Remote Registry -> installed truth leak       ABSENT
+RuntimeRegistry -> declaration leak           ABSENT
+RuntimeRegistry -> privilege-policy leak      ABSENT
+AVAILABLE -> REGISTERED implicit promotion    ABSENT
+REGISTERED -> GRANTED collapse                ABSENT
+registry persistence ownership violation      ABSENT
+productive deprecated registry path           ABSENT
+cargo fmt -- --check                          GREEN
+cargo check --locked --all-targets            GREEN
+full Rust suite                               GREEN
+Rust lib suite                                54 passed / 0 failed
+full neebles-backend suite                    568 passed / 0 failed
+git diff --check                              GREEN
+```
+
+Final verdict:
+
+```text
+FINAL :: GREEN
+POINT :: 6 REGISTRY / MODULE CATALOG CLOSED
+```
+
+No source changes were required for Point 6. Its closure certified the boundaries already present in the current Boss architecture.
+
+Test Module remained frozen throughout Point 6 and did not drive Boss architecture.
+
+---
+
 # Remaining roadmap
 
-Points 1, 2, 3 and 4 are closed.
+Points 1, 2, 3, 4, 5 and 6 are closed.
 
-The remaining Boss work starts at **Point 5**:
-
-5. **Auth / privileges**
-   - close `requires_root`, auth-agent and privilege escalation semantics;
-   - align Lifecycle, IPC, Settings and sensitive operations with explicit authority;
-   - preserve the Stage 8 law: physical availability never implies permission.
-
-6. **Registry / module catalog**
-   - close metadata, version, installed state, enable/disable state and contract references;
-   - align Registry with Governor, Lifecycle, Settings and IPC;
-   - the catalog describes and governs identity/state; it does not execute module technology.
+The remaining Boss work starts at **Point 7**:
 
 7. **CUSTOM v2 integration into Boss**
    - integrate certified CUSTOM v2 output without making Boss understand module technologies;
@@ -1293,7 +1579,7 @@ Nightmare remains independent from Critical Update. Future Boss subsystems may c
 
 For the current N.E.E.B.L.E.S. workflow:
 
-- commands/casters must not contain the shell prompt character;
+- commands/casters must avoid shell input patterns known to crash the working Konsole session;
 - do not use shell `set`;
 - one implementation step should produce one consolidated validation artifact when evidence is required;
 - GREEN advances immediately;
@@ -1318,14 +1604,16 @@ POINT 1 MODULE IPC             GREEN / CLOSED
 POINT 2 SETTINGS / AUTHORITY   GREEN / CLOSED
 POINT 3 NIGHTMARE / CU         GREEN / CLOSED
 POINT 4 NOTIFICATIONS          GREEN / CLOSED
-POINT 5 AUTH / PRIVILEGES      NEXT
+POINT 5 AUTH / PRIVILEGES      GREEN / CLOSED
+POINT 6 REGISTRY / CATALOG     GREEN / CLOSED
+POINT 7 CUSTOM V2              NEXT
 TEST MODULE                    FROZEN
 BOSS CONTRACT CLOSED           NO
 ```
 
 Current rule for continuation:
 
-**Point 4 is closed. The next planned front is Point 5 — Auth / privileges. Begin it with a current-state audit of `requires_root`, auth-agent, privilege escalation and sensitive-operation authority boundaries before changing code.**
+**Points 5 and 6 are closed. The next planned front is Point 7 — CUSTOM v2 integration into Boss. Begin Point 7 in a fresh work context from current source and current CUSTOM/Esbirro evidence; do not unfreeze Test Module and do not let CUSTOM v2 teach Boss module technology.**
 
 ---
 
