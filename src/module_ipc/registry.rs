@@ -199,6 +199,33 @@ impl RuntimeRegistry {
         Ok(delivered)
     }
 
+    pub fn send_to_session(
+        &self,
+        module: &str,
+        session_id: &str,
+        message: ModuleMessage,
+    ) -> Result<(), String> {
+        let runtime = self
+            .get(module)?
+            .ok_or_else(|| format!("module '{}' has no registered runtime", module))?;
+
+        if runtime.session_id != session_id {
+            return Err(format!(
+                "module '{}' runtime session mismatch: notification owner session '{}' but current runtime session is '{}'",
+                module,
+                session_id,
+                runtime.session_id
+            ));
+        }
+
+        runtime.writer.send(message).map_err(|error| {
+            format!(
+                "could not deliver targeted message to module '{}' session '{}': {}",
+                module, session_id, error
+            )
+        })
+    }
+
     pub fn get(&self, module: &str) -> Result<Option<ModuleRuntimeRecord>, String> {
         let registry = self
             .inner
@@ -267,6 +294,68 @@ impl RuntimeRegistry {
 mod certification_tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[test]
+    fn targeted_delivery_reaches_only_exact_runtime_session() {
+        let registry = RuntimeRegistry::new();
+
+        let (runtime, receiver) = record("alpha", "session-a", &[]);
+
+        registry.register(runtime).unwrap();
+
+        registry
+            .send_to_session(
+                "alpha",
+                "session-a",
+                ModuleMessage::NotificationActionInvoked {
+                    module: "alpha".to_string(),
+                    session_id: "session-a".to_string(),
+                    notification_id: 77,
+                    action_key: "open".to_string(),
+                },
+            )
+            .unwrap();
+
+        match receiver.recv().unwrap() {
+            ModuleMessage::NotificationActionInvoked {
+                module,
+                session_id,
+                notification_id,
+                action_key,
+            } => {
+                assert_eq!(module, "alpha");
+                assert_eq!(session_id, "session-a");
+                assert_eq!(notification_id, 77);
+                assert_eq!(action_key, "open");
+            }
+
+            other => panic!("unexpected targeted delivery: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn targeted_delivery_rejects_stale_runtime_session() {
+        let registry = RuntimeRegistry::new();
+
+        let (runtime, _receiver) = record("alpha", "session-current", &[]);
+
+        registry.register(runtime).unwrap();
+
+        let error = registry
+            .send_to_session(
+                "alpha",
+                "session-old",
+                ModuleMessage::NotificationClosed {
+                    module: "alpha".to_string(),
+                    session_id: "session-old".to_string(),
+                    notification_id: 88,
+                    reason: 2,
+                },
+            )
+            .expect_err("stale session must never receive notification events");
+
+        assert!(error.contains("session mismatch"));
+    }
 
     fn record(
         module: &str,

@@ -14,10 +14,6 @@
       "executable": "git",
       "library_paths": "core.multiarch"
     },
-    "boss.notify-send": {
-      "executable": "notify-send",
-      "library_paths": "core.multiarch"
-    },
     "boss.setpriv": {
       "executable": "setpriv",
       "library_paths": "core.multiarch"

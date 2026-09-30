@@ -1577,6 +1577,136 @@ fn execute_raw_environment_parser_case(
     }
 }
 
+fn execute_capability_provider_case(
+    select: &serde_json::Map<String, Value>,
+) -> Result<MatrixCaseOutcome, String> {
+    use crate::domestic_capability_provider::parse_capability_provider_output;
+
+    let shape = matrix_string(select, "shape")?;
+
+    let raw = match shape {
+        "valid" => {
+            r#"{
+            "schema": "1",
+            "name": "neebles-capability-provider-output",
+            "authority": "platform.example",
+            "protocol": "neebles-example-v1",
+            "values": {
+                "EXAMPLE_ALPHA": "one",
+                "EXAMPLE_BETA": "two"
+            }
+        }"#
+        }
+
+        "empty_values" => {
+            r#"{
+            "schema": "1",
+            "name": "neebles-capability-provider-output",
+            "authority": "platform.example",
+            "protocol": "neebles-example-v1",
+            "values": {}
+        }"#
+        }
+
+        "wrong_schema" => {
+            r#"{
+            "schema": "2",
+            "name": "neebles-capability-provider-output",
+            "authority": "platform.example",
+            "protocol": "neebles-example-v1",
+            "values": {}
+        }"#
+        }
+
+        "wrong_name" => {
+            r#"{
+            "schema": "1",
+            "name": "wrong-output",
+            "authority": "platform.example",
+            "protocol": "neebles-example-v1",
+            "values": {}
+        }"#
+        }
+
+        "wrong_authority" => {
+            r#"{
+            "schema": "1",
+            "name": "neebles-capability-provider-output",
+            "authority": "platform.other",
+            "protocol": "neebles-example-v1",
+            "values": {}
+        }"#
+        }
+
+        "wrong_protocol" => {
+            r#"{
+            "schema": "1",
+            "name": "neebles-capability-provider-output",
+            "authority": "platform.example",
+            "protocol": "neebles-other-v1",
+            "values": {}
+        }"#
+        }
+
+        "unknown_field" => {
+            r#"{
+            "schema": "1",
+            "name": "neebles-capability-provider-output",
+            "authority": "platform.example",
+            "protocol": "neebles-example-v1",
+            "values": {},
+            "magic": true
+        }"#
+        }
+
+        "non_string_value" => {
+            r#"{
+            "schema": "1",
+            "name": "neebles-capability-provider-output",
+            "authority": "platform.example",
+            "protocol": "neebles-example-v1",
+            "values": {
+                "EXAMPLE": 7
+            }
+        }"#
+        }
+
+        "empty_key" => {
+            r#"{
+            "schema": "1",
+            "name": "neebles-capability-provider-output",
+            "authority": "platform.example",
+            "protocol": "neebles-example-v1",
+            "values": {
+                "": "invalid"
+            }
+        }"#
+        }
+
+        "trailing_garbage" => {
+            r#"{
+            "schema": "1",
+            "name": "neebles-capability-provider-output",
+            "authority": "platform.example",
+            "protocol": "neebles-example-v1",
+            "values": {}
+        }
+        garbage"#
+        }
+
+        other => {
+            return Err(format!("unknown capability provider fixture: {other}"));
+        }
+    };
+
+    match parse_capability_provider_output(raw.as_bytes(), "platform.example", "neebles-example-v1")
+    {
+        Ok(values) => Ok(MatrixCaseOutcome::environment("pass", values)),
+
+        Err(_) => Ok(MatrixCaseOutcome::status("error")),
+    }
+}
+
 fn execute_command_sealing_case(
     select: &serde_json::Map<String, Value>,
 ) -> Result<MatrixCaseOutcome, String> {
@@ -3842,6 +3972,8 @@ pub fn execute_tester_matrix(
                 "session_policy" => execute_session_policy_case(select)?,
 
                 "raw_environment_parser" => execute_raw_environment_parser_case(select)?,
+
+                "capability_provider" => execute_capability_provider_case(select)?,
 
                 "command_sealing" => execute_command_sealing_case(select)?,
 

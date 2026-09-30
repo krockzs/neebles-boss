@@ -11,7 +11,6 @@ fn run() -> Result<(), String> {
         "boss.curl",
         "boss.env",
         "boss.git",
-        "boss.notify-send",
         "boss.pkexec",
         "boss.qdbus6",
         "boss.setpriv",

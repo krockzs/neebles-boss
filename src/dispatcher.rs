@@ -18,9 +18,12 @@ pub fn launch_ui() -> Result<(), String> {
         BossUiState::Closed => {}
     }
 
-    let (desktop_uid, desktop_gid) = crate::runtime_identity::desktop_identity()?;
-    let runtime_dir = format!("/run/user/{desktop_uid}");
-    let session_bus = format!("unix:path={runtime_dir}/bus");
+    let desktop_session =
+        neebles_backend::domestic_desktop_session_interface::
+            resolve_current_desktop_session_interface()?;
+
+    let desktop_uid = desktop_session.desktop_uid();
+    let desktop_gid = desktop_session.desktop_gid();
 
     let client_root = crate::languages::client_root()?;
     let ui_path = client_root.join("ui/neebles-ui");
@@ -42,10 +45,7 @@ pub fn launch_ui() -> Result<(), String> {
     let systemd_run =
         neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.systemd-run")?;
 
-    let protocol_environment = BTreeMap::from([
-        ("XDG_RUNTIME_DIR".to_string(), runtime_dir.clone()),
-        ("DBUS_SESSION_BUS_ADDRESS".to_string(), session_bus.clone()),
-    ]);
+    let protocol_environment = desktop_session.environment().clone();
 
     let mut command = neebles_backend::domestic_environment::build_process_command(
         setpriv,

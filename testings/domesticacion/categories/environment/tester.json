@@ -433,6 +433,105 @@
           }
         }
       ]
+    },
+    {
+      "name": "boss.capability_provider",
+      "options": {
+        "shape": [
+          "valid",
+          "empty_values",
+          "wrong_schema",
+          "wrong_name",
+          "wrong_authority",
+          "wrong_protocol",
+          "unknown_field",
+          "non_string_value",
+          "empty_key",
+          "trailing_garbage"
+        ]
+      },
+      "cases": [
+        {
+          "id": "valid-envelope-produces-values",
+          "select": {
+            "shape": "valid"
+          },
+          "expect": "pass",
+          "assert": {
+            "contains": {
+              "EXAMPLE_ALPHA": "one",
+              "EXAMPLE_BETA": "two"
+            },
+            "size": 2
+          }
+        },
+        {
+          "id": "empty-values-are-valid",
+          "select": {
+            "shape": "empty_values"
+          },
+          "expect": "pass",
+          "assert": {
+            "size": 0
+          }
+        },
+        {
+          "id": "wrong-schema-is-error",
+          "select": {
+            "shape": "wrong_schema"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "wrong-name-is-error",
+          "select": {
+            "shape": "wrong_name"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "wrong-authority-is-error",
+          "select": {
+            "shape": "wrong_authority"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "wrong-protocol-is-error",
+          "select": {
+            "shape": "wrong_protocol"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "unknown-field-is-error",
+          "select": {
+            "shape": "unknown_field"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "non-string-value-is-error",
+          "select": {
+            "shape": "non_string_value"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "empty-value-key-is-error",
+          "select": {
+            "shape": "empty_key"
+          },
+          "expect": "error"
+        },
+        {
+          "id": "trailing-garbage-is-error",
+          "select": {
+            "shape": "trailing_garbage"
+          },
+          "expect": "error"
+        }
+      ]
     }
   ]
 }

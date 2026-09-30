@@ -25,13 +25,6 @@
     },
     {
       "category": "executable",
-      "value": "notify-send",
-      "targets": [
-        "usr/bin/notify-send"
-      ]
-    },
-    {
-      "category": "executable",
       "value": "setpriv",
       "targets": [
         "usr/bin/setpriv"

@@ -6,7 +6,7 @@ Current source line: **1.0.15**
 
 Published Point 2 closure baseline: **`e3fd46a` — `refactor(boss): close point 2 authority and settings cleanup`**
 
-Current macro closure: **Point 3 — Nightmare + Critical Update GREEN / CLOSED**.
+Current macro closure: **Point 4 — Notifications GREEN / CLOSED**.
 
 N.E.E.B.L.E.S. Boss is the governance and orchestration layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -28,7 +28,8 @@ Completed macro fronts:
 Point 1  Contracts + Module IPC                GREEN / CLOSED
 Point 2  Settings + authority/persistence      GREEN / CLOSED
 Point 3  Nightmare + Critical Update           GREEN / CLOSED
-Point 4  Notifications                         NEXT
+Point 4  Notifications                         GREEN / CLOSED
+Point 5  Auth / privileges                     NEXT
 ```
 
 The Lifecycle and generic Surface front remains **GREEN / CLOSED** and is not reopened unless current source proves a real contradiction.
@@ -913,16 +914,296 @@ Test Module remained frozen throughout Point 3 and did not drive Boss architectu
 
 ---
 
+# Point 4 — Notifications
+
+Point 4 is **GREEN / CLOSED**.
+
+Notifications is now a governed Boss subsystem with one generic presentation core, explicit desktop-session authority, module transport through `modules.sock`, exact ownership and return routing, and no dependency on the old `notify-send` transport.
+
+The closure preserves a strict boundary:
+
+```text
+consumer intent
+    -> Boss notification contract
+        -> policy + validation
+            -> authorized desktop-session interface
+                -> org.freedesktop.Notifications through zbus
+                    -> Plasma
+```
+
+Notifications does not become Lifecycle, Telemetry, EventLog, Registry, UI authority or a second module-control channel.
+
+## Boss notification law
+
+Current Boss product notifications use the **Default Notification** shape.
+
+Boss-owned Default notifications use:
+
+```text
+application        N.E.E.B.L.E.S.
+timeout            3000 ms
+actions            none
+inline reply       none
+ownership          Boss
+```
+
+Normal notifications obey the persisted Boss policy:
+
+```text
+normal_notifications = false
+    -> suppress normal notifications
+
+Critical / Fatal
+    -> mandatory
+```
+
+A suppressed notification does not fabricate a Plasma notification id.
+
+When Plasma presents a Boss notification and returns a nonzero id, Boss records that id as `NotificationOwner::Boss`.
+
+The current Boss product notification families are intentionally simple Default notifications:
+
+| Boss notification | Current severity | Final Point 4 format |
+| --- | --- | --- |
+| module update available | `info` | Default |
+| module update available while module is running | `warning` | Default |
+| notifications enabled | `success` | Default |
+| notifications disabled | `info` | Default |
+| telemetry enabled | `success` | Default |
+| telemetry disabled | `info` | Default |
+
+Point 4 deliberately does **not** add Rich presentation, actions, inline reply or Custom behavior to those current Boss notifications merely because the infrastructure can support them.
+
+## Module notification tunnel
+
+Module notification product behavior is intentionally **not designed inside Boss**.
+
+Boss exposes the generic notification tunnel through `modules.sock` and does not need to be recompiled for each future module notification design.
+
+The current law is:
+
+```text
+module
+    -> modules.sock
+        -> Boss generic notification contract
+            -> policy / ownership / presentation
+                -> Plasma
+```
+
+The global Module IPC protocol remains:
+
+```text
+MODULES_PROTOCOL_VERSION = 1
+```
+
+The Notifications capability protocol is:
+
+```text
+MODULE_NOTIFICATIONS_PROTOCOL_VERSION = 4
+```
+
+A future module may therefore use the already-closed contract without teaching Boss the module name, framework, language or technology.
+
+## Default module notification
+
+The module Default path supports:
+
+- module-owned application identity;
+- canonical module icon resolution;
+- severity;
+- title and message;
+- optional `replace_id`;
+- optional explicit expiry override;
+- exact module/session ownership;
+- returned Plasma notification id.
+
+Timeout law:
+
+```text
+no module timeout override
+    -> 3000 ms
+
+explicit module timeout override
+    -> preserve the module-provided value
+```
+
+Therefore the 3000 ms Boss Default does not remove future module control over notification lifetime.
+
+## Rich notification contract
+
+The Rich path remains available as generic infrastructure for future consumers.
+
+`NotificationPresentation` carries presentation data separately from `NotificationOptions`.
+
+The closed Rich contract includes, among other fields:
+
+- application;
+- icon;
+- title;
+- message;
+- ordered actions;
+- optional inline reply;
+- replacement id;
+- expiry timeout;
+- category;
+- desktop entry;
+- resident/transient semantics;
+- sound name / sound file / suppress sound;
+- image path;
+- structured image data;
+- KDE URLs;
+- KDE origin/application hints.
+
+Actions use explicit key/label pairs.
+
+The reserved key:
+
+```text
+inline-reply
+```
+
+belongs only to the inline-reply bridge and cannot be reused as an ordinary action key.
+
+Ordinary action keys must be non-empty and unique. Action labels and reply labels must be non-empty.
+
+The presenter flattens actions to the FreeDesktop alternating key/label array while preserving order.
+
+KDE inline reply is mapped through the reserved action plus the supported reply hints.
+
+## Replacement, ACK and ownership
+
+Notification ids are productive contract data, not presentation trivia.
+
+Boss distinguishes ownership as:
+
+```text
+NotificationOwner::Boss
+NotificationOwner::Module { module, session_id }
+```
+
+Ownership laws include:
+
+- id `0` is rejected;
+- same-owner registration is idempotent;
+- ownership cannot silently transfer;
+- module replacement requires the exact module/session owner;
+- Boss-owned notifications cannot be replaced by a module;
+- a changed replacement id moves ownership to the newly returned id;
+- a suppressed replacement preserves the existing owner;
+- session cleanup removes only the exact runtime incarnation.
+
+The module forward path returns the real presented notification id through its ACK contract.
+
+## Return channel
+
+Boss listens to the Plasma Notifications return channel and understands the current signal family:
+
+```text
+NotificationClosed
+ActionInvoked
+NotificationReplied
+ActivationToken
+```
+
+Module-facing return messages are routed only to the exact owning runtime session through `RuntimeRegistry::send_to_session`.
+
+There is no broadcast fallback.
+
+Boss-owned return events never enter `modules.sock` as module events.
+
+`NotificationClosed` releases ownership after terminal handling according to the closed router contract.
+
+## Desktop-session authority
+
+Notifications does not derive desktop authority from arbitrary host environment state.
+
+The productive presenter and return listener consume the same resolved `DesktopSessionInterface`.
+
+That interface is produced through the closed platform capability-authority path and carries the authorized desktop uid and session bus address required for the zbus connection.
+
+Conceptually:
+
+```text
+platform authority
+    -> generic capability provider
+        -> validated desktop-session values
+            -> DesktopSessionInterface
+                -> Notifications presenter + return listener
+```
+
+This preserves the permanent Stage 8 law:
+
+> Physical availability is not permission.
+
+## Transport cleanup
+
+The previous `notify-send` path is gone from Boss Notifications.
+
+Point 4 removed `notify-send` from:
+
+- the domestic target catalog;
+- the domestic grimorio;
+- Boss runtime self-certification;
+- Boss installer requirements;
+- Notifications documentation.
+
+Boss now presents through:
+
+```text
+org.freedesktop.Notifications
+```
+
+using zbus.
+
+`qdbus6` was **not** removed because it remains a real Installer dependency unrelated to the closed Notifications presenter.
+
+## Point 4 certification
+
+The final Point 4 product closure certified the contract and regression surface together.
+
+Key closure evidence:
+
+```text
+notify-send legacy transport             absent
+qdbus6 Installer authority               preserved
+Boss Default timeout                     3000 ms
+Boss Default actions                     none
+Boss Default inline reply                none
+normal notification policy               preserved
+Critical / Fatal mandatory policy        preserved
+Notifications protocol                   v4
+Global Module IPC protocol               v1
+module timeout override                  preserved
+Rich action/reply contract               GREEN
+return signal contract                   GREEN
+ownership / exact-session routing        GREEN
+DesktopSessionInterface consumption      GREEN
+domesticacion_elfica                     13 passed / 1 explicitly ignored
+full neebles-backend suite               568 passed / 0 failed
+full lib suite                           54 passed / 0 failed
+git diff --check                         GREEN
+```
+
+Point 4 closes the source contract, implementation and regression certification for Notifications.
+
+A later real Boss E2E may still exercise visual/desktop behavior as part of **Point 8 Final Boss integration and certification**. Point 4 does not claim a separate manual visual pass for every individual Plasma notification instance.
+
+Final verdict:
+
+```text
+FINAL :: GREEN
+POINT :: 4 NOTIFICATIONS CLOSED
+```
+
+Test Module remained frozen throughout Point 4 and did not drive Boss architecture.
+
+---
+
 # Remaining roadmap
 
-Points 1, 2 and 3 are closed.
+Points 1, 2, 3 and 4 are closed.
 
-The remaining Boss work starts at **Point 4**:
-
-4. **Notifications**
-   - close the generic notification contract and ownership model;
-   - define emission, transport, state and capabilities;
-   - do not turn Notifications into a parallel control channel.
+The remaining Boss work starts at **Point 5**:
 
 5. **Auth / privileges**
    - close `requires_root`, auth-agent and privilege escalation semantics;
@@ -1036,14 +1317,15 @@ BOSS UI / LAUNCHER / TRAY      GREEN / CLOSED
 POINT 1 MODULE IPC             GREEN / CLOSED
 POINT 2 SETTINGS / AUTHORITY   GREEN / CLOSED
 POINT 3 NIGHTMARE / CU         GREEN / CLOSED
-POINT 4 NOTIFICATIONS          NEXT
+POINT 4 NOTIFICATIONS          GREEN / CLOSED
+POINT 5 AUTH / PRIVILEGES      NEXT
 TEST MODULE                    FROZEN
 BOSS CONTRACT CLOSED           NO
 ```
 
 Current rule for continuation:
 
-**Begin Point 4 with a current-state audit of Notifications. Do not code until ownership, emission, transport, state and capability boundaries are proven from current source.**
+**Point 4 is closed. The next planned front is Point 5 — Auth / privileges. Begin it with a current-state audit of `requires_root`, auth-agent, privilege escalation and sensitive-operation authority boundaries before changing code.**
 
 ---
 

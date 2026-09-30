@@ -1,13 +1,20 @@
 use crate::config;
 use crate::external;
 use crate::modules;
+use crate::notifications::{
+    self, NotificationImageData, NotificationOptions, NotificationOutcome, NotificationOwner,
+    NotificationPresentation, NotificationReturnEvent, Severity,
+};
 use crate::settings;
 
 use crate::module_ipc::framing::{read_message, write_message};
 
 use crate::module_ipc::pending::PendingRegistry;
 
-use crate::module_ipc::protocol::{ModuleError, ModuleMessage, MODULES_PROTOCOL_VERSION};
+use crate::module_ipc::protocol::{
+    ModuleError, ModuleMessage, ModuleNotificationOptions, ModuleNotificationPresentation,
+    MODULES_PROTOCOL_VERSION,
+};
 
 use crate::module_ipc::registry::{ModuleRuntimeRecord, RuntimeRegistry};
 
@@ -50,6 +57,126 @@ fn emit_module_error_external(module: &str, error: &ModuleError) {
 static RUNTIME_REGISTRY: OnceLock<RuntimeRegistry> = OnceLock::new();
 
 static PENDING_REGISTRY: OnceLock<PendingRegistry> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NotificationReturnRoute {
+    Delivered,
+    BossOwned,
+    Unknown,
+}
+
+fn notification_return_message(
+    owner_module: &str,
+    owner_session: &str,
+    event: &NotificationReturnEvent,
+) -> ModuleMessage {
+    match event {
+        NotificationReturnEvent::Closed {
+            notification_id,
+            reason,
+        } => ModuleMessage::NotificationClosed {
+            module: owner_module.to_string(),
+            session_id: owner_session.to_string(),
+            notification_id: *notification_id,
+            reason: *reason,
+        },
+
+        NotificationReturnEvent::ActionInvoked {
+            notification_id,
+            action_key,
+        } => ModuleMessage::NotificationActionInvoked {
+            module: owner_module.to_string(),
+            session_id: owner_session.to_string(),
+            notification_id: *notification_id,
+            action_key: action_key.clone(),
+        },
+
+        NotificationReturnEvent::Replied {
+            notification_id,
+            text,
+        } => ModuleMessage::NotificationReplied {
+            module: owner_module.to_string(),
+            session_id: owner_session.to_string(),
+            notification_id: *notification_id,
+            text: text.clone(),
+        },
+
+        NotificationReturnEvent::ActivationToken {
+            notification_id,
+            activation_token,
+        } => ModuleMessage::NotificationActivationToken {
+            module: owner_module.to_string(),
+            session_id: owner_session.to_string(),
+            notification_id: *notification_id,
+            activation_token: activation_token.clone(),
+        },
+    }
+}
+
+fn route_notification_return_event_with<FOwner, FSend, FRelease>(
+    event: NotificationReturnEvent,
+    owner_for: FOwner,
+    send_to_session: FSend,
+    release_owner: FRelease,
+) -> Result<NotificationReturnRoute, String>
+where
+    FOwner: FnOnce(u32) -> Result<Option<NotificationOwner>, String>,
+    FSend: FnOnce(&str, &str, ModuleMessage) -> Result<(), String>,
+    FRelease: FnOnce(u32) -> Result<Option<NotificationOwner>, String>,
+{
+    let notification_id = event.notification_id();
+
+    let Some(owner) = owner_for(notification_id)? else {
+        return Ok(NotificationReturnRoute::Unknown);
+    };
+
+    match owner {
+        NotificationOwner::Boss => {
+            if event.is_terminal() {
+                let _ = release_owner(notification_id)?;
+            }
+
+            Ok(NotificationReturnRoute::BossOwned)
+        }
+
+        NotificationOwner::Module { module, session_id } => {
+            let message = notification_return_message(&module, &session_id, &event);
+
+            let delivery = send_to_session(&module, &session_id, message);
+
+            if event.is_terminal() {
+                let release = release_owner(notification_id);
+
+                match (delivery, release) {
+                    (Err(error), _) => Err(error),
+                    (Ok(()), Err(error)) => Err(error),
+                    (Ok(()), Ok(_)) => Ok(NotificationReturnRoute::Delivered),
+                }
+            } else {
+                delivery?;
+
+                Ok(NotificationReturnRoute::Delivered)
+            }
+        }
+    }
+}
+
+pub(crate) fn route_notification_return_event(
+    event: NotificationReturnEvent,
+) -> Result<(), String> {
+    match route_notification_return_event_with(
+        event,
+        notifications::notification_owner,
+        |module, session_id, message| {
+            runtime_registry().send_to_session(module, session_id, message)
+        },
+        notifications::release_notification_owner,
+    )? {
+        NotificationReturnRoute::Delivered
+        | NotificationReturnRoute::BossOwned
+        | NotificationReturnRoute::Unknown => Ok(()),
+    }
+}
 
 pub fn runtime_registry() -> &'static RuntimeRegistry {
     RUNTIME_REGISTRY.get_or_init(RuntimeRegistry::new)
@@ -595,6 +722,28 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         }
     };
 
+    match notifications::release_module_notification_session(&module, &session_id) {
+        Ok(released) if !released.is_empty() => {
+            eprintln!(
+                "N.E.E.B.L.E.S.: released {} notification ownership record(s) for module '{}' session '{}'",
+                released.len(),
+                module,
+                session_id
+            );
+        }
+
+        Ok(_) => {}
+
+        Err(error) => {
+            eprintln!(
+                "N.E.E.B.L.E.S.: could not release notification ownership for module '{}' session '{}': {}",
+                module,
+                session_id,
+                error
+            );
+        }
+    }
+
     if removed {
         if let Err(error) = runtime_registry().broadcast_event(
             "module.lifecycle",
@@ -655,6 +804,233 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
     let _ = writer_handle.join();
 
     result
+}
+
+fn notification_presentation_from_wire(
+    presentation: ModuleNotificationPresentation,
+) -> NotificationPresentation {
+    let ModuleNotificationPresentation {
+        application,
+        icon,
+        title,
+        message,
+        actions,
+        reply,
+        options,
+    } = presentation;
+
+    let ModuleNotificationOptions {
+        replace_id,
+        expire_timeout_ms,
+        category,
+        desktop_entry,
+        resident,
+        transient,
+        sound_name,
+        sound_file,
+        suppress_sound,
+        image_path,
+        image_data,
+        kde_urls,
+        kde_origin_name,
+        kde_display_appname,
+    } = options;
+
+    NotificationPresentation {
+        application,
+        icon,
+        title,
+        message,
+        actions: actions
+            .into_iter()
+            .map(|action| crate::notifications::NotificationAction {
+                key: action.key,
+                label: action.label,
+            })
+            .collect(),
+        reply: reply.map(|reply| crate::notifications::NotificationReply {
+            label: reply.label,
+            placeholder_text: reply.placeholder_text,
+            submit_button_text: reply.submit_button_text,
+            submit_button_icon_name: reply.submit_button_icon_name,
+        }),
+        options: NotificationOptions {
+            replace_id,
+            expire_timeout_ms,
+            category,
+            desktop_entry,
+            resident,
+            transient,
+            sound_name,
+            sound_file,
+            suppress_sound,
+            image_path,
+            image_data: image_data.map(|image| NotificationImageData {
+                width: image.width,
+                height: image.height,
+                rowstride: image.rowstride,
+                has_alpha: image.has_alpha,
+                bits_per_sample: image.bits_per_sample,
+                channels: image.channels,
+                data: image.data,
+            }),
+            kde_urls,
+            kde_origin_name,
+            kde_display_appname,
+        },
+    }
+}
+
+fn handle_module_default_notification<F>(
+    writer: &mpsc::Sender<ModuleMessage>,
+    module: &str,
+    session_id: &str,
+    id: String,
+    notification_module: String,
+    notification_session: String,
+    severity: String,
+    icon: String,
+    title: String,
+    message: String,
+    expire_timeout_ms: Option<i32>,
+    replace_id: Option<u32>,
+    emit: F,
+) -> Result<(), String>
+where
+    F: FnOnce(
+        &str,
+        Severity,
+        &str,
+        &str,
+        &str,
+        Option<i32>,
+        Option<u32>,
+    ) -> Result<NotificationOutcome, String>,
+{
+    validate_session(
+        module,
+        session_id,
+        &notification_module,
+        &notification_session,
+    )?;
+
+    let result = Severity::parse(&severity).and_then(|severity| {
+        emit(
+            module,
+            severity,
+            &icon,
+            &title,
+            &message,
+            expire_timeout_ms,
+            replace_id,
+        )
+    });
+
+    match result {
+        Ok(outcome) => {
+            writer
+                .send(ModuleMessage::NotificationAck {
+                    id,
+                    module: module.to_string(),
+                    session_id: session_id.to_string(),
+                    notification_id: outcome.notification_id(),
+                })
+                .map_err(|error| {
+                    format!(
+                        "could not queue default notification acknowledgement for module '{}': {error}",
+                        module
+                    )
+                })?;
+        }
+
+        Err(error) => {
+            writer
+                .send(ModuleMessage::Error {
+                    id: Some(id),
+                    module: Some(module.to_string()),
+                    error: ModuleError {
+                        kind: "notification".to_string(),
+                        message: error,
+                        details: None,
+                    },
+                })
+                .map_err(|send_error| {
+                    format!(
+                        "could not queue default notification error for module '{}': {send_error}",
+                        module
+                    )
+                })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_module_notification<F>(
+    writer: &mpsc::Sender<ModuleMessage>,
+    module: &str,
+    session_id: &str,
+    id: String,
+    notification_module: String,
+    notification_session: String,
+    severity: String,
+    presentation: ModuleNotificationPresentation,
+    emit: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&str, Severity, &NotificationPresentation) -> Result<NotificationOutcome, String>,
+{
+    validate_session(
+        module,
+        session_id,
+        &notification_module,
+        &notification_session,
+    )?;
+
+    let result = Severity::parse(&severity).and_then(|severity| {
+        let presentation = notification_presentation_from_wire(presentation);
+
+        emit(module, severity, &presentation)
+    });
+
+    match result {
+        Ok(outcome) => {
+            writer
+                .send(ModuleMessage::NotificationAck {
+                    id,
+                    module: module.to_string(),
+                    session_id: session_id.to_string(),
+                    notification_id: outcome.notification_id(),
+                })
+                .map_err(|error| {
+                    format!(
+                        "could not queue notification acknowledgement for module '{}': {error}",
+                        module
+                    )
+                })?;
+        }
+
+        Err(error) => {
+            writer
+                .send(ModuleMessage::Error {
+                    id: Some(id),
+                    module: Some(module.to_string()),
+                    error: ModuleError {
+                        kind: "notification".to_string(),
+                        message: error,
+                        details: None,
+                    },
+                })
+                .map_err(|send_error| {
+                    format!(
+                        "could not queue notification error for module '{}': {send_error}",
+                        module
+                    )
+                })?;
+        }
+    }
+
+    Ok(())
 }
 
 fn client_loop(
@@ -933,6 +1309,72 @@ fn client_loop(
                 }
             }
 
+            ModuleMessage::DefaultNotification {
+                id,
+                module: notification_module,
+                session_id: notification_session,
+                severity,
+                icon,
+                title,
+                message,
+                expire_timeout_ms,
+                replace_id,
+            } => {
+                handle_module_default_notification(
+                    writer,
+                    module,
+                    session_id,
+                    id,
+                    notification_module,
+                    notification_session,
+                    severity,
+                    icon,
+                    title,
+                    message,
+                    expire_timeout_ms,
+                    replace_id,
+                    |module, severity, icon, title, message, expire_timeout_ms, replace_id| {
+                        notifications::emit_default_for_module_owned(
+                            module,
+                            session_id,
+                            severity,
+                            icon,
+                            title,
+                            message,
+                            expire_timeout_ms,
+                            replace_id,
+                        )
+                    },
+                )?;
+            }
+
+            ModuleMessage::Notification {
+                id,
+                module: notification_module,
+                session_id: notification_session,
+                severity,
+                presentation,
+            } => {
+                handle_module_notification(
+                    writer,
+                    module,
+                    session_id,
+                    id,
+                    notification_module,
+                    notification_session,
+                    severity,
+                    presentation,
+                    |module, severity, presentation| {
+                        notifications::emit_for_module_with_identity_owned(
+                            module,
+                            session_id,
+                            severity,
+                            presentation,
+                        )
+                    },
+                )?;
+            }
+
             ModuleMessage::Unregister {
                 module: unregister_module,
 
@@ -1050,6 +1492,11 @@ fn client_loop(
             | ModuleMessage::Registered { .. }
             | ModuleMessage::Subscribed { .. }
             | ModuleMessage::SettingsValue { .. }
+            | ModuleMessage::NotificationAck { .. }
+            | ModuleMessage::NotificationClosed { .. }
+            | ModuleMessage::NotificationActionInvoked { .. }
+            | ModuleMessage::NotificationReplied { .. }
+            | ModuleMessage::NotificationActivationToken { .. }
             | ModuleMessage::Event { .. }
             | ModuleMessage::Invoke { .. }
             | ModuleMessage::Shutdown { .. } => {
@@ -1086,6 +1533,253 @@ fn client_loop(
                     })?;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod notification_return_router_tests {
+    use super::*;
+
+    use std::cell::Cell;
+
+    fn module_owner() -> NotificationOwner {
+        NotificationOwner::Module {
+            module: "alpha".to_string(),
+            session_id: "session-a".to_string(),
+        }
+    }
+
+    #[test]
+    fn synthetic_action_routes_only_to_exact_owner() {
+        let sent = Cell::new(false);
+
+        let route = route_notification_return_event_with(
+            NotificationReturnEvent::ActionInvoked {
+                notification_id: 41,
+                action_key: "open".to_string(),
+            },
+            |_| Ok(Some(module_owner())),
+            |module, session_id, message| {
+                assert_eq!(module, "alpha");
+                assert_eq!(session_id, "session-a");
+
+                match message {
+                    ModuleMessage::NotificationActionInvoked {
+                        module,
+                        session_id,
+                        notification_id,
+                        action_key,
+                    } => {
+                        assert_eq!(module, "alpha");
+                        assert_eq!(session_id, "session-a");
+                        assert_eq!(notification_id, 41);
+                        assert_eq!(action_key, "open");
+                    }
+
+                    other => panic!("unexpected notification return message: {other:?}"),
+                }
+
+                sent.set(true);
+
+                Ok(())
+            },
+            |_| panic!("action must not release ownership"),
+        )
+        .unwrap();
+
+        assert_eq!(route, NotificationReturnRoute::Delivered);
+        assert!(sent.get());
+    }
+
+    #[test]
+    fn synthetic_reply_preserves_payload_and_owner() {
+        let route = route_notification_return_event_with(
+            NotificationReturnEvent::Replied {
+                notification_id: 42,
+                text: "respuesta".to_string(),
+            },
+            |_| Ok(Some(module_owner())),
+            |module, session_id, message| {
+                assert_eq!(module, "alpha");
+                assert_eq!(session_id, "session-a");
+
+                match message {
+                    ModuleMessage::NotificationReplied {
+                        notification_id,
+                        text,
+                        ..
+                    } => {
+                        assert_eq!(notification_id, 42);
+                        assert_eq!(text, "respuesta");
+                    }
+
+                    other => panic!("unexpected notification return message: {other:?}"),
+                }
+
+                Ok(())
+            },
+            |_| panic!("reply must not release ownership"),
+        )
+        .unwrap();
+
+        assert_eq!(route, NotificationReturnRoute::Delivered);
+    }
+
+    #[test]
+    fn synthetic_activation_token_preserves_payload() {
+        let route = route_notification_return_event_with(
+            NotificationReturnEvent::ActivationToken {
+                notification_id: 43,
+                activation_token: "token-43".to_string(),
+            },
+            |_| Ok(Some(module_owner())),
+            |_, _, message| {
+                match message {
+                    ModuleMessage::NotificationActivationToken {
+                        notification_id,
+                        activation_token,
+                        ..
+                    } => {
+                        assert_eq!(notification_id, 43);
+                        assert_eq!(activation_token, "token-43");
+                    }
+
+                    other => panic!("unexpected notification return message: {other:?}"),
+                }
+
+                Ok(())
+            },
+            |_| panic!("activation token must not release ownership"),
+        )
+        .unwrap();
+
+        assert_eq!(route, NotificationReturnRoute::Delivered);
+    }
+
+    #[test]
+    fn synthetic_closed_delivers_then_releases_owner() {
+        let delivered = Cell::new(false);
+        let released = Cell::new(false);
+
+        let route = route_notification_return_event_with(
+            NotificationReturnEvent::Closed {
+                notification_id: 44,
+                reason: 2,
+            },
+            |_| Ok(Some(module_owner())),
+            |module, session_id, message| {
+                assert_eq!(module, "alpha");
+                assert_eq!(session_id, "session-a");
+
+                match message {
+                    ModuleMessage::NotificationClosed {
+                        notification_id,
+                        reason,
+                        ..
+                    } => {
+                        assert_eq!(notification_id, 44);
+                        assert_eq!(reason, 2);
+                    }
+
+                    other => panic!("unexpected notification return message: {other:?}"),
+                }
+
+                delivered.set(true);
+
+                Ok(())
+            },
+            |notification_id| {
+                assert_eq!(notification_id, 44);
+                released.set(true);
+
+                Ok(Some(module_owner()))
+            },
+        )
+        .unwrap();
+
+        assert_eq!(route, NotificationReturnRoute::Delivered);
+        assert!(delivered.get());
+        assert!(released.get());
+    }
+
+    #[test]
+    fn synthetic_closed_releases_even_when_delivery_fails() {
+        let released = Cell::new(false);
+
+        let error = route_notification_return_event_with(
+            NotificationReturnEvent::Closed {
+                notification_id: 45,
+                reason: 3,
+            },
+            |_| Ok(Some(module_owner())),
+            |_, _, _| Err("runtime disappeared".to_string()),
+            |notification_id| {
+                assert_eq!(notification_id, 45);
+                released.set(true);
+
+                Ok(Some(module_owner()))
+            },
+        )
+        .expect_err("delivery failure must propagate");
+
+        assert_eq!(error, "runtime disappeared");
+        assert!(released.get());
+    }
+
+    #[test]
+    fn synthetic_unknown_notification_is_not_broadcast() {
+        let route = route_notification_return_event_with(
+            NotificationReturnEvent::ActionInvoked {
+                notification_id: 999,
+                action_key: "open".to_string(),
+            },
+            |_| Ok(None),
+            |_, _, _| panic!("unknown notification must never be delivered"),
+            |_| panic!("unknown notification must never release ownership"),
+        )
+        .unwrap();
+
+        assert_eq!(route, NotificationReturnRoute::Unknown);
+    }
+
+    #[test]
+    fn synthetic_boss_owned_event_never_enters_modules_socket() {
+        let route = route_notification_return_event_with(
+            NotificationReturnEvent::ActionInvoked {
+                notification_id: 50,
+                action_key: "boss-action".to_string(),
+            },
+            |_| Ok(Some(NotificationOwner::Boss)),
+            |_, _, _| panic!("Boss-owned notification must never enter modules.sock"),
+            |_| panic!("non-terminal Boss event must not release ownership"),
+        )
+        .unwrap();
+
+        assert_eq!(route, NotificationReturnRoute::BossOwned);
+    }
+
+    #[test]
+    fn synthetic_boss_closed_releases_without_module_delivery() {
+        let released = Cell::new(false);
+
+        let route = route_notification_return_event_with(
+            NotificationReturnEvent::Closed {
+                notification_id: 51,
+                reason: 1,
+            },
+            |_| Ok(Some(NotificationOwner::Boss)),
+            |_, _, _| panic!("Boss-owned notification must never enter modules.sock"),
+            |notification_id| {
+                assert_eq!(notification_id, 51);
+                released.set(true);
+
+                Ok(Some(NotificationOwner::Boss))
+            },
+        )
+        .unwrap();
+
+        assert_eq!(route, NotificationReturnRoute::BossOwned);
+        assert!(released.get());
     }
 }
 
@@ -1319,6 +2013,568 @@ mod transport_semantics_tests {
         drop(runtime_stream);
 
         assert!(handle.join().unwrap().is_ok());
+    }
+    #[test]
+    fn default_notification_applies_three_second_timeout_without_override() {
+        let (writer, receiver) = mpsc::channel();
+
+        handle_module_default_notification(
+            &writer,
+            "alpha",
+            "session-a",
+            "default-timeout".to_string(),
+            "alpha".to_string(),
+            "session-a".to_string(),
+            "info".to_string(),
+            "assets/alpha.png".to_string(),
+            "Default title".to_string(),
+            "Default body".to_string(),
+            None,
+            None,
+            |module, severity, icon, title, message, expire, replace_id| {
+                assert_eq!(module, "alpha");
+                assert!(matches!(severity, Severity::Info));
+                assert_eq!(icon, "assets/alpha.png");
+                assert_eq!(title, "Default title");
+                assert_eq!(message, "Default body");
+                assert_eq!(expire, None);
+                assert_eq!(replace_id, None);
+
+                Ok(NotificationOutcome::Presented(91))
+            },
+        )
+        .expect("default notification must succeed");
+
+        match receiver.recv().expect("default acknowledgement expected") {
+            ModuleMessage::NotificationAck {
+                id,
+                module,
+                session_id,
+                notification_id,
+            } => {
+                assert_eq!(id, "default-timeout");
+                assert_eq!(module, "alpha");
+                assert_eq!(session_id, "session-a");
+                assert_eq!(notification_id, Some(91));
+            }
+
+            other => panic!("expected NotificationAck, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_notification_preserves_expire_and_replace_overrides() {
+        let (writer, receiver) = mpsc::channel();
+
+        handle_module_default_notification(
+            &writer,
+            "alpha",
+            "session-a",
+            "default-overrides".to_string(),
+            "alpha".to_string(),
+            "session-a".to_string(),
+            "warning".to_string(),
+            "assets/alpha.png".to_string(),
+            "Progress".to_string(),
+            "Half way".to_string(),
+            Some(8500),
+            Some(41),
+            |module, severity, icon, title, message, expire, replace_id| {
+                assert_eq!(module, "alpha");
+                assert!(matches!(severity, Severity::Warning));
+                assert_eq!(icon, "assets/alpha.png");
+                assert_eq!(title, "Progress");
+                assert_eq!(message, "Half way");
+                assert_eq!(expire, Some(8500));
+                assert_eq!(replace_id, Some(41));
+
+                Ok(NotificationOutcome::Presented(77))
+            },
+        )
+        .expect("default override notification must succeed");
+
+        match receiver
+            .recv()
+            .expect("default override acknowledgement expected")
+        {
+            ModuleMessage::NotificationAck {
+                notification_id, ..
+            } => {
+                assert_eq!(notification_id, Some(77));
+            }
+
+            other => panic!("expected NotificationAck, got {other:?}"),
+        }
+    }
+
+    fn test_notification_presentation(
+        application: &str,
+        icon: &str,
+        title: &str,
+        message: &str,
+        replace_id: Option<u32>,
+    ) -> ModuleNotificationPresentation {
+        ModuleNotificationPresentation {
+            application: application.to_string(),
+            icon: icon.to_string(),
+            title: title.to_string(),
+            message: message.to_string(),
+            actions: Vec::new(),
+            reply: None,
+            options: ModuleNotificationOptions {
+                replace_id,
+                ..ModuleNotificationOptions::default()
+            },
+        }
+    }
+
+    #[test]
+    fn notification_exact_session_returns_ack_and_preserves_identity() {
+        let (writer, receiver) = mpsc::channel();
+
+        handle_module_notification(
+            &writer,
+            "alpha",
+            "session-a",
+            "notification-1".to_string(),
+            "alpha".to_string(),
+            "session-a".to_string(),
+            "warning".to_string(),
+            test_notification_presentation(
+                "Alpha Worker",
+                "assets/alpha.png",
+                "Alpha title",
+                "Alpha body",
+                None,
+            ),
+            |module, severity, presentation| {
+                assert_eq!(module, "alpha");
+                assert!(matches!(severity, Severity::Warning));
+                assert_eq!(presentation.application, "Alpha Worker");
+                assert_eq!(presentation.icon, "assets/alpha.png");
+                assert_eq!(presentation.options.replace_id, None);
+                assert_eq!(presentation.title, "Alpha title");
+                assert_eq!(presentation.message, "Alpha body");
+
+                Ok(NotificationOutcome::Presented(77))
+            },
+        )
+        .expect("exact notification session must be accepted");
+
+        match receiver
+            .recv()
+            .expect("notification acknowledgement expected")
+        {
+            ModuleMessage::NotificationAck {
+                id,
+                module,
+                session_id,
+                notification_id,
+            } => {
+                assert_eq!(id, "notification-1");
+                assert_eq!(module, "alpha");
+                assert_eq!(session_id, "session-a");
+                assert_eq!(notification_id, Some(77));
+            }
+
+            other => panic!("unexpected notification response: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn notification_replace_id_reaches_presenter_and_ack_returns_new_id() {
+        let (writer, receiver) = mpsc::channel();
+
+        handle_module_notification(
+            &writer,
+            "alpha",
+            "session-a",
+            "replace-request".to_string(),
+            "alpha".to_string(),
+            "session-a".to_string(),
+            "info".to_string(),
+            test_notification_presentation(
+                "Alpha",
+                "assets/alpha.png",
+                "Replacement",
+                "Updated body",
+                Some(41),
+            ),
+            |module, severity, presentation| {
+                assert_eq!(module, "alpha");
+                assert!(matches!(severity, Severity::Info));
+                assert_eq!(presentation.application, "Alpha");
+                assert_eq!(presentation.icon, "assets/alpha.png");
+                assert_eq!(presentation.options.replace_id, Some(41));
+                assert_eq!(presentation.title, "Replacement");
+                assert_eq!(presentation.message, "Updated body");
+
+                Ok(NotificationOutcome::Presented(77))
+            },
+        )
+        .expect("replacement notification must succeed");
+
+        match receiver
+            .recv()
+            .expect("replacement notification acknowledgement expected")
+        {
+            ModuleMessage::NotificationAck {
+                id,
+                module,
+                session_id,
+                notification_id,
+            } => {
+                assert_eq!(id, "replace-request");
+                assert_eq!(module, "alpha");
+                assert_eq!(session_id, "session-a");
+                assert_eq!(notification_id, Some(77));
+            }
+
+            other => panic!("expected NotificationAck, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn notification_rich_options_reach_presenter_as_one_domain_object() {
+        let (writer, receiver) = mpsc::channel();
+
+        let presentation = ModuleNotificationPresentation {
+            application: "Alpha Rich".to_string(),
+            icon: "assets/alpha.png".to_string(),
+            title: "Rich title".to_string(),
+            message: "Rich body".to_string(),
+            actions: vec![
+                crate::module_ipc::protocol::ModuleNotificationAction {
+                    key: "open".to_string(),
+                    label: "Open".to_string(),
+                },
+                crate::module_ipc::protocol::ModuleNotificationAction {
+                    key: "details".to_string(),
+                    label: "Details".to_string(),
+                },
+            ],
+            reply: Some(crate::module_ipc::protocol::ModuleNotificationReply {
+                label: "Reply".to_string(),
+                placeholder_text: Some("Write a reply".to_string()),
+                submit_button_text: Some("Send".to_string()),
+                submit_button_icon_name: Some("mail-send".to_string()),
+            }),
+            options: ModuleNotificationOptions {
+                replace_id: Some(41),
+                expire_timeout_ms: Some(9000),
+                category: Some("transfer".to_string()),
+                desktop_entry: Some("alpha.desktop".to_string()),
+                resident: true,
+                transient: true,
+                sound_name: Some("message-new-instant".to_string()),
+                sound_file: Some("/tmp/alpha.ogg".to_string()),
+                suppress_sound: true,
+                image_path: Some("/tmp/alpha.png".to_string()),
+                image_data: Some(crate::module_ipc::protocol::ModuleNotificationImageData {
+                    width: 1,
+                    height: 1,
+                    rowstride: 4,
+                    has_alpha: true,
+                    bits_per_sample: 8,
+                    channels: 4,
+                    data: vec![10, 20, 30, 255],
+                }),
+                kde_urls: vec![
+                    "https://example.invalid/one".to_string(),
+                    "https://example.invalid/two".to_string(),
+                ],
+                kde_origin_name: Some("Alpha Origin".to_string()),
+                kde_display_appname: Some("Alpha Display".to_string()),
+            },
+        };
+
+        handle_module_notification(
+            &writer,
+            "alpha",
+            "session-a",
+            "rich-notification".to_string(),
+            "alpha".to_string(),
+            "session-a".to_string(),
+            "success".to_string(),
+            presentation,
+            |module, severity, presentation| {
+                assert_eq!(module, "alpha");
+                assert!(matches!(severity, Severity::Success));
+
+                assert_eq!(presentation.application, "Alpha Rich");
+                assert_eq!(presentation.icon, "assets/alpha.png");
+                assert_eq!(presentation.title, "Rich title");
+                assert_eq!(presentation.message, "Rich body");
+
+                assert_eq!(presentation.actions.len(), 2);
+                assert_eq!(presentation.actions[0].key, "open");
+                assert_eq!(presentation.actions[0].label, "Open");
+                assert_eq!(presentation.actions[1].key, "details");
+                assert_eq!(presentation.actions[1].label, "Details");
+
+                let reply = presentation
+                    .reply
+                    .as_ref()
+                    .expect("rich inline reply expected");
+
+                assert_eq!(reply.label, "Reply");
+                assert_eq!(reply.placeholder_text.as_deref(), Some("Write a reply"));
+                assert_eq!(reply.submit_button_text.as_deref(), Some("Send"));
+                assert_eq!(reply.submit_button_icon_name.as_deref(), Some("mail-send"));
+
+                assert_eq!(presentation.options.replace_id, Some(41));
+                assert_eq!(presentation.options.expire_timeout_ms, Some(9000));
+                assert_eq!(presentation.options.category.as_deref(), Some("transfer"));
+                assert_eq!(
+                    presentation.options.desktop_entry.as_deref(),
+                    Some("alpha.desktop")
+                );
+                assert!(presentation.options.resident);
+                assert!(presentation.options.transient);
+                assert_eq!(
+                    presentation.options.sound_name.as_deref(),
+                    Some("message-new-instant")
+                );
+                assert_eq!(
+                    presentation.options.sound_file.as_deref(),
+                    Some("/tmp/alpha.ogg")
+                );
+                assert!(presentation.options.suppress_sound);
+                assert_eq!(
+                    presentation.options.image_path.as_deref(),
+                    Some("/tmp/alpha.png")
+                );
+
+                let image = presentation
+                    .options
+                    .image_data
+                    .as_ref()
+                    .expect("rich image data expected");
+
+                assert_eq!(image.width, 1);
+                assert_eq!(image.height, 1);
+                assert_eq!(image.rowstride, 4);
+                assert!(image.has_alpha);
+                assert_eq!(image.bits_per_sample, 8);
+                assert_eq!(image.channels, 4);
+                assert_eq!(image.data, vec![10, 20, 30, 255]);
+
+                assert_eq!(
+                    presentation.options.kde_urls,
+                    vec![
+                        "https://example.invalid/one".to_string(),
+                        "https://example.invalid/two".to_string(),
+                    ]
+                );
+
+                assert_eq!(
+                    presentation.options.kde_origin_name.as_deref(),
+                    Some("Alpha Origin")
+                );
+
+                assert_eq!(
+                    presentation.options.kde_display_appname.as_deref(),
+                    Some("Alpha Display")
+                );
+
+                Ok(NotificationOutcome::Presented(88))
+            },
+        )
+        .expect("rich notification must succeed");
+
+        match receiver
+            .recv()
+            .expect("rich notification acknowledgement expected")
+        {
+            ModuleMessage::NotificationAck {
+                id,
+                module,
+                session_id,
+                notification_id,
+            } => {
+                assert_eq!(id, "rich-notification");
+                assert_eq!(module, "alpha");
+                assert_eq!(session_id, "session-a");
+                assert_eq!(notification_id, Some(88));
+            }
+
+            other => panic!("expected NotificationAck, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn notification_wrong_module_is_rejected_before_presenter() {
+        let (writer, receiver) = mpsc::channel();
+
+        let error = handle_module_notification(
+            &writer,
+            "alpha",
+            "session-a",
+            "notification-2".to_string(),
+            "beta".to_string(),
+            "session-a".to_string(),
+            "info".to_string(),
+            test_notification_presentation("Fake", "fake.png", "Title", "Body", None),
+            |_, _, _| panic!("presenter must not run for falsified module identity"),
+        )
+        .expect_err("falsified module identity must fail");
+
+        assert!(error.contains("identity mismatch"));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn notification_wrong_session_is_rejected_before_presenter() {
+        let (writer, receiver) = mpsc::channel();
+
+        let error = handle_module_notification(
+            &writer,
+            "alpha",
+            "session-a",
+            "notification-3".to_string(),
+            "alpha".to_string(),
+            "stale-session".to_string(),
+            "info".to_string(),
+            test_notification_presentation("Alpha", "alpha.png", "Title", "Body", None),
+            |_, _, _| panic!("presenter must not run for stale session"),
+        )
+        .expect_err("stale session must fail");
+
+        assert!(error.contains("session"));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn notification_presenter_failure_returns_correlated_error() {
+        let (writer, receiver) = mpsc::channel();
+
+        handle_module_notification(
+            &writer,
+            "alpha",
+            "session-a",
+            "notification-4".to_string(),
+            "alpha".to_string(),
+            "session-a".to_string(),
+            "critical".to_string(),
+            test_notification_presentation("Alpha", "alpha.png", "Title", "Body", None),
+            |_, _, _| Err("synthetic presenter failure".to_string()),
+        )
+        .expect("presenter failure must be reported through protocol");
+
+        match receiver.recv().expect("notification error expected") {
+            ModuleMessage::Error { id, module, error } => {
+                assert_eq!(id.as_deref(), Some("notification-4"));
+                assert_eq!(module.as_deref(), Some("alpha"));
+                assert_eq!(error.kind, "notification");
+                assert_eq!(error.message, "synthetic presenter failure");
+            }
+
+            other => panic!("unexpected notification response: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn notification_invalid_severity_returns_correlated_error() {
+        let (writer, receiver) = mpsc::channel();
+
+        handle_module_notification(
+            &writer,
+            "alpha",
+            "session-a",
+            "notification-5".to_string(),
+            "alpha".to_string(),
+            "session-a".to_string(),
+            "purple".to_string(),
+            test_notification_presentation("Alpha", "alpha.png", "Title", "Body", None),
+            |_, _, _| panic!("presenter must not run for invalid severity"),
+        )
+        .expect("invalid severity must be reported through protocol");
+
+        match receiver.recv().expect("notification error expected") {
+            ModuleMessage::Error { id, module, error } => {
+                assert_eq!(id.as_deref(), Some("notification-5"));
+                assert_eq!(module.as_deref(), Some("alpha"));
+                assert_eq!(error.kind, "notification");
+                assert!(error.message.contains("unknown notification severity"));
+            }
+
+            other => panic!("unexpected notification response: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn notifications_from_distinct_modules_keep_responses_isolated() {
+        let (alpha_writer, alpha_receiver) = mpsc::channel();
+        let (beta_writer, beta_receiver) = mpsc::channel();
+
+        handle_module_notification(
+            &alpha_writer,
+            "alpha",
+            "session-a",
+            "alpha-notification".to_string(),
+            "alpha".to_string(),
+            "session-a".to_string(),
+            "success".to_string(),
+            test_notification_presentation("Alpha", "alpha.png", "Alpha title", "Alpha body", None),
+            |module, _, presentation| {
+                assert_eq!(module, "alpha");
+                assert_eq!(presentation.application, "Alpha");
+                Ok(NotificationOutcome::Presented(77))
+            },
+        )
+        .expect("alpha notification must succeed");
+
+        handle_module_notification(
+            &beta_writer,
+            "beta",
+            "session-b",
+            "beta-notification".to_string(),
+            "beta".to_string(),
+            "session-b".to_string(),
+            "warning".to_string(),
+            test_notification_presentation("Beta", "beta.png", "Beta title", "Beta body", None),
+            |module, _, presentation| {
+                assert_eq!(module, "beta");
+                assert_eq!(presentation.application, "Beta");
+                Ok(NotificationOutcome::Presented(77))
+            },
+        )
+        .expect("beta notification must succeed");
+
+        match alpha_receiver
+            .recv()
+            .expect("alpha acknowledgement expected")
+        {
+            ModuleMessage::NotificationAck {
+                id,
+                module,
+                session_id,
+                notification_id,
+            } => {
+                assert_eq!(id, "alpha-notification");
+                assert_eq!(module, "alpha");
+                assert_eq!(session_id, "session-a");
+                assert_eq!(notification_id, Some(77));
+            }
+
+            other => panic!("unexpected alpha response: {other:?}"),
+        }
+
+        match beta_receiver.recv().expect("beta acknowledgement expected") {
+            ModuleMessage::NotificationAck {
+                id,
+                module,
+                session_id,
+                notification_id,
+            } => {
+                assert_eq!(id, "beta-notification");
+                assert_eq!(module, "beta");
+                assert_eq!(session_id, "session-b");
+                assert_eq!(notification_id, Some(77));
+            }
+
+            other => panic!("unexpected beta response: {other:?}"),
+        }
     }
 }
 

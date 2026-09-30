@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MODULE_SCHEMA_VERSION: u32 = 4;
 pub const MODULE_LANGUAGE_SCHEMA_VERSION: u32 = 1;
-pub const MODULE_NOTIFICATIONS_PROTOCOL_VERSION: u32 = 1;
+pub const MODULE_NOTIFICATIONS_PROTOCOL_VERSION: u32 = 4;
 pub const REGISTRY_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +44,33 @@ pub struct NotificationContract {
 
 fn default_notifications_protocol() -> u32 {
     MODULE_NOTIFICATIONS_PROTOCOL_VERSION
+}
+
+#[cfg(test)]
+mod notification_protocol_version_tests {
+    use super::*;
+
+    #[test]
+    fn notifications_capability_protocol_is_v4() {
+        assert_eq!(MODULE_NOTIFICATIONS_PROTOCOL_VERSION, 4);
+    }
+
+    #[test]
+    fn notification_contract_default_uses_current_protocol() {
+        let contract: NotificationContract =
+            serde_json::from_str("{}").expect("empty notification contract must deserialize");
+
+        assert_eq!(contract.protocol, MODULE_NOTIFICATIONS_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn notification_contract_preserves_explicit_legacy_version() {
+        let contract: NotificationContract = serde_json::from_str(r#"{"protocol":2}"#)
+            .expect("legacy notification contract must deserialize");
+
+        assert_eq!(contract.protocol, 2);
+        assert_ne!(contract.protocol, MODULE_NOTIFICATIONS_PROTOCOL_VERSION);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,6 +317,14 @@ pub fn installed_module_manifest(name: &str) -> Result<ModuleManifest, String> {
     let module_dir = find_module_dir(name)?;
 
     read_manifest(&module_dir.join("manifest.json"))
+}
+
+pub fn installed_module_dir(name: &str) -> Result<PathBuf, String> {
+    if !valid_module_id(name) {
+        return Err(format!("invalid module id: {name}"));
+    }
+
+    find_module_dir(name)
 }
 
 /*
@@ -3644,7 +3679,11 @@ fn validate_module_language_contract(module_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn resolve_module_file(module_dir: &Path, value: &str, field: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_module_file(
+    module_dir: &Path,
+    value: &str,
+    field: &str,
+) -> Result<PathBuf, String> {
     let value = value.trim();
 
     if value.is_empty() {

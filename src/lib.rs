@@ -8,6 +8,7 @@ pub mod domestic_runtime_authority;
 pub mod domestic_search_authority;
 pub mod domestic_test;
 pub mod domestic_world;
+pub mod runtime_identity;
 pub mod spell_world;
 
 pub mod domestic_external_data_authority;
@@ -17,6 +18,8 @@ pub mod domestic_workspace_execution;
 pub mod domestic_writable_data_authority;
 
 pub mod domestic_boundary_execution;
+pub mod domestic_capability_provider;
+pub mod domestic_desktop_session_interface;
 
 pub mod domestic_authority_supply;
 
