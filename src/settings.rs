@@ -775,6 +775,33 @@ mod certification_tests {
     }
 
     #[test]
+    fn certification_settings_reinstall_preserves_existing_local_file() {
+        let path = temp_settings_path("reinstall-preserve");
+        let default = default_v1();
+
+        load_or_create(&path, &default).expect("first install must initialize settings");
+
+        set_path(&path, &default, "ui.theme", "light".to_string())
+            .expect("user override must persist");
+
+        let before = std::fs::read(&path).expect("existing settings must be readable");
+
+        let loaded =
+            load_or_create(&path, &default).expect("reinstall must accept existing settings");
+
+        let after = std::fs::read(&path).expect("existing settings must remain readable");
+
+        assert_eq!(
+            before, after,
+            "reinstall must not rewrite preserved module settings"
+        );
+
+        assert_eq!(loaded["ui"]["theme"], "light");
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
     fn certification_settings_hardcoded_is_immutable_and_resolved() {
         let path = temp_settings_path("hardcoded");
         let default = default_v1();

@@ -1049,7 +1049,7 @@ fn publish_require_candidate(
 
     let settings_path = settings::module_settings_path(&neebles_root(), &module_id);
 
-    if let Err(error) = settings::update_from_default(&settings_path, &settings_default) {
+    if let Err(error) = settings::load_or_create(&settings_path, &settings_default) {
         let rollback_error = fs::remove_dir_all(&destination).err();
 
         return match rollback_error {
