@@ -43,6 +43,7 @@ mod lifecycle_telemetry;
 mod lifecycle_transition_executor;
 mod module_dependency_policy;
 mod module_ipc;
+mod module_preinstall;
 mod modules;
 mod network_boundary;
 pub mod nightmare;

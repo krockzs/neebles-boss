@@ -1235,6 +1235,26 @@ fn install_require_tree(
             );
         }
 
+        let preinstall = match crate::module_preinstall::ensure_module_packages(&module_id) {
+            Ok(report) => report,
+
+            Err(error) => {
+                return Err(require_install_failure(
+                    format!("module '{}' preinstall failed: {}", module_id, error),
+                    &mut transaction,
+                ));
+            }
+        };
+
+        eprintln!(
+            "N.E.E.B.L.E.S.: module '{}' preinstall GREEN: required={} reused={} downloaded={} custom_revision={}",
+            module_id,
+            preinstall.required,
+            preinstall.reused,
+            preinstall.downloaded,
+            preinstall.custom_revision
+        );
+
         if let Err(error) = execute_module_governor_lifecycle(
             lifecycle_runtime,
             &module_id,
@@ -3237,6 +3257,57 @@ fn update_with_observer(
             }
         }
     }
+
+    let preinstall = match crate::module_preinstall::ensure_module_packages(name) {
+        Ok(report) => report,
+
+        Err(preinstall_error) => {
+            let failed_update_path = root.join(format!(
+                ".neebles-failed-preinstall-update-{name}-{transaction}"
+            ));
+
+            if let Err(error) = fs::rename(&current_path, &failed_update_path) {
+                return Err(format!(
+                    "CRITICAL: update preinstall failed for module '{}': {}; new module could not be moved aside for rollback: {}",
+                    name,
+                    preinstall_error,
+                    error
+                ));
+            }
+
+            match fs::rename(&backup_path, &current_path) {
+                Ok(()) => {
+                    let _ = fs::remove_dir_all(&failed_update_path);
+
+                    return Err(format!(
+                        "update preinstall failed for module '{}': {}; previous module version was restored",
+                        name,
+                        preinstall_error
+                    ));
+                }
+
+                Err(rollback_error) => {
+                    return Err(format!(
+                        "CRITICAL: update preinstall failed for module '{}': {}; rollback also failed: {}; previous version remains at {} and failed update remains at {}",
+                        name,
+                        preinstall_error,
+                        rollback_error,
+                        backup_path.display(),
+                        failed_update_path.display()
+                    ));
+                }
+            }
+        }
+    };
+
+    eprintln!(
+        "N.E.E.B.L.E.S.: module '{}' update preinstall GREEN: required={} reused={} downloaded={} custom_revision={}",
+        name,
+        preinstall.required,
+        preinstall.reused,
+        preinstall.downloaded,
+        preinstall.custom_revision
+    );
 
     let lifecycle_runtime = module_governor_lifecycle_runtime()?;
 
