@@ -2368,12 +2368,44 @@ pub fn start_tray_provider(name: &str) -> Result<bool, String> {
         ),
     ]);
 
+    /*
+     * Tray providers are graphical session consumers.
+     *
+     * They remain domestically sealed, but may receive only
+     * the exact graphical bridge inputs already governed by
+     * ProcessEnvironmentClass::Session.
+     *
+     * Host execution inputs such as PATH, LD_PRELOAD,
+     * LD_LIBRARY_PATH, PYTHONPATH, etc. remain forbidden.
+     */
+    let mut session_environment = BTreeMap::<String, String>::new();
+
+    let mut allowed_session_inputs = std::collections::BTreeSet::<String>::new();
+
+    for key in [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XAUTHORITY",
+        "XDG_RUNTIME_DIR",
+        "DBUS_SESSION_BUS_ADDRESS",
+    ] {
+        allowed_session_inputs.insert(key.to_string());
+
+        if let Some(value) = env::var_os(key) {
+            let value = value.to_string_lossy().into_owned();
+
+            if !value.trim().is_empty() {
+                session_environment.insert(key.to_string(), value);
+            }
+        }
+    }
+
     let mut command = neebles_backend::domestic_environment::build_process_command(
         &provider,
-        neebles_backend::domestic_environment::ProcessEnvironmentClass::Pure,
+        neebles_backend::domestic_environment::ProcessEnvironmentClass::Session,
         &domestic_environment,
-        &BTreeMap::new(),
-        &std::collections::BTreeSet::new(),
+        &session_environment,
+        &allowed_session_inputs,
     )?;
 
     command
