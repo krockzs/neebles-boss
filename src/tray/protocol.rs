@@ -161,6 +161,12 @@ pub enum TrayMessage {
         value: String,
     },
 
+    SettingsChanged {
+        owner_module: String,
+        path: String,
+        value: String,
+    },
+
     StopProvider {
         tray_id: String,
     },

@@ -15,12 +15,101 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MODULE_SCHEMA_VERSION: u32 = 4;
 pub const MODULE_LANGUAGE_SCHEMA_VERSION: u32 = 1;
 pub const MODULE_NOTIFICATIONS_PROTOCOL_VERSION: u32 = 4;
 pub const REGISTRY_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleSettingWrite {
+    pub value: String,
+    pub changed: bool,
+}
+
+static MODULE_SETTINGS_WRITE_LOCKS: OnceLock<Mutex<BTreeMap<String, Arc<Mutex<()>>>>> =
+    OnceLock::new();
+
+fn module_settings_write_lock(module: &str) -> Result<Arc<Mutex<()>>, String> {
+    let registry = MODULE_SETTINGS_WRITE_LOCKS.get_or_init(|| Mutex::new(BTreeMap::new()));
+
+    let mut guard = registry
+        .lock()
+        .map_err(|_| "module settings lock registry poisoned".to_string())?;
+
+    Ok(guard
+        .entry(module.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone())
+}
+
+pub fn module_setting_get(module: &str, setting_path: &str) -> Result<String, String> {
+    let lock = module_settings_write_lock(module)?;
+
+    let _guard = lock
+        .lock()
+        .map_err(|_| format!("module settings lock poisoned for '{}'", module))?;
+
+    let default = installed_module_settings_default(module)?;
+
+    let path = settings::module_settings_path(&neebles_root(), module);
+
+    let local = settings::load_or_create(&path, &default)?;
+
+    settings::get_effective_path(&local, &default, setting_path)
+}
+
+pub fn module_setting_set(
+    module: &str,
+    setting_path: &str,
+    requested_value: String,
+) -> Result<ModuleSettingWrite, String> {
+    let lock = module_settings_write_lock(module)?;
+
+    let _guard = lock
+        .lock()
+        .map_err(|_| format!("module settings lock poisoned for '{}'", module))?;
+
+    let default = installed_module_settings_default(module)?;
+
+    let path = settings::module_settings_path(&neebles_root(), module);
+
+    let local = settings::load_or_create(&path, &default)?;
+
+    let previous = settings::get_effective_path(&local, &default, setting_path)?;
+
+    let value = settings::set_path(&path, &default, setting_path, requested_value)?;
+
+    let changed = previous != value;
+
+    if changed {
+        let topic = format!("settings.{}", module);
+
+        let payload = serde_json::json!({
+            "target": module,
+            "path": setting_path,
+            "value": value
+        });
+
+        if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
+            &topic,
+            "changed",
+            payload.clone(),
+        ) {
+            eprintln!(
+                "N.E.E.B.L.E.S.: module settings persisted but Module IPC broadcast failed for '{}': {}",
+                module,
+                error
+            );
+        }
+
+        crate::ipc::broadcast_event(topic, "changed", payload);
+    }
+
+    Ok(ModuleSettingWrite { value, changed })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrayContract {

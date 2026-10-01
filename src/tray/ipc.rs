@@ -1,6 +1,6 @@
 use crate::config;
 use crate::modules;
-use crate::settings;
+use crate::request::{ExecutionContext, ExecutionRequest};
 use crate::tray::manager;
 use crate::tray::protocol::{TrayEvent, TrayMessage};
 
@@ -234,6 +234,222 @@ fn prepare_socket_path(path: &Path) -> Result<(), String> {
     }
 }
 
+fn boss_module_setting_request(
+    action: &str,
+    owner_module: &str,
+    path: &str,
+    value: Option<String>,
+) -> Result<String, String> {
+    let mut args = vec![owner_module.to_string(), path.to_string()];
+
+    if let Some(value) = value {
+        args.push(value);
+    }
+
+    let request = ExecutionRequest {
+        target: "settings".to_string(),
+
+        action: Some(action.to_string()),
+
+        args,
+
+        context: ExecutionContext {
+            caller: "tray-manager".to_string(),
+        },
+    };
+
+    let response = crate::ipc::request(&request)?;
+
+    if !response.ok {
+        return Err(response
+            .error
+            .map(|error| error.message)
+            .unwrap_or_else(|| "Boss rejected module settings request".to_string()));
+    }
+
+    response
+        .result
+        .and_then(|value| value.as_str().map(str::to_string))
+        .ok_or_else(|| "Boss returned an invalid module settings value".to_string())
+}
+
+fn forward_module_setting_change(owner_module: &str, path: &str, value: &str) {
+    let tray_ids = {
+        let manager = manager::global();
+
+        let guard = match manager.lock() {
+            Ok(guard) => guard,
+
+            Err(_) => {
+                eprintln!(
+                    "N.E.E.B.L.E.S.: tray manager lock poisoned while forwarding module settings"
+                );
+
+                return;
+            }
+        };
+
+        guard
+            .list()
+            .into_iter()
+            .filter(|tray| tray.owner_module == owner_module)
+            .map(|tray| tray.tray_id)
+            .collect::<Vec<_>>()
+    };
+
+    for tray_id in tray_ids {
+        let message = TrayMessage::SettingsChanged {
+            owner_module: owner_module.to_string(),
+
+            path: path.to_string(),
+
+            value: value.to_string(),
+        };
+
+        if let Err(error) = forward_to_provider(&tray_id, &message) {
+            eprintln!(
+                "N.E.E.B.L.E.S.: could not forward module settings change to tray '{}': {}",
+                tray_id, error
+            );
+        }
+    }
+}
+
+fn boss_settings_bridge_once() -> Result<(), String> {
+    let mut stream = UnixStream::connect(crate::ipc::socket_path()).map_err(|error| {
+        format!("could not connect Tray Manager settings bridge to Boss: {error}")
+    })?;
+
+    let request = ExecutionRequest {
+        target: "events".to_string(),
+
+        action: Some("subscribe".to_string()),
+
+        args: vec!["*".to_string()],
+
+        context: ExecutionContext {
+            caller: "tray-manager.settings-bridge".to_string(),
+        },
+    };
+
+    let mut payload = serde_json::to_vec(&request).map_err(|error| {
+        format!("could not serialize Tray Manager settings subscription: {error}")
+    })?;
+
+    payload.push(b'\n');
+
+    stream
+        .write_all(&payload)
+        .map_err(|error| format!("could not write Tray Manager settings subscription: {error}"))?;
+
+    stream
+        .flush()
+        .map_err(|error| format!("could not flush Tray Manager settings subscription: {error}"))?;
+
+    let mut reader = BufReader::new(stream);
+
+    let mut acknowledgement = String::new();
+
+    if reader.read_line(&mut acknowledgement).map_err(|error| {
+        format!("could not read Tray Manager settings subscription acknowledgement: {error}")
+    })? == 0
+    {
+        return Err("Boss closed Tray Manager settings subscription".to_string());
+    }
+
+    let acknowledgement: serde_json::Value =
+        serde_json::from_str(acknowledgement.trim()).map_err(|error| {
+            format!("invalid Tray Manager settings subscription acknowledgement: {error}")
+        })?;
+
+    if acknowledgement
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        != Some("subscribed")
+    {
+        return Err("Boss rejected Tray Manager settings subscription".to_string());
+    }
+
+    loop {
+        let mut line = String::new();
+
+        let read = reader
+            .read_line(&mut line)
+            .map_err(|error| format!("Tray Manager settings bridge read failed: {error}"))?;
+
+        if read == 0 {
+            return Err("Boss closed Tray Manager settings bridge".to_string());
+        }
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let message: serde_json::Value = match serde_json::from_str(line.trim()) {
+            Ok(message) => message,
+
+            Err(error) => {
+                eprintln!(
+                        "N.E.E.B.L.E.S.: invalid Boss event received by Tray Manager settings bridge: {}",
+                        error
+                    );
+
+                continue;
+            }
+        };
+
+        if message.get("type").and_then(serde_json::Value::as_str) != Some("event") {
+            continue;
+        }
+
+        if message.get("event").and_then(serde_json::Value::as_str) != Some("changed") {
+            continue;
+        }
+
+        let Some(topic) = message.get("topic").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+
+        let Some(owner_module) = topic.strip_prefix("settings.") else {
+            continue;
+        };
+
+        if owner_module == "boss" {
+            continue;
+        }
+
+        let Some(payload) = message
+            .get("payload")
+            .and_then(serde_json::Value::as_object)
+        else {
+            continue;
+        };
+
+        let Some(path) = payload.get("path").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+
+        let Some(value) = payload.get("value").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+
+        forward_module_setting_change(owner_module, path, value);
+    }
+}
+
+fn run_boss_settings_bridge() {
+    loop {
+        if let Err(error) = boss_settings_bridge_once() {
+            eprintln!(
+                "N.E.E.B.L.E.S.: Tray Manager settings bridge unavailable: {}",
+                error
+            );
+        }
+
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
 pub fn serve() -> Result<(), String> {
     let path = socket_path();
 
@@ -287,6 +503,8 @@ pub fn serve() -> Result<(), String> {
     }
 
     std::thread::spawn(run_watchdog);
+
+    std::thread::spawn(run_boss_settings_bridge);
 
     for stream in listener.incoming() {
         match stream {
@@ -713,14 +931,7 @@ fn process_message(
              */
             modules::verify_tray_provider_process(&owner_module, peer.pid)?;
 
-            let default = modules::installed_module_settings_default(&owner_module)?;
-
-            let settings_path =
-                settings::module_settings_path(&modules::neebles_root(), &owner_module);
-
-            let local = settings::load_or_create(&settings_path, &default)?;
-
-            let value = settings::get_effective_path(&local, &default, &path)?;
+            let value = boss_module_setting_request("get", &owner_module, &path, None)?;
 
             write_message(
                 writer,
@@ -759,12 +970,7 @@ fn process_message(
              */
             modules::verify_tray_provider_process(&owner_module, peer.pid)?;
 
-            let default = modules::installed_module_settings_default(&owner_module)?;
-
-            let settings_path =
-                settings::module_settings_path(&modules::neebles_root(), &owner_module);
-
-            let value = settings::set_path(&settings_path, &default, &path, value)?;
+            let value = boss_module_setting_request("set", &owner_module, &path, Some(value))?;
 
             write_message(
                 writer,
@@ -1000,6 +1206,7 @@ fn process_message(
         | TrayMessage::Event { .. }
         | TrayMessage::Record { .. }
         | TrayMessage::SettingsValue { .. }
+        | TrayMessage::SettingsChanged { .. }
         | TrayMessage::Error { .. } => {
             Err("response-only tray message received by server".to_string())
         }

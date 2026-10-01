@@ -5,7 +5,6 @@ use crate::notifications::{
     self, NotificationImageData, NotificationOptions, NotificationOutcome, NotificationOwner,
     NotificationPresentation, NotificationReturnEvent, Severity,
 };
-use crate::settings;
 
 use crate::module_ipc::framing::{read_message, write_message};
 
@@ -1176,16 +1175,7 @@ fn client_loop(
             } => {
                 validate_session(module, session_id, &settings_module, &settings_session)?;
 
-                let result = (|| -> Result<String, String> {
-                    let default = modules::installed_module_settings_default(module)?;
-
-                    let settings_path =
-                        settings::module_settings_path(&modules::neebles_root(), module);
-
-                    let local = settings::load_or_create(&settings_path, &default)?;
-
-                    settings::get_effective_path(&local, &default, &setting_path)
-                })();
+                let result = modules::module_setting_get(module, &setting_path);
 
                 match result {
                     Ok(value) => {
@@ -1235,32 +1225,17 @@ fn client_loop(
             } => {
                 validate_session(module, session_id, &settings_module, &settings_session)?;
 
-                let result = (|| -> Result<(String, bool), String> {
-                    let default = modules::installed_module_settings_default(module)?;
-
-                    let settings_path =
-                        settings::module_settings_path(&modules::neebles_root(), module);
-
-                    let local = settings::load_or_create(&settings_path, &default)?;
-
-                    let previous = settings::get_effective_path(&local, &default, &setting_path)?;
-
-                    let value = settings::set_path(&settings_path, &default, &setting_path, value)?;
-
-                    let changed = previous != value;
-
-                    Ok((value, changed))
-                })();
+                let result = modules::module_setting_set(module, &setting_path, value);
 
                 match result {
-                    Ok((value, changed)) => {
+                    Ok(write) => {
                         writer
                             .send(ModuleMessage::SettingsValue {
                                 id,
                                 module: module.to_string(),
                                 session_id: session_id.to_string(),
-                                path: setting_path.clone(),
-                                value: value.clone(),
+                                path: setting_path,
+                                value: write.value,
                             })
                             .map_err(|error| {
                                 format!(
@@ -1268,24 +1243,6 @@ fn client_loop(
                                     module
                                 )
                             })?;
-
-                        if changed {
-                            if let Err(error) = runtime_registry().broadcast_event(
-                                &format!("settings.{}", module),
-                                "changed",
-                                serde_json::json!({
-                                    "target": module,
-                                    "path": setting_path,
-                                    "value": value
-                                }),
-                            ) {
-                                eprintln!(
-                                    "N.E.E.B.L.E.S.: module settings persisted but event broadcast failed for '{}': {}",
-                                    module,
-                                    error
-                                );
-                            }
-                        }
                     }
 
                     Err(error) => {
