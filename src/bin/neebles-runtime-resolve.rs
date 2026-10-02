@@ -63,26 +63,15 @@ fn run_resolve(arguments: &[String]) -> Result<i32, String> {
     Ok(0)
 }
 
-fn run_external(arguments: &[String]) -> Result<i32, String> {
-    let separators = arguments
+fn external_argument_separator(arguments: &[String]) -> Result<usize, String> {
+    arguments
         .iter()
-        .enumerate()
-        .filter_map(
-            |(index, value)| {
-                if value == "--" {
-                    Some(index)
-                } else {
-                    None
-                }
-            },
-        )
-        .collect::<Vec<_>>();
+        .position(|value| value == "--")
+        .ok_or_else(|| "external execution requires an argument separator".to_string())
+}
 
-    if separators.len() != 1 {
-        return Err("external execution requires exactly one argument separator".to_string());
-    }
-
-    let separator = separators[0];
+fn run_external(arguments: &[String]) -> Result<i32, String> {
+    let separator = external_argument_separator(arguments)?;
 
     let control = &arguments[..separator];
 
@@ -133,6 +122,62 @@ fn run() -> Result<i32, String> {
     }
 
     run_resolve(&arguments)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::external_argument_separator;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn external_separator_is_required() {
+        let arguments = args(&[
+            "--manifest",
+            "/tmp/runtime-authority/domestic-runtime.json",
+            "--execute-external",
+            "/tmp/neebles-auth-agent",
+        ]);
+
+        assert!(external_argument_separator(&arguments).is_err());
+    }
+
+    #[test]
+    fn external_separator_marks_control_boundary() {
+        let arguments = args(&[
+            "--manifest",
+            "/tmp/runtime-authority/domestic-runtime.json",
+            "--execute-external",
+            "/tmp/neebles-auth-agent",
+            "--",
+            "--locale",
+            "es_CL",
+        ]);
+
+        assert_eq!(external_argument_separator(&arguments).unwrap(), 4);
+    }
+
+    #[test]
+    fn nested_child_separator_is_not_rejected() {
+        let arguments = args(&[
+            "--manifest",
+            "/tmp/runtime-authority/domestic-runtime.json",
+            "--execute-external",
+            "/tmp/neebles-auth-agent",
+            "--",
+            "--runtime-resolver",
+            "/tmp/neebles-runtime-resolve",
+            "--runtime-manifest",
+            "/tmp/runtime-authority/domestic-runtime.json",
+            "--",
+            "/tmp/install.sh",
+        ]);
+
+        assert_eq!(external_argument_separator(&arguments).unwrap(), 4);
+        assert_eq!(arguments[9], "--");
+    }
 }
 
 fn main() {
