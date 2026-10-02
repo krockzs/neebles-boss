@@ -54,7 +54,7 @@ Boss 1.0.15 is the architectural closure of N.E.E.B.L.E.S. Boss: the first publi
 - Boss presents through `org.freedesktop.Notifications` using the governed desktop-session interface; the legacy `notify-send` transport is removed.
 - Boss self-update is owned by Critical Update.
 - Critical Update consumes the release-owned `critical-update-manifest.json`.
-- Zero-byte Critical Update manifests remain valid and mean that the release requires no Critical Update instructions.
+- An empty Critical Update instruction set is represented canonically as an empty JSON array (`[]`) and means that the release requires no Critical Update instructions.
 - Nightmare remains a generic transformation engine and is consumed through the Critical Update adapter without becoming release-specific logic.
 
 ## CUSTOM v2 and Esbirro boundary
