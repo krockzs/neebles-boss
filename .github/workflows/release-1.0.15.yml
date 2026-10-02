@@ -204,14 +204,14 @@ jobs:
             --contract src/contracts/domesticacion-elfica.schema.json \
             --grimoire src/contracts/domesticacion-elfica.grimorio.json \
             --targets src/contracts/domesticacion-elfica.targets.json \
-            --root neebles-custom/runtime/boss/rootfs \
+            --root "$GITHUB_WORKSPACE/neebles-custom/runtime/boss/rootfs" \
             --output release-work/domestic-runtime.json
 
       - name: Package and certify domestic Boss runtime
         shell: bash
         run: |
           python3 scripts/package-domestic-runtime.py \
-            --root neebles-custom/runtime/boss/rootfs \
+            --root "$GITHUB_WORKSPACE/neebles-custom/runtime/boss/rootfs" \
             --manifest release-work/domestic-runtime.json \
             --output release-work/boss-runtime.tar.gz \
             --report release-work/boss-runtime-report.txt \
