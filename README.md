@@ -2090,7 +2090,7 @@ POINT 9 TEST MODULE            GREEN / CLOSED
 POINT 10 TEST MODULE CERT      IN PROGRESS
 BOSS CONTRACT CLOSED           YES
 SOURCE LINE                    1.0.15
-RELEASE                        NOT YET PUBLISHED
+RELEASE VERSION                1.0.15
 ```
 
 Current continuation law:
