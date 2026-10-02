@@ -318,9 +318,23 @@ void InstallerController::startInstallation()
         );
     }
 
-    m_process.start(
+    QStringList resolverArgs {
+        QStringLiteral("--manifest"),
+        m_runtimeManifest,
+
+        QStringLiteral("--execute-external"),
         authAgent,
+
+        QStringLiteral("--")
+    };
+
+    resolverArgs.append(
         args
+    );
+
+    m_process.start(
+        m_runtimeResolver,
+        resolverArgs
     );
 }
 

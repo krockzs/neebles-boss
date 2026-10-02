@@ -193,6 +193,106 @@ pub fn resolve_materialized_runtime_targets(
     Ok(resolved)
 }
 
+pub fn resolve_materialized_runtime_category_targets(
+    manifest_path: &Path,
+    category_name: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let (manifest, runtime_root) = load_materialized_runtime_context(manifest_path)?;
+
+    if category_name.trim().is_empty() {
+        return Err("materialized runtime category name is empty".to_string());
+    }
+
+    let worlds = manifest
+        .get("worlds")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "materialized runtime worlds is not an object".to_string())?;
+
+    let mut resolved = Vec::<PathBuf>::new();
+
+    for (world_name, world_value) in worlds {
+        let world = world_value
+            .as_object()
+            .ok_or_else(|| format!("materialized runtime world is not an object: {world_name}"))?;
+
+        let categories = world
+            .get("categories")
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("materialized runtime world {world_name} has no categories"))?;
+
+        let Some(category) = categories.get(category_name).and_then(Value::as_object) else {
+            continue;
+        };
+
+        if category.get("category").and_then(Value::as_str) != Some(category_name) {
+            return Err(format!(
+                "materialized runtime category identity mismatch for {world_name}:{category_name}"
+            ));
+        }
+
+        let targets = category
+            .get("resolved_targets")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!(
+                    "materialized runtime category {world_name}:{category_name} has no resolved_targets array"
+                )
+            })?;
+
+        for (index, target_value) in targets.iter().enumerate() {
+            let target_value =
+                target_value
+                    .as_str()
+                    .ok_or_else(|| {
+                        format!(
+                            "materialized runtime target {index} for {world_name}:{category_name} is not a string"
+                        )
+                    })?;
+
+            if target_value.trim().is_empty() {
+                return Err(format!(
+                    "materialized runtime target {index} for {world_name}:{category_name} is empty"
+                ));
+            }
+
+            let target_reference = PathBuf::from(target_value);
+
+            if target_reference.is_absolute() {
+                return Err(
+                    format!(
+                        "materialized runtime target must be relative for {world_name}:{category_name}: {}",
+                        target_reference.display()
+                    )
+                );
+            }
+
+            let target =
+                crate::domestic_world::resolve_world_reference(
+                    &runtime_root,
+                    &runtime_root,
+                    &target_reference,
+                )
+                .map_err(|error| {
+                    format!(
+                        "materialized runtime target is outside authority for {world_name}:{category_name}: {error}"
+                    )
+                })?;
+
+            if !resolved.contains(&target) {
+                resolved.push(target);
+            }
+        }
+    }
+
+    if resolved.is_empty() {
+        return Err(format!(
+            "materialized runtime has no targets for category {category_name}"
+        ));
+    }
+
+    Ok(resolved)
+}
+
 pub fn resolve_materialized_runtime_target(
     manifest_path: &Path,
     world_name: &str,

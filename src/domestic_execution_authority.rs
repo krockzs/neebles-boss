@@ -67,6 +67,160 @@ pub fn resolve_materialized_execution_authority(
     })
 }
 
+fn resolve_external_interpreter_authority(
+    runtime_root: &Path,
+    metadata: &crate::domestic_elf::DomesticElfMetadata,
+) -> Result<PathBuf, String> {
+    let declared = metadata.interpreter.as_ref().ok_or_else(|| {
+        format!(
+            "external execution authority requires a dynamic ELF interpreter: {}",
+            metadata.path.display()
+        )
+    })?;
+
+    const INSTALLED_RUNTIME_ROOT: &str = "/opt/neebles/client/runtime/boss/rootfs";
+
+    let installed_root = Path::new(INSTALLED_RUNTIME_ROOT);
+
+    if declared.starts_with(installed_root) {
+        let relative = declared.strip_prefix(installed_root).map_err(|error| {
+            format!(
+                "could not relocate canonical Boss interpreter {}: {error}",
+                declared.display()
+            )
+        })?;
+
+        return crate::domestic_world::resolve_world_reference(
+            runtime_root,
+            runtime_root,
+            relative,
+        );
+    }
+
+    crate::domestic_elf::resolve_interpreter_authority(runtime_root, metadata)?.ok_or_else(|| {
+        format!(
+            "external execution authority requires a dynamic ELF interpreter: {}",
+            metadata.path.display()
+        )
+    })
+}
+
+pub fn resolve_materialized_external_execution_authority(
+    manifest_path: &Path,
+    executable: &Path,
+) -> Result<MaterializedExecutionAuthority, String> {
+    if !manifest_path.is_absolute() {
+        return Err(format!(
+            "external bootstrap execution requires an absolute runtime manifest: {}",
+            manifest_path.display()
+        ));
+    }
+
+    if manifest_path.file_name().and_then(|value| value.to_str()) != Some("domestic-runtime.json") {
+        return Err(format!(
+            "external bootstrap execution requires domestic-runtime.json: {}",
+            manifest_path.display()
+        ));
+    }
+
+    let authority_directory = manifest_path.parent().ok_or_else(|| {
+        format!(
+            "external bootstrap execution manifest has no authority directory: {}",
+            manifest_path.display()
+        )
+    })?;
+
+    if authority_directory
+        .file_name()
+        .and_then(|value| value.to_str())
+        != Some("runtime-authority")
+    {
+        return Err(format!(
+            "external bootstrap execution requires runtime-authority staging: {}",
+            authority_directory.display()
+        ));
+    }
+
+    let staging_root = authority_directory.parent().ok_or_else(|| {
+        format!(
+            "external bootstrap execution authority has no staging root: {}",
+            authority_directory.display()
+        )
+    })?;
+
+    if !executable.is_absolute() {
+        return Err(format!(
+            "external execution target must be absolute: {}",
+            executable.display()
+        ));
+    }
+
+    if !executable.is_file() {
+        return Err(format!(
+            "external execution target is not a file: {}",
+            executable.display()
+        ));
+    }
+
+    let executable_parent = executable.parent().ok_or_else(|| {
+        format!(
+            "external bootstrap execution target has no parent: {}",
+            executable.display()
+        )
+    })?;
+
+    if executable_parent != staging_root {
+        return Err(format!(
+            "external bootstrap execution target is outside bootstrap staging: {}",
+            executable.display()
+        ));
+    }
+
+    let runtime_root =
+        crate::domestic_runtime_authority::resolve_materialized_runtime_root(manifest_path)?;
+
+    let installed_runtime_root = Path::new("/opt/neebles/client/runtime/boss/rootfs");
+
+    if runtime_root == installed_runtime_root {
+        return Err(
+            "external bootstrap execution is forbidden with permanent Boss runtime authority"
+                .to_string(),
+        );
+    }
+
+    let library_paths =
+        crate::domestic_runtime_authority::resolve_materialized_runtime_category_targets(
+            manifest_path,
+            "library_paths",
+        )?;
+
+    for path in &library_paths {
+        if !path.is_dir() {
+            return Err(format!(
+                "external execution library authority is not a directory: {}",
+                path.display()
+            ));
+        }
+    }
+
+    let metadata = crate::domestic_elf::inspect_elf(executable)?;
+
+    let interpreter = resolve_external_interpreter_authority(&runtime_root, &metadata)?;
+
+    if !interpreter.is_file() {
+        return Err(format!(
+            "external execution interpreter is not a file: {}",
+            interpreter.display()
+        ));
+    }
+
+    Ok(MaterializedExecutionAuthority {
+        executable: executable.to_path_buf(),
+        interpreter,
+        library_paths,
+    })
+}
+
 fn library_path_argument(paths: &[PathBuf]) -> Result<OsString, String> {
     std::env::join_paths(paths)
         .map_err(|error| format!("could not compose materialized execution library path: {error}"))
@@ -97,6 +251,42 @@ pub fn build_materialized_execution_command(
         .arg("--library-path")
         .arg(library_path)
         .arg(&authority.executable);
+
+    Ok(command)
+}
+
+pub fn build_materialized_external_session_execution_command(
+    manifest_path: &Path,
+    executable: &Path,
+    executable_arguments: &[OsString],
+) -> Result<Command, String> {
+    let authority = resolve_materialized_external_execution_authority(manifest_path, executable)?;
+
+    let library_path = library_path_argument(&authority.library_paths)?;
+
+    let mut command = Command::new(&authority.interpreter);
+
+    command
+        .arg("--inhibit-cache")
+        .arg("--library-path")
+        .arg(library_path)
+        .arg(&authority.executable)
+        .args(executable_arguments);
+
+    for key in [
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "QT_PLUGIN_PATH",
+        "QT_QPA_PLATFORM_PLUGIN_PATH",
+        "QML_IMPORT_PATH",
+        "QML2_IMPORT_PATH",
+        "GI_TYPELIB_PATH",
+        "GIO_EXTRA_MODULES",
+    ] {
+        command.env_remove(key);
+    }
 
     Ok(command)
 }
