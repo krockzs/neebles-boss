@@ -208,6 +208,14 @@ jobs:
             --root "$GITHUB_WORKSPACE/neebles-custom/runtime/boss/rootfs" \
             --output release-work/domestic-runtime.json
 
+      - name: Rehydrate manifest-declared empty runtime directories
+        shell: bash
+        run: |
+          python3 scripts/rehydrate-runtime-directories.py \
+            --root neebles-custom/runtime/boss/rootfs \
+            --manifest neebles-custom/boss_current_manifest.json \
+            --prefix rootfs
+
       - name: Package and certify domestic Boss runtime
         shell: bash
         run: |
