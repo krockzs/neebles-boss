@@ -93,7 +93,7 @@ The 1.0.15 release pipeline now produces and verifies the final materialized pay
 Build provenance:
 
 - Rust toolchain `1.98.1`;
-- controlled Qt `6.8.2` snapshot from `neebles-calamares` revision `neebles-v3.3.14`, with its 115-package snapshot SHA-verified before compilation;
+- controlled Qt `6.8.2` snapshot from N.E.E.B.L.E.S. CUSTOM revision `1efc6cb304d8e7d739849c266a1d33cc1e92dc54`, with its 115-package snapshot SHA-verified before compilation;
 - certified Boss runtime material from N.E.E.B.L.E.S. CUSTOM revision `1efc6cb304d8e7d739849c266a1d33cc1e92dc54`;
 - Test Module integration pinned to revision `e5bd6a8c5ef13cc8a25f129ac105bb88bb37111c`.
 

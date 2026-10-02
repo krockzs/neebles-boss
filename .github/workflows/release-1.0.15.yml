@@ -72,14 +72,7 @@ jobs:
       - name: Checkout Boss
         uses: actions/checkout@v4
 
-      - name: Checkout controlled Qt 6.8.2 snapshot
-        uses: actions/checkout@v4
-        with:
-          repository: krockzs/neebles-calamares
-          ref: neebles-v3.3.14
-          path: neebles-calamares
-
-      - name: Checkout certified CUSTOM Boss runtime
+      - name: Checkout certified CUSTOM material
         uses: actions/checkout@v4
         with:
           repository: krockzs/neebles-custom
@@ -87,6 +80,7 @@ jobs:
           path: neebles-custom
           lfs: true
           sparse-checkout: |
+            qt_6.8.2
             runtime/boss/rootfs
             runtime/manifests/boss.rootfs.tsv
           sparse-checkout-cone-mode: false
@@ -94,19 +88,19 @@ jobs:
       - name: Verify controlled Qt snapshot
         shell: bash
         run: |
-          test -d neebles-calamares/qt_6.8.2
-          test -f neebles-calamares/qt_6.8.2/SHA256SUMS
+          test -d neebles-custom/qt_6.8.2
+          test -f neebles-custom/qt_6.8.2/SHA256SUMS
 
-          COUNT="$(find neebles-calamares/qt_6.8.2 -maxdepth 1 -type f -name '*.deb' | wc -l)"
+          COUNT="$(find neebles-custom/qt_6.8.2 -maxdepth 1 -type f -name '*.deb' | wc -l)"
           test "$COUNT" -eq 115
 
-          cd neebles-calamares/qt_6.8.2
+          cd neebles-custom/qt_6.8.2
           sha256sum -c SHA256SUMS
 
       - name: Install controlled Qt 6.8.2
         shell: bash
         run: |
-          cd neebles-calamares/qt_6.8.2
+          cd neebles-custom/qt_6.8.2
           apt-get install -y ./*.deb
           qmake6 --version
 
