@@ -6,7 +6,7 @@ Current source line: **1.0.15**
 
 Historical published closure baseline before the final Point 7/8 work: **`17281b9` — `feat(boss): close points 5 and 6`**
 
-Current macro state: **Point 8 — Final Boss integration and certification GREEN / CLOSED**. **BOSS CONTRACT CLOSED**.
+Current macro state: **BOSS CONTRACT CLOSED**. **Point 9 Test Module adaptation GREEN / CLOSED. Point 10 full Test Module certification is IN PROGRESS.**
 
 N.E.E.B.L.E.S. Boss is the governance and orchestration layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -22,7 +22,7 @@ Technology-specific implementation remains outside the Boss core whenever a gene
 
 The current Boss source line is **1.0.15**.
 
-Completed macro fronts:
+Current macro fronts:
 
 ```text
 Point 1  Contracts + Module IPC                GREEN / CLOSED
@@ -32,7 +32,9 @@ Point 4  Notifications                         GREEN / CLOSED
 Point 5  Auth / privileges                     GREEN / CLOSED
 Point 6  Registry / module catalog             GREEN / CLOSED
 Point 7  CUSTOM v2 integration                 GREEN / CLOSED
-Point 8  Final Boss integration / pre-VM gate        GREEN / CLOSED
+Point 8  Final Boss integration / pre-VM gate  GREEN / CLOSED
+Point 9  Test Module adaptation                GREEN / CLOSED
+Point 10 Full Test Module certification        IN PROGRESS
 ```
 
 The Lifecycle and generic Surface front remains **GREEN / CLOSED** and is not reopened unless current source proves a real contradiction.
@@ -62,7 +64,7 @@ PASS - 1.X SURFACE/LIFECYCLE FRONT CLOSED
 
 `launcher_action` legacy compatibility has already been reconciled during Point 2. Launcher exposure is now resolved from the dynamic `commands` contract with `launcher=true`; the removed top-level `manifest.commands` model must not be revived.
 
-The Boss contract is now **CLOSED**. Test Module may be unfrozen only for **Point 9 adaptation** and remains forbidden from driving Boss architecture.
+The Boss contract is **CLOSED**. Test Module has been adapted as a consumer of that closed architecture and Point 9 is GREEN / CLOSED. Its final revision is aligned across Test Module HEAD, Boss Registry and CUSTOM Domestic Construction.
 
 ---
 
@@ -1992,48 +1994,29 @@ Boss is now the fixed architecture source for Point 9 adaptation.
 
 # Post-Boss roadmap
 
-Points 1 through 8 are **GREEN / CLOSED**. The Boss contract is closed. The remaining roadmap begins with Test Module adaptation:
+Points 1 through 8 are **GREEN / CLOSED** and define the closed Boss architecture.
 
-7. **CUSTOM v2 integration into Boss — CLOSED**
-   - certified CUSTOM v2 output is integrated without making Boss understand module technologies;
-   - Esbirro remains outside Lifecycle;
-   - `world Modules` remains in CUSTOM v2 / Esbirro;
-   - Stage 8 host independence remains preserved.
+9. **Test Module adaptation — GREEN / CLOSED**
+   - Schema 4 and dynamic command contracts are adapted;
+   - Governor and generic Lifecycle integration are adapted;
+   - authenticated Module IPC is adapted;
+   - canonical realtime Settings are adapted;
+   - Tray and Notifications v4 are adapted;
+   - universal Preinstall and CUSTOM material integration are adapted;
+   - Domestic Construction and generic workspace execution are adapted;
+   - Registry installation uses an immutable Test Module revision.
 
-8. **Final Boss integration and certification — CLOSED**
-   - cross-certified Module IPC, Settings, Nightmare/Critical Update, Notifications, Auth, Registry, CUSTOM v2 and the closed Lifecycle/surface architecture as one Boss contract;
-   - removed remaining duplicate or diverging productive contracts;
-   - completed the final pre-VM global gate;
-   - declared **BOSS CONTRACT CLOSED** after global GREEN;
-   - real machine / VM acceptance remains a later execution phase and does not get falsely represented as completed by Point 8.
+Point 9 closes with the final Test Module documentation revision aligned across Test Module HEAD, Boss Registry, CUSTOM fetch and CUSTOM checkout.
 
-9. **Adapt Test Module to what Boss dictates**
-   - unfreeze Test Module only after **BOSS CONTRACT CLOSED**;
-   - adapt manifest, contracts, Lifecycle, IPC, Settings, Tray, Notifications and Auth;
-   - use CUSTOM v2 + Esbirro for module construction, domestication and certification;
-   - Test Module demonstrates the final Boss contract and never drives Boss architecture.
+10. **Full Test Module certification — IN PROGRESS**
 
-10. **Full Test Module certification**
-    - certify the complete matrix:
+Already GREEN locally: install, disable, enable, disable/re-enable, update, uninstall preserving settings, reinstall preserving settings byte-for-byte, uninstall removing settings, persistent DEB reuse, Runtime/UI/Tray integration, realtime Settings propagation and restart persistence.
 
-```text
-install
-  -> enable
-  -> UI
-  -> settings
-  -> tray
-  -> notifications
-  -> disable
-  -> enable
-  -> update
-  -> uninstall
-  -> reinstall
-```
+Remaining Point 10 fronts include governed OPEN, the complete commands/endpoints matrix, positive and negative Module IPC, Notifications v4, disabled behavior, privilege/rejection paths, Surface behavior and remaining rollback/failure paths.
 
-    - verify rollback, persistence, IPC, privileges and UI behavior against the already-closed Boss contract;
-    - keep the Test Module repository as the canonical module mold after PASS.
+Point 10 validates Test Module against the already-closed Boss architecture. Full installed-system acceptance remains a later N.E.E.B.L.E.S. OS / VM phase.
 
-> **Order law:** Boss is completed first. Test Module adapts afterward. Test Module never defines Boss.
+> **Order law:** Boss defines the generic contract. Modules consume it. A demonstrated generic defect may require correction, but a module does not redefine Boss architecture by assumption.
 
 ---
 
@@ -2103,13 +2086,16 @@ POINT 5 AUTH / PRIVILEGES      GREEN / CLOSED
 POINT 6 REGISTRY / CATALOG     GREEN / CLOSED
 POINT 7 CUSTOM V2              GREEN / CLOSED
 POINT 8 FINAL BOSS GATE        GREEN / CLOSED
-TEST MODULE                    NEXT: POINT 9 ADAPTATION
+POINT 9 TEST MODULE            GREEN / CLOSED
+POINT 10 TEST MODULE CERT      IN PROGRESS
 BOSS CONTRACT CLOSED           YES
+SOURCE LINE                    1.0.15
+RELEASE                        NOT YET PUBLISHED
 ```
 
-Current rule for continuation:
+Current continuation law:
 
-**Boss contract is CLOSED. Points 1 through 8 are GREEN / CLOSED. The next engineering front is Point 9 — adapt Test Module to the contract Boss already dictates. Test Module may demonstrate the contract, but it must not redefine Boss architecture. Real full-system execution in a virtual machine remains a later acceptance phase.**
+**Boss architecture remains closed. Point 9 is GREEN / CLOSED. Continue Point 10 certification against that closed contract, and keep full installed-system / VM acceptance as the later system-level phase.**
 
 ---
 

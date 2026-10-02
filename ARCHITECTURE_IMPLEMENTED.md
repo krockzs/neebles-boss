@@ -58,11 +58,15 @@ Partial candidates do not become active state.
 
 ## Lifecycle boundary
 
-Lifecycle declaration parsing and validation are implemented.
+Lifecycle declaration parsing, validation and generic execution are implemented.
 
-Generic lifecycle execution is not implemented yet.
+Governor actions bind to module-owned transitions through the generic `governor.<action> -> <module-owned transition id>` contract.
 
-The existence of lifecycle recipes must not be interpreted as proof of a generic execution engine.
+Productive execution resolves declarative operations through Battlefield preparation, dependency orchestration, requested capability registration, FireControl, CapabilityRegistry execution, normalized results, communication, state and governed failure handling.
+
+Lifecycle participates in transactional Governor behavior and rollback semantics without learning module technology.
+
+Lifecycle does not own Esbirro, domestic certification, physical module material or technology-specific construction.
 
 ## Esbirro boundary
 
@@ -80,8 +84,12 @@ Recovery is external to Boss and belongs to N.E.E.B.L.E.S. BUILD.
 
 ## Downstream modules
 
-Boss reaches its final generic contract first.
+Boss reached its final generic contract before Test Module adaptation and remains the architecture source of truth.
 
-The Test Module is adapted afterward and does not constrain Boss design.
+Test Module has since been adapted as a consumer of the closed Boss contract. Its implementation does not constrain Boss technology or introduce Test Module specialization into productive Boss architecture.
+
+Point 9 is GREEN / CLOSED. The final Test Module documentation revision is aligned across Test Module HEAD, Boss Registry and CUSTOM Domestic Construction.
+
+Point 10 full Test Module functional certification remains in progress.
 
 This document applies to **1.0.15** only.
