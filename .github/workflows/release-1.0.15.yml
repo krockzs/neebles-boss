@@ -81,6 +81,7 @@ jobs:
           lfs: true
           sparse-checkout: |
             qt_6.8.2
+            boss_current_manifest.json
             runtime/boss/rootfs
             runtime/manifests/boss.rootfs.tsv
           sparse-checkout-cone-mode: false
@@ -216,7 +217,7 @@ jobs:
             --output release-work/boss-runtime.tar.gz \
             --report release-work/boss-runtime-report.txt \
             --transport-tool target/release/neebles-domestic-transport \
-            --source-manifest neebles-custom/runtime/manifests/boss.rootfs.tsv
+            --source-manifest neebles-custom/boss_current_manifest.json
 
           grep -F "GREEN :: BOSS RUNTIME TRANSPORT CERTIFIED" \
             release-work/boss-runtime-report.txt
