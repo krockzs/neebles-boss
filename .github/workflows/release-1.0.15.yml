@@ -115,7 +115,8 @@ jobs:
           test -d neebles-custom/runtime/boss/rootfs
           test -s neebles-custom/runtime/manifests/boss.rootfs.tsv
           test -s neebles-custom/runtime/boss/rootfs/usr/lib/x86_64-linux-gnu/libLLVM.so.19.1
-          git -C neebles-custom lfs ls-files
+          test "$(stat -c %s neebles-custom/runtime/boss/rootfs/usr/lib/x86_64-linux-gnu/libLLVM.so.19.1)" -eq 129673080
+          test "$(sha256sum neebles-custom/runtime/boss/rootfs/usr/lib/x86_64-linux-gnu/libLLVM.so.19.1 | cut -d " " -f 1)" = "3523f50f635d2a1ea47518a392451f2854b92823ceaf1345fb806099dd1a3b8a"
 
       - name: Build Rust release binaries
         shell: bash
