@@ -630,8 +630,14 @@ ln -sfnT \
     ../backend/neebles-backend \
     "$CLIENT_STAGE/bin/neebles"
 
+PKEXEC_STAGE="$RUNTIME_ROOTFS_STAGE/usr/bin/pkexec"
+
 if [[ -z "$DESTDIR" ]]; then
     chown -R root:root "$CLIENT_STAGE"
+
+    if [[ -f "$PKEXEC_STAGE" ]]; then
+        chmod 4755 "$PKEXEC_STAGE"
+    fi
 fi
 
 "$CLIENT_STAGE/bin/neebles" --version
@@ -655,8 +661,6 @@ cmp -s "$RUNTIME_MANIFEST_SOURCE" "$CLIENT_STAGE/runtime/boss/domestic-runtime.j
     echo "Installed runtime resolver lost executable permission." >&2
     exit 1
 }
-
-PKEXEC_STAGE="$RUNTIME_ROOTFS_STAGE/usr/bin/pkexec"
 
 [[ -f "$PKEXEC_STAGE" ]] || {
     echo "Installed runtime authority is missing pkexec." >&2
