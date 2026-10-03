@@ -15,15 +15,13 @@ fi
 
 echo "HOST-INDEPENDENT INSTALLER CONTRACT: VALID"
 
-CUSTOM="$HOME/NEEBLES/neebles-custom"
-CANONICAL_WORK="$CUSTOM/build_sysroot_6.8.2/work"
 
 BACKEND="$REPO_ROOT/target/debug/neebles-backend"
 RUNTIME_RESOLVER="$REPO_ROOT/target/debug/neebles-runtime-resolve"
-UI="$CANONICAL_WORK/canonical-ui/neebles-ui"
-AUTH="$CANONICAL_WORK/canonical-auth-agent/neebles-auth-agent"
-TRAY_HOST="$CANONICAL_WORK/canonical-tray-host/neebles-tray-host"
-LAUNCHER_PLUGIN="$CANONICAL_WORK/canonical-launcher-plugin"
+UI="$REPO_ROOT/ui/client/build/neebles-ui"
+AUTH="$REPO_ROOT/ui/auth-agent/build/neebles-auth-agent"
+TRAY_HOST="$REPO_ROOT/client/tray-host/build/neebles-tray-host"
+LAUNCHER_PLUGIN="$REPO_ROOT/client/launcher-plugin/build"
 
 for binary in "$BACKEND" "$UI" "$AUTH" "$TRAY_HOST" "$RUNTIME_RESOLVER"; do
     [[ -f "$binary" ]] || {
