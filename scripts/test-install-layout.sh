@@ -21,7 +21,7 @@ RUNTIME_RESOLVER="$REPO_ROOT/target/debug/neebles-runtime-resolve"
 UI="$REPO_ROOT/ui/client/build/neebles-ui"
 AUTH="$REPO_ROOT/ui/auth-agent/build/neebles-auth-agent"
 TRAY_HOST="$REPO_ROOT/client/tray-host/build/neebles-tray-host"
-LAUNCHER_PLUGIN="$REPO_ROOT/client/launcher-plugin/build"
+LAUNCHER_PLUGIN_BUILD="$REPO_ROOT/client/launcher-plugin/build"
 
 for binary in "$BACKEND" "$UI" "$AUTH" "$TRAY_HOST" "$RUNTIME_RESOLVER"; do
     [[ -f "$binary" ]] || {
@@ -30,22 +30,10 @@ for binary in "$BACKEND" "$UI" "$AUTH" "$TRAY_HOST" "$RUNTIME_RESOLVER"; do
     }
 done
 
-[[ -d "$LAUNCHER_PLUGIN" ]] || {
-    echo "PACKAGING TEST INVALID: missing canonical launcher plugin: $LAUNCHER_PLUGIN" >&2
+[[ -d "$LAUNCHER_PLUGIN_BUILD" ]] || {
+    echo "PACKAGING TEST INVALID: missing launcher plugin build tree: $LAUNCHER_PLUGIN_BUILD" >&2
     exit 1
 }
-
-for item in \
-    libneebles-launcher-events.so \
-    libneebles-launcher-eventsplugin.so \
-    neebles-launcher-events.qmltypes \
-    qmldir
-do
-    [[ -f "$LAUNCHER_PLUGIN/$item" ]] || {
-        echo "PACKAGING TEST INVALID: missing launcher runtime artifact: $LAUNCHER_PLUGIN/$item" >&2
-        exit 1
-    }
-done
 
 ROOT="$(mktemp -d)"
 ARCHIVE="$ROOT/client-data.tar.gz"
@@ -60,6 +48,38 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+
+LAUNCHER_PLUGIN_STAGE="$ROOT/launcher-plugin-stage"
+
+DESTDIR="$LAUNCHER_PLUGIN_STAGE" cmake --install "$LAUNCHER_PLUGIN_BUILD" --prefix /usr
+
+LAUNCHER_PLUGIN="$(find "$LAUNCHER_PLUGIN_STAGE" -type d -name BossEvents -print -quit)"
+
+[[ -n "$LAUNCHER_PLUGIN" ]] || {
+    echo "PACKAGING TEST INVALID: launcher install stage did not produce BossEvents" >&2
+    exit 1
+}
+
+for item in \
+    libneebles-launcher-events.so \
+    libneebles-launcher-eventsplugin.so \
+    neebles-launcher-events.qmltypes \
+    qmldir
+do
+    [[ -f "$LAUNCHER_PLUGIN/$item" ]] || {
+        echo "PACKAGING TEST INVALID: missing installed launcher runtime artifact: $LAUNCHER_PLUGIN/$item" >&2
+        exit 1
+    }
+done
+
+LAUNCHER_PLUGIN_CERTIFIED="$ROOT/launcher-plugin-certified"
+
+python3 "$REPO_ROOT/scripts/certify-launcher-plugin-stage.py" \
+    --stage "$LAUNCHER_PLUGIN_STAGE" \
+    --output "$LAUNCHER_PLUGIN_CERTIFIED"
+
+LAUNCHER_PLUGIN="$LAUNCHER_PLUGIN_CERTIFIED"
 
 printf '{}\n' > "$AUTHORITY_SUPPLY"
 

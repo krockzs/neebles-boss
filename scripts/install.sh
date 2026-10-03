@@ -640,8 +640,6 @@ if [[ -z "$DESTDIR" ]]; then
     fi
 fi
 
-"$CLIENT_STAGE/bin/neebles" --version
-
 cmp -s "$RUNTIME_RESOLVER_SOURCE" "$CLIENT_STAGE/runtime/neebles-runtime-resolve" || {
     echo "Installed runtime resolver differs from bootstrap authority." >&2
     exit 1
@@ -686,6 +684,8 @@ fi
 mv "$CLIENT_STAGE" "$CLIENT_ROOT"
 CLIENT_STAGE=""
 CLIENT_SWAPPED=1
+
+"$CLIENT_ROOT/bin/neebles" --version
 
 GLOBAL_BACKUP_ROOT="$(mktemp -d "$TMP_DIR/global-backup.XXXXXX")"
 chmod 0700 "$GLOBAL_BACKUP_ROOT"

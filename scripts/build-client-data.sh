@@ -3,11 +3,11 @@ set -euo pipefail
 
 OUTPUT="${1:-}"
 SOURCE="${2:-client}"
-LAUNCHER_PLUGIN_BUILD="${3:-client/launcher-plugin/build}"
+LAUNCHER_PLUGIN_INSTALL="${3:-client/launcher-plugin/install}"
 TRAY_HOST_BINARY="${4:-client/tray-host/build/neebles-tray-host}"
 
 if [[ -z "$OUTPUT" ]]; then
-    echo "Usage: $0 <output.tar.gz> [client-source-directory] [launcher-plugin-build-directory] [tray-host-binary]" >&2
+    echo "Usage: $0 <output.tar.gz> [client-source-directory] [launcher-plugin-install-directory] [tray-host-binary]" >&2
     exit 1
 fi
 
@@ -36,7 +36,7 @@ done
 
 OUTPUT="$(realpath -m "$OUTPUT")"
 SOURCE="$(realpath "$SOURCE")"
-LAUNCHER_PLUGIN_BUILD="$(realpath "$LAUNCHER_PLUGIN_BUILD")"
+LAUNCHER_PLUGIN_INSTALL="$(realpath "$LAUNCHER_PLUGIN_INSTALL")"
 TRAY_HOST_BINARY="$(realpath "$TRAY_HOST_BINARY")"
 
 LAUNCHER_RUNTIME_FILES=(
@@ -45,11 +45,6 @@ LAUNCHER_RUNTIME_FILES=(
     neebles-launcher-events.qmltypes
     qmldir
 )
-
-[[ -f "$LAUNCHER_PLUGIN_BUILD/cmake_install.cmake" ]] || {
-    echo "Launcher plugin CMake install metadata missing: $LAUNCHER_PLUGIN_BUILD/cmake_install.cmake" >&2
-    exit 1
-}
 
 [[ -f "$TRAY_HOST_BINARY" ]] || {
     echo "Tray Host runtime artifact missing: $TRAY_HOST_BINARY" >&2
@@ -71,8 +66,6 @@ trap cleanup EXIT
 for root in "${REQUIRED_ROOTS[@]}"; do
     cp -a "$SOURCE/$root" "$STAGE/$root"
 done
-
-LAUNCHER_PLUGIN_INSTALL="$LAUNCHER_PLUGIN_BUILD"
 
 for item in "${LAUNCHER_RUNTIME_FILES[@]}"; do
     [[ -f "$LAUNCHER_PLUGIN_INSTALL/$item" ]] || {

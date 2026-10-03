@@ -212,7 +212,7 @@ def main():
     )
 
     parser.add_argument(
-        "--launcher-plugin-build",
+        "--launcher-plugin-install",
         required=True,
     )
 
@@ -264,8 +264,8 @@ def main():
         "Tray Host RAW ELF",
     )
 
-    launcher = Path(
-        args.launcher_plugin_build
+    launcher_install = Path(
+        args.launcher_plugin_install
     ).resolve()
 
     client = Path(
@@ -289,10 +289,10 @@ def main():
         "Critical Update manifest",
     )
 
-    if not launcher.is_dir():
+    if not launcher_install.is_dir():
         raise SystemExit(
-            "Launcher plugin build missing: "
-            + str(launcher)
+            "Launcher plugin install stage missing: "
+            + str(launcher_install)
         )
 
     if not client.is_dir():
@@ -373,7 +373,7 @@ def main():
             dist
             / "client-data.tar.gz",
             client,
-            launcher,
+            launcher_install,
             staged_tray,
         ])
 

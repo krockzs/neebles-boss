@@ -7,6 +7,7 @@ import re
 import stat
 import subprocess
 import tarfile
+import tempfile
 from pathlib import Path, PurePosixPath
 
 REQUIRED_ASSETS = {
@@ -241,6 +242,72 @@ def validate_tar(path: Path) -> None:
             + ", ".join(sorted(missing_files))
         )
 
+
+def validate_bossevents_rpath(path: Path) -> None:
+    member_names = (
+        "runtime/qml/NEEBLES/BossEvents/libneebles-launcher-events.so",
+        "runtime/qml/NEEBLES/BossEvents/libneebles-launcher-eventsplugin.so",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="neebles-bossevents-") as temp_name:
+        temp_root = Path(temp_name)
+
+        try:
+            with tarfile.open(path, mode="r:gz") as archive:
+                for member_name in member_names:
+                    member = archive.getmember(member_name)
+                    handle = archive.extractfile(member)
+
+                    if handle is None:
+                        fail(
+                            "BossEvents ELF cannot be read from client-data: "
+                            + member_name
+                        )
+
+                    staged = temp_root / Path(member_name).name
+                    staged.write_bytes(handle.read())
+
+                    dynamic = subprocess.run(
+                        ["readelf", "-d", str(staged)],
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                    )
+
+                    if dynamic.returncode != 0:
+                        fail(
+                            "could not inspect BossEvents ELF dynamic section: "
+                            + member_name
+                        )
+
+                    dynamic_lines = [
+                        line
+                        for line in dynamic.stdout.splitlines()
+                        if "(RPATH)" in line or "(RUNPATH)" in line
+                    ]
+
+                    if not any(
+                        chr(36) + "ORIGIN" in line
+                        for line in dynamic_lines
+                    ):
+                        fail(
+                            "BossEvents ELF must retain ORIGIN-relative "
+                            "RPATH/RUNPATH: "
+                            + member_name
+                        )
+
+                    if any(
+                        "client/launcher-plugin/build" in line
+                        or "/work/neebles-launcher-plugin-build" in line
+                        for line in dynamic_lines
+                    ):
+                        fail(
+                            "BossEvents ELF retains build-tree "
+                            "RPATH/RUNPATH: "
+                            + member_name
+                        )
+        except (tarfile.TarError, KeyError, OSError) as exc:
+            fail("BossEvents ELF cannot be inspected: " + str(exc))
 
 def validate_critical_update_manifest(
     path: Path,
@@ -519,6 +586,9 @@ def main() -> None:
                 fail(f"asset {key!r} is not executable: {filename}")
 
     validate_tar(dist / REQUIRED_ASSETS["client_data"])
+    validate_bossevents_rpath(
+        dist / REQUIRED_ASSETS["client_data"]
+    )
 
     validate_critical_update_manifest(
         dist / REQUIRED_ASSETS["critical_update"]
