@@ -95,7 +95,7 @@ jobs:
       - name: Project Boss source into controlled Esbirro workspace
         shell: bash
         run: |
-          python3 -c 'from pathlib import Path; import subprocess,shutil; src=Path(".").resolve(); dst=Path("neebles-custom/build_sysroot_6.8.2/work/neebles-boss-source").resolve(); names=subprocess.check_output(["git","ls-files"],text=True).splitlines(); shutil.rmtree(dst,ignore_errors=True); dst.mkdir(parents=True); [(lambda a,b: (b.parent.mkdir(parents=True,exist_ok=True),shutil.copy2(a,b)) if a.is_file() else None)(src/name,dst/name) for name in names]; print("PROJECTED BOSS FILES ::",sum(1 for name in names if (src/name).is_file()))'
+          python3 -c 'from pathlib import Path; import subprocess,shutil; src=Path(".").resolve(); dst=Path("neebles-custom/build_sysroot_6.8.2/work/neebles-boss-source").resolve(); names=subprocess.check_output(["git","-c","safe.directory="+str(src),"ls-files"],text=True).splitlines(); shutil.rmtree(dst,ignore_errors=True); dst.mkdir(parents=True); [(lambda a,b: (b.parent.mkdir(parents=True,exist_ok=True),shutil.copy2(a,b)) if a.is_file() else None)(src/name,dst/name) for name in names]; print("PROJECTED BOSS FILES ::",sum(1 for name in names if (src/name).is_file()))'
 
       - name: Verify certified CUSTOM runtime inputs
         shell: bash
