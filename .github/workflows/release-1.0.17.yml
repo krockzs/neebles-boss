@@ -76,7 +76,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: krockzs/neebles-custom
-          ref: fcb92abedd74ece1c2ad40820e30cb6097a77741
+          ref: 4b7397700d18c65d1b0852c09494df45213f69d4
           path: neebles-custom
           lfs: true
           sparse-checkout: |

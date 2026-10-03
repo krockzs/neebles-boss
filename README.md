@@ -2,7 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-Current source line: **1.0.16**
+Current source line: **1.0.17**
 
 Historical published closure baseline before the final Point 7/8 work: **`17281b9` — `feat(boss): close points 5 and 6`**
 
@@ -20,7 +20,7 @@ Technology-specific implementation remains outside the Boss core whenever a gene
 
 ## Current status
 
-The current Boss source line is **1.0.16**.
+The current Boss source line is **1.0.17**.
 
 Current macro fronts:
 
@@ -2089,8 +2089,8 @@ POINT 8 FINAL BOSS GATE        GREEN / CLOSED
 POINT 9 TEST MODULE            GREEN / CLOSED
 POINT 10 TEST MODULE CERT      IN PROGRESS
 BOSS CONTRACT CLOSED           YES
-SOURCE LINE                    1.0.16
-RELEASE VERSION                1.0.16
+SOURCE LINE                    1.0.17
+RELEASE VERSION                1.0.17
 ```
 
 Current continuation law:
@@ -2101,6 +2101,6 @@ Current continuation law:
 
 ## Version policy
 
-All current documentation in this repository describes the **1.0.16** source line.
+All current documentation in this repository describes the **1.0.17** source line.
 
 Source updates and documentation updates do not create a release by themselves.
