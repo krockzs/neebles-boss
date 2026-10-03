@@ -1,6 +1,6 @@
 # N.E.E.B.L.E.S. Boss — Implemented Architecture
 
-Current source line: **1.0.17**
+Current source line: **1.0.18**
 
 This file describes the architecture implemented in the current Boss working tree.
 
@@ -92,4 +92,4 @@ Point 9 is GREEN / CLOSED. The final Test Module documentation revision is align
 
 Point 10 full Test Module functional certification remains in progress.
 
-This document applies to **1.0.17** only.
+This document applies to **1.0.18** only.
