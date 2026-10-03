@@ -656,6 +656,18 @@ cmp -s "$RUNTIME_MANIFEST_SOURCE" "$CLIENT_STAGE/runtime/boss/domestic-runtime.j
     exit 1
 }
 
+PKEXEC_STAGE="$RUNTIME_ROOTFS_STAGE/usr/bin/pkexec"
+
+[[ -f "$PKEXEC_STAGE" ]] || {
+    echo "Installed runtime authority is missing pkexec." >&2
+    exit 1
+}
+
+[[ "$(stat -c "%a" "$PKEXEC_STAGE")" == "4755" ]] || {
+    echo "Installed runtime pkexec lost required setuid mode." >&2
+    exit 1
+}
+
 "$CLIENT_STAGE/runtime/neebles-runtime-resolve"     --manifest "$CLIENT_STAGE/runtime/boss/domestic-runtime.json"     --world boss.pkexec     --category executable     >/dev/null     || {
         echo "Installed runtime authority cannot resolve boss.pkexec." >&2
         exit 1

@@ -66,7 +66,7 @@ printf '{}\n' > "$AUTHORITY_SUPPLY"
 install -d -m 0755 "$RUNTIME_ROOTFS/usr/bin"
 
 printf '#!/bin/sh\nexit 0\n' > "$RUNTIME_ROOTFS/usr/bin/pkexec"
-chmod 0755 "$RUNTIME_ROOTFS/usr/bin/pkexec"
+chmod 4755 "$RUNTIME_ROOTFS/usr/bin/pkexec"
 
 python3 - "$RUNTIME_MANIFEST" <<'PY_RUNTIME_FIXTURE'
 from pathlib import Path
@@ -268,7 +268,7 @@ assert_mode 755 "$CLIENT/auth/neebles-auth-agent"
 assert_mode 755 "$CLIENT/tray-host/neebles-tray-host"
 assert_mode 755 "$CLIENT/runtime/neebles-runtime-resolve"
 assert_mode 644 "$CLIENT/runtime/boss/domestic-runtime.json"
-assert_mode 755 "$CLIENT/runtime/boss/rootfs/usr/bin/pkexec"
+assert_mode 4755 "$CLIENT/runtime/boss/rootfs/usr/bin/pkexec"
 
 cmp -s "$RUNTIME_RESOLVER" "$CLIENT/runtime/neebles-runtime-resolve" || {
     echo "PACKAGING TEST INVALID: installed runtime resolver differs from fixture" >&2
