@@ -963,8 +963,111 @@ static QVariantMap loadInstallerStrings(
     return document.object().toVariantMap();
 }
 
+
+static bool configureBootstrapQtPluginAuthority(
+    int argc,
+    char *argv[],
+    QString *error
+)
+{
+    if (error)
+        error->clear();
+
+    if (argc < 7)
+        return true;
+
+    const QString runtimeResolver =
+        QString::fromLocal8Bit(argv[5]).trimmed();
+
+    const QString runtimeManifest =
+        QString::fromLocal8Bit(argv[6]).trimmed();
+
+    if (
+        runtimeResolver.isEmpty()
+        || runtimeManifest.isEmpty()
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "bootstrap Qt runtime authority arguments are empty"
+                );
+        }
+
+        return false;
+    }
+
+    QString runtimeAuthorityError;
+
+    const QString pluginRoot =
+        NeeblesRuntimeAuthority::resolve(
+            runtimeResolver,
+            runtimeManifest,
+            QStringLiteral("boss.qt-runtime"),
+            QStringLiteral("runtime_paths"),
+            &runtimeAuthorityError
+        );
+
+    if (pluginRoot.isEmpty()) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "bootstrap Qt plugin authority could not resolve boss.qt-runtime"
+                );
+
+            if (!runtimeAuthorityError.isEmpty()) {
+                *error +=
+                    QStringLiteral(": ")
+                    + runtimeAuthorityError;
+            }
+        }
+
+        return false;
+    }
+
+    const QFileInfo pluginRootInfo(pluginRoot);
+
+    if (
+        !pluginRootInfo.isAbsolute()
+        || !pluginRootInfo.isDir()
+    ) {
+        if (error) {
+            *error =
+                QStringLiteral(
+                    "bootstrap Qt plugin authority is not an absolute directory: "
+                )
+                + pluginRoot;
+        }
+
+        return false;
+    }
+
+    qputenv(
+        "QT_PLUGIN_PATH",
+        QFile::encodeName(
+            pluginRootInfo.absoluteFilePath()
+        )
+    );
+
+    return true;
+}
+
 int main(int argc, char *argv[])
 {
+    QString qtRuntimeAuthorityError;
+
+    if (
+        !configureBootstrapQtPluginAuthority(
+            argc,
+            argv,
+            &qtRuntimeAuthorityError
+        )
+    ) {
+        qCritical().noquote()
+            << qtRuntimeAuthorityError;
+
+        return 2;
+    }
+
     QGuiApplication app(argc, argv);
 
     app.setApplicationName(
@@ -972,7 +1075,7 @@ int main(int argc, char *argv[])
     );
 
     app.setApplicationVersion(
-        QStringLiteral("1.0.19")
+        QStringLiteral("1.0.20")
     );
 
     app.setOrganizationName(

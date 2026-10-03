@@ -37,6 +37,9 @@
     "boss.tar": {
       "executable": "tar",
       "library_paths": "core.multiarch"
+    },
+    "boss.qt-runtime": {
+      "runtime_paths": "qt.plugins"
     }
   }
 }

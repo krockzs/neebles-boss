@@ -79,6 +79,13 @@
         "usr/lib/x86_64-linux-gnu",
         "usr/lib/x86_64-linux-gnu/systemd"
       ]
+    },
+    {
+      "category": "runtime_paths",
+      "value": "qt.plugins",
+      "targets": [
+        "usr/lib/x86_64-linux-gnu/qt6/plugins"
+      ]
     }
   ]
 }
