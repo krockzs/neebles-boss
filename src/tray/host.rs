@@ -103,11 +103,18 @@ impl StatusNotifierItem {
     }
 
     fn secondary_activate(&self, _x: i32, _y: i32) {
-        self.activate_item();
+        /*
+         * Secondary activation is intentionally not mapped to the
+         * primary functional action.
+         */
     }
 
     fn context_menu(&self, _x: i32, _y: i32) {
-        self.activate_item();
+        /*
+         * Context-menu activation is intentionally separate from
+         * primary activation. A future menu must be exposed through
+         * a real StatusNotifierItem/DBusMenu contract.
+         */
     }
 
     fn scroll(&self, _delta: i32, _orientation: &str) {}

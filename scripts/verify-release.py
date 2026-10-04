@@ -243,6 +243,116 @@ def validate_tar(path: Path) -> None:
         )
 
 
+def validate_tray_host_rpath(path: Path) -> None:
+    member_name = "runtime/tray-host/neebles-tray-host"
+
+    expected_interpreter = (
+        "/opt/neebles/client/runtime/boss/rootfs/"
+        "lib64/ld-linux-x86-64.so.2"
+    )
+
+    required_rpath_parts = (
+        "/opt/neebles/client/runtime/boss/rootfs/lib/x86_64-linux-gnu",
+        "/opt/neebles/client/runtime/boss/rootfs/usr/lib/x86_64-linux-gnu",
+        "/opt/neebles/client/runtime/boss/rootfs/usr/lib/x86_64-linux-gnu/systemd",
+        "/opt/neebles/client/runtime/boss/rootfs/lib64",
+        "/opt/neebles/client/runtime/boss/rootfs/usr/lib64",
+    )
+
+    forbidden = (
+        "client/tray-host/build",
+        "/work/neebles-tray-host-build",
+        "/work/neebles-boss-source",
+        "build_sysroot_6.8.2",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="neebles-tray-host-") as temp_name:
+        temp_root = Path(temp_name)
+
+        try:
+            with tarfile.open(path, mode="r:gz") as archive:
+                member = archive.getmember(member_name)
+                handle = archive.extractfile(member)
+
+                if handle is None:
+                    fail(
+                        "Tray Host ELF cannot be read from client-data: "
+                        + member_name
+                    )
+
+                staged = temp_root / "neebles-tray-host"
+                staged.write_bytes(handle.read())
+
+                program_headers = subprocess.run(
+                    ["readelf", "-l", str(staged)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+
+                if program_headers.returncode != 0:
+                    fail(
+                        "could not inspect Tray Host ELF program headers: "
+                        + member_name
+                    )
+
+                if expected_interpreter not in program_headers.stdout:
+                    fail(
+                        "Tray Host ELF interpreter is not domestic: "
+                        + member_name
+                    )
+
+                dynamic = subprocess.run(
+                    ["readelf", "-d", str(staged)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+
+                if dynamic.returncode != 0:
+                    fail(
+                        "could not inspect Tray Host ELF dynamic section: "
+                        + member_name
+                    )
+
+                dynamic_lines = [
+                    line
+                    for line in dynamic.stdout.splitlines()
+                    if "(RPATH)" in line or "(RUNPATH)" in line
+                ]
+
+                if not dynamic_lines:
+                    fail(
+                        "Tray Host ELF has no domestic RPATH/RUNPATH: "
+                        + member_name
+                    )
+
+                dynamic_text = "\n".join(dynamic_lines)
+
+                if not all(
+                    part in dynamic_text
+                    for part in required_rpath_parts
+                ):
+                    fail(
+                        "Tray Host ELF domestic RPATH contract mismatch: "
+                        + member_name
+                    )
+
+                if any(
+                    marker in line
+                    for line in dynamic_lines
+                    for marker in forbidden
+                ):
+                    fail(
+                        "Tray Host ELF retains build-world "
+                        "RPATH/RUNPATH: "
+                        + member_name
+                    )
+
+        except (tarfile.TarError, KeyError, OSError) as exc:
+            fail("Tray Host ELF cannot be inspected: " + str(exc))
+
+
 def validate_bossevents_rpath(path: Path) -> None:
     member_names = (
         "runtime/qml/NEEBLES/BossEvents/libneebles-launcher-events.so",
@@ -586,6 +696,9 @@ def main() -> None:
                 fail(f"asset {key!r} is not executable: {filename}")
 
     validate_tar(dist / REQUIRED_ASSETS["client_data"])
+    validate_tray_host_rpath(
+        dist / REQUIRED_ASSETS["client_data"]
+    )
     validate_bossevents_rpath(
         dist / REQUIRED_ASSETS["client_data"]
     )

@@ -169,6 +169,18 @@ jobs:
           chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake -S /work/neebles-boss-source/client/tray-host -B /work/neebles-tray-host-build -DCMAKE_BUILD_TYPE=Release
           chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake --build /work/neebles-tray-host-build --parallel
 
+      - name: Install Qt tray host into certified stage
+        shell: bash
+        run: |
+          rm -rf neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env DESTDIR=/work/neebles-tray-host-stage /usr/bin/cmake --install /work/neebles-tray-host-build --prefix /usr
+          test -x neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage/usr/bin/neebles-tray-host
+          readelf -d neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage/usr/bin/neebles-tray-host
+          if strings neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage/usr/bin/neebles-tray-host | grep -E "neebles-tray-host-build|neebles-boss-source|build_sysroot_6.8.2"; then
+            echo "Tray Host certification failed: build-world path leaked into installed ELF" >&2
+            exit 1
+          fi
+
       - name: Materialize domestic Boss runtime manifest
         shell: bash
         run: |
@@ -214,7 +226,7 @@ jobs:
             --ui neebles-custom/build_sysroot_6.8.2/work/neebles-boss-ui-build/neebles-ui \
             --installer neebles-custom/build_sysroot_6.8.2/work/neebles-installer-build/neebles-installer \
             --auth-agent neebles-custom/build_sysroot_6.8.2/work/neebles-auth-agent-build/neebles-auth-agent \
-            --tray-host neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-build/neebles-tray-host \
+            --tray-host neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage/usr/bin/neebles-tray-host \
             --launcher-plugin-install release-work/launcher-plugin-install \
             --client-source client \
             --runtime-resolver target/x86_64-unknown-linux-musl/release/neebles-runtime-resolve \

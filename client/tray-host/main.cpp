@@ -1253,6 +1253,20 @@ int main(
     );
 
     QObject::connect(
+        window,
+        &QWindow::activeChanged,
+        window,
+        [window]() {
+            if (
+                window->isVisible()
+                && !window->isActive()
+            ) {
+                window->hide();
+            }
+        }
+    );
+
+    QObject::connect(
         &trayClient,
         &TraySocketClient::hostShowRequested,
         window,

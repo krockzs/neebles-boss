@@ -6,7 +6,7 @@ Current source line: **1.0.21**
 
 Historical published closure baseline before the final Point 7/8 work: **`17281b9` — `feat(boss): close points 5 and 6`**
 
-Current macro state: **BOSS CONTRACT CLOSED**. **Point 9 Test Module adaptation GREEN / CLOSED. Point 10 full Test Module certification is IN PROGRESS.**
+Current macro state (2026-10-04): **BOSS CONTRACT CLOSED**. **Point 9 Test Module adaptation GREEN / CLOSED. Point 10 full Test Module certification is PAUSED at the current handoff. Boss 1.0.21 remains the published release; 1.0.22 has not been started.**
 
 N.E.E.B.L.E.S. Boss is the governance and orchestration layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -34,7 +34,7 @@ Point 6  Registry / module catalog             GREEN / CLOSED
 Point 7  CUSTOM v2 integration                 GREEN / CLOSED
 Point 8  Final Boss integration / pre-VM gate  GREEN / CLOSED
 Point 9  Test Module adaptation                GREEN / CLOSED
-Point 10 Full Test Module certification        IN PROGRESS
+Point 10 Full Test Module certification        PAUSED / NEXT SESSION
 ```
 
 The Lifecycle and generic Surface front remains **GREEN / CLOSED** and is not reopened unless current source proves a real contradiction.
@@ -2104,3 +2104,73 @@ Current continuation law:
 All current documentation in this repository describes the **1.0.21** source line.
 
 Source updates and documentation updates do not create a release by themselves.
+
+
+## Live / Tray checkpoint — 2026-10-04
+
+Boss **1.0.21** was installed and exercised in a real N.E.E.B.L.E.S. Live Plasma session. Launcher and Tray infrastructure started, Test Module was installable/enabled, and the dynamic Registry path worked once explicit AuthoritySupply was supplied and the OS filesystem-boundary provider was repaired.
+
+### AuthoritySupply transport
+
+The canonical AuthoritySupply is valid. Explicit use of:
+
+```text
+/usr/lib/neebles/platform/authority/authority-supply.json
+```
+
+allowed `modules available` to reach the Registry after the OS provider repair. The remaining defect is transport at the ordinary direct Boss CLI/Desktop entrypoint: `/usr/local/bin/neebles` resolves directly to the backend and does not currently append AuthoritySupply automatically. The system runtime service already receives the supply. This issue remains pending and must not be misdiagnosed as a Registry or network failure.
+
+### Tray behavior work prepared for the next release
+
+Four Boss source files are currently modified at this handoff:
+
+```text
+.github/workflows/release-1.0.21.yml
+client/tray-host/main.cpp
+scripts/verify-release.py
+src/tray/host.rs
+```
+
+The intended behavior is:
+
+- primary activation continues to toggle/open the N.E.E.B.L.E.S. Tray popup;
+- secondary activation is no longer mapped to the primary action;
+- StatusNotifierItem `ContextMenu` is no longer mapped to the primary action;
+- a future real right-click menu must be exposed through a proper StatusNotifierItem/DBusMenu contract;
+- the popup hides when its Qt window loses active state;
+- the already-correct LayerShell geometry/margins are untouched.
+
+The Qt popup change compiled successfully in the controlled Qt 6.8.2 world. The Tray Host passed DESTDIR installation and final domestic ELF verification. The Rust backend change compiled successfully through the official release build path.
+
+**Runtime behavior is not yet certified.** Real Plasma acceptance must still prove that clicking outside dismisses the popup and that secondary/right click no longer toggles it.
+
+### Tray release-material law
+
+The next release must not publish the Tray Host directly from `/work/neebles-tray-host-build`. The workflow has been prepared to install through:
+
+```text
+/work/neebles-tray-host-stage/usr/bin/neebles-tray-host
+```
+
+and pass that installed artifact to release materialization.
+
+The final release verifier now includes a Tray-specific ELF gate after domestic transformation. It requires the canonical domestic interpreter and runtime search roots and rejects build-world path leakage.
+
+The existing Launcher order is intentionally preserved and must remain:
+
+```text
+Build Launcher
+    -> DESTDIR install
+    -> certify Launcher stage
+    -> Build Tray
+    -> DESTDIR install Tray
+    -> domestic/runtime materialization
+    -> release payload
+    -> final verification
+```
+
+### Test Module state
+
+The installed Test Module revision used for the current Point 10 work is `4765494bb53fc2051075103bef04eeea0476e700` (version 1.2.0). Its current surfaces declaration exposes only the Launcher `open` surface. UI/config surface absence in that revision is therefore expected, not evidence that Boss lost those surfaces.
+
+Point 10 is deliberately deferred with the next Boss release/integration session. No 1.0.22 release is claimed here.
