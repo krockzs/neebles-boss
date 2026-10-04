@@ -2,11 +2,11 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-Current source line: **1.0.21**
+Current source line: **1.0.22**
 
 Historical published closure baseline before the final Point 7/8 work: **`17281b9` — `feat(boss): close points 5 and 6`**
 
-Current macro state (2026-10-04): **BOSS CONTRACT CLOSED**. **Point 9 Test Module adaptation GREEN / CLOSED. Point 10 full Test Module certification is PAUSED at the current handoff. Boss 1.0.21 remains the published release; 1.0.22 has not been started.**
+Current macro state (2026-10-04): **BOSS CONTRACT CLOSED**. **Point 9 Test Module adaptation GREEN / CLOSED. Point 10 full Test Module certification is PAUSED at the current handoff. Boss 1.0.21 remains the published release; 1.0.22 is the current source line and release preparation is in progress.**
 
 N.E.E.B.L.E.S. Boss is the governance and orchestration layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -20,7 +20,7 @@ Technology-specific implementation remains outside the Boss core whenever a gene
 
 ## Current status
 
-The current Boss source line is **1.0.21**.
+The current Boss source line is **1.0.22**.
 
 Current macro fronts:
 
@@ -2089,19 +2089,19 @@ POINT 8 FINAL BOSS GATE        GREEN / CLOSED
 POINT 9 TEST MODULE            GREEN / CLOSED
 POINT 10 TEST MODULE CERT      IN PROGRESS
 BOSS CONTRACT CLOSED           YES
-SOURCE LINE                    1.0.21
+SOURCE LINE                    1.0.22
 RELEASE VERSION                1.0.21
 ```
 
 Current continuation law:
 
-**Boss architecture remains closed. Point 9 is GREEN / CLOSED. Continue Point 10 certification against that closed contract, and keep full installed-system / VM acceptance as the later system-level phase.**
+**Boss architecture remains closed. Point 9 is GREEN / CLOSED. Point 10 certification remains paused until Boss 1.0.22 is built, published and accepted in the real Plasma runtime. Full installed-system / VM acceptance remains the later system-level phase.**
 
 ---
 
 ## Version policy
 
-All current documentation in this repository describes the **1.0.21** source line.
+All current documentation in this repository describes the **1.0.22** source line.
 
 Source updates and documentation updates do not create a release by themselves.
 
@@ -2120,15 +2120,15 @@ The canonical AuthoritySupply is valid. Explicit use of:
 
 allowed `modules available` to reach the Registry after the OS provider repair. The remaining defect is transport at the ordinary direct Boss CLI/Desktop entrypoint: `/usr/local/bin/neebles` resolves directly to the backend and does not currently append AuthoritySupply automatically. The system runtime service already receives the supply. This issue remains pending and must not be misdiagnosed as a Registry or network failure.
 
-### Tray behavior work prepared for the next release
+### Tray behavior work prepared for Boss 1.0.22
 
-Four Boss source files are currently modified at this handoff:
+The Tray behavior and release-verification work carried into Boss 1.0.22 is implemented through:
 
 ```text
-.github/workflows/release-1.0.21.yml
 client/tray-host/main.cpp
 scripts/verify-release.py
 src/tray/host.rs
+.github/workflows/release-1.0.22.yml
 ```
 
 The intended behavior is:
