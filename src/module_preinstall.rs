@@ -10,7 +10,7 @@ use std::process::Stdio;
 
 const CUSTOM_REPOSITORY: &str = "krockzs/neebles-custom";
 const CUSTOM_REPOSITORY_GIT: &str = "https://github.com/krockzs/neebles-custom.git";
-const CUSTOM_BRANCH_CANDIDATES: [&str; 3] = ["neebles-custom", "main", "master"];
+const CUSTOM_BRANCH_CANDIDATES: [&str; 2] = ["main", "master"];
 const DOMESTIC_WORKSPACE_AUTHORITY: &str = "neebles.domestic_workspace";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
