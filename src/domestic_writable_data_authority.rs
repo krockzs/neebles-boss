@@ -101,6 +101,66 @@ pub fn load_writable_data_authority_descriptor(
     })
 }
 
+pub fn grant_writable_data_file_subpath(
+    descriptor: &WritableDataAuthorityDescriptor,
+    source: &Path,
+    destination: &Path,
+) -> Result<WritableDataGrant, String> {
+    validate_absolute_clean_path(source, "writable data file source")?;
+    validate_absolute_clean_path(destination, "writable data file destination")?;
+
+    if !descriptor.root.is_dir() {
+        return Err(format!(
+            "writable data authority root is not a directory: {}",
+            descriptor.root.display()
+        ));
+    }
+
+    if !source.is_file() {
+        return Err(format!(
+            "writable data file source is not a regular file: {}",
+            source.display()
+        ));
+    }
+
+    let canonical_root = fs::canonicalize(&descriptor.root).map_err(|error| {
+        format!(
+            "could not canonicalize writable data authority root {}: {error}",
+            descriptor.root.display()
+        )
+    })?;
+
+    let canonical_source = fs::canonicalize(source).map_err(|error| {
+        format!(
+            "could not canonicalize writable data file source {}: {error}",
+            source.display()
+        )
+    })?;
+
+    if canonical_source == canonical_root {
+        return Err(format!(
+            "writable data file grant must select a strict subpath of authority root: {}",
+            source.display()
+        ));
+    }
+
+    canonical_source
+        .strip_prefix(&canonical_root)
+        .map_err(|_| {
+            format!(
+                "writable data file source escapes authority root: source={} root={}",
+                source.display(),
+                descriptor.root.display()
+            )
+        })?;
+
+    Ok(WritableDataGrant {
+        authority: descriptor.authority.clone(),
+        source: canonical_source,
+        destination: destination.to_path_buf(),
+    })
+}
+
 pub fn grant_writable_data_subpath(
     descriptor: &WritableDataAuthorityDescriptor,
     source: &Path,
@@ -248,6 +308,90 @@ mod tests {
             grant_writable_data_subpath(&descriptor, &outside, Path::new("/work/outside"),)
                 .is_err()
         );
+
+        fs::remove_dir_all(&base).expect("fixture must clean");
+    }
+
+    #[test]
+    fn descriptor_authorizes_strict_regular_file_subpath() {
+        let base = fixture_root("file-grant");
+        let root = base.join("root");
+        let selected = root.join("runtime.json");
+        let descriptor_path = base.join("descriptor.json");
+
+        fs::create_dir_all(&root).expect("authority root must exist");
+        fs::write(&selected, b"fixture").expect("selected file must exist");
+
+        fs::write(
+            &descriptor_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "1",
+                "name": "neebles-writable-data-authority",
+                "authority": "boss.fixture.staging",
+                "root": root,
+            }))
+            .expect("descriptor fixture must serialize"),
+        )
+        .expect("descriptor fixture must exist");
+
+        let descriptor =
+            load_writable_data_authority_descriptor(&descriptor_path, "boss.fixture.staging")
+                .expect("descriptor must load");
+
+        let grant = grant_writable_data_file_subpath(
+            &descriptor,
+            &selected,
+            Path::new("/work/runtime.json"),
+        )
+        .expect("strict regular file child must grant");
+
+        assert_eq!(grant.authority, "boss.fixture.staging");
+        assert_eq!(grant.source, fs::canonicalize(&selected).unwrap());
+        assert_eq!(grant.destination, PathBuf::from("/work/runtime.json"));
+
+        fs::remove_dir_all(&base).expect("fixture must clean");
+    }
+
+    #[test]
+    fn file_grant_rejects_directory_and_escape() {
+        let base = fixture_root("file-reject");
+        let root = base.join("root");
+        let directory = root.join("directory");
+        let outside = base.join("outside.json");
+        let descriptor_path = base.join("descriptor.json");
+
+        fs::create_dir_all(&directory).expect("directory fixture must exist");
+        fs::write(&outside, b"outside").expect("outside fixture must exist");
+
+        fs::write(
+            &descriptor_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "1",
+                "name": "neebles-writable-data-authority",
+                "authority": "boss.fixture.staging",
+                "root": root,
+            }))
+            .expect("descriptor fixture must serialize"),
+        )
+        .expect("descriptor fixture must exist");
+
+        let descriptor =
+            load_writable_data_authority_descriptor(&descriptor_path, "boss.fixture.staging")
+                .expect("descriptor must load");
+
+        assert!(grant_writable_data_file_subpath(
+            &descriptor,
+            &directory,
+            Path::new("/work/directory"),
+        )
+        .is_err());
+
+        assert!(grant_writable_data_file_subpath(
+            &descriptor,
+            &outside,
+            Path::new("/work/outside.json"),
+        )
+        .is_err());
 
         fs::remove_dir_all(&base).expect("fixture must clean");
     }

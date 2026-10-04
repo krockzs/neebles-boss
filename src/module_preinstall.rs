@@ -214,7 +214,7 @@ fn authorized_material_territory() -> Result<(PathBuf, PathBuf, PathBuf), String
         )?;
 
     let runtime_manifest_grant =
-        neebles_backend::domestic_writable_data_authority::grant_writable_data_subpath(
+        neebles_backend::domestic_writable_data_authority::grant_writable_data_file_subpath(
             &descriptor,
             &runtime_manifest,
             &runtime_manifest,
