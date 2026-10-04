@@ -24,18 +24,35 @@ struct PendingSymlink {
     target: PathBuf,
 }
 
-fn safe_archive_path(path: &Path) -> bool {
-    !path.as_os_str().is_empty()
-        && !path.is_absolute()
-        && path.components().all(|component| {
-            !matches!(
-                component,
-                Component::ParentDir
-                    | Component::CurDir
-                    | Component::RootDir
-                    | Component::Prefix(_)
-            )
-        })
+fn normalize_archive_path(path: &Path) -> Result<Option<PathBuf>, String> {
+    if path.as_os_str().is_empty() {
+        return Err("empty material tar path".to_string());
+    }
+
+    if path.is_absolute() {
+        return Err(format!(
+            "absolute material tar path is forbidden: {}",
+            path.display()
+        ));
+    }
+
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => normalized.push(value),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("unsafe material tar path: {}", path.display()));
+            }
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(normalized))
+    }
 }
 
 fn parse_ar_decimal(field: &[u8], label: &str) -> Result<usize, String> {
@@ -136,17 +153,25 @@ fn unpack_tar<R: Read>(reader: R, destination: &Path) -> Result<(), String> {
     for item in entries {
         let mut entry = item.map_err(|error| format!("invalid material tar entry: {error}"))?;
 
-        let path = entry
+        let raw_path = entry
             .path()
             .map_err(|error| format!("invalid material tar path: {error}"))?
             .into_owned();
 
-        if !safe_archive_path(&path) {
-            return Err(format!("unsafe material tar path: {}", path.display()));
-        }
+        let kind = entry.header().entry_type();
+
+        let Some(path) = normalize_archive_path(&raw_path)? else {
+            if kind.is_dir() {
+                continue;
+            }
+
+            return Err(format!(
+                "material tar root entry is not a directory: {}",
+                raw_path.display()
+            ));
+        };
 
         let target = destination.join(&path);
-        let kind = entry.header().entry_type();
 
         if kind.is_dir() {
             fs::create_dir_all(&target).map_err(|error| {
@@ -1058,6 +1083,37 @@ mod tests {
         encoder.finish().expect("fixture gzip must finish")
     }
 
+    fn gzip_tar_with_root_and_file() -> Vec<u8> {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+
+        let mut builder = tar::Builder::new(encoder);
+
+        let mut root = tar::Header::new_gnu();
+        root.set_entry_type(tar::EntryType::Directory);
+        root.set_size(0);
+        root.set_mode(0o755);
+        root.set_cksum();
+
+        builder
+            .append_data(&mut root, "./", Cursor::new(Vec::<u8>::new()))
+            .expect("root tar directory must append");
+
+        let body = b"hello-neebles-root\n";
+
+        let mut file = tar::Header::new_gnu();
+        file.set_size(body.len() as u64);
+        file.set_mode(0o755);
+        file.set_cksum();
+
+        builder
+            .append_data(&mut file, "./usr/bin/fixture", Cursor::new(body))
+            .expect("fixture tar file must append");
+
+        let encoder = builder.into_inner().expect("fixture tar must finish");
+
+        encoder.finish().expect("fixture gzip must finish")
+    }
+
     #[test]
     fn deb_parser_finds_data_member() {
         let payload = synthetic_deb("data.tar.gz", b"fixture");
@@ -1076,12 +1132,50 @@ mod tests {
     }
 
     #[test]
-    fn archive_path_rejects_escape() {
-        assert!(!safe_archive_path(Path::new("../escape")));
+    fn archive_path_normalizes_current_directory_components() {
+        assert_eq!(
+            normalize_archive_path(Path::new("./usr/bin/python3")).unwrap(),
+            Some(PathBuf::from("usr/bin/python3"))
+        );
 
-        assert!(!safe_archive_path(Path::new("usr/../escape")));
+        assert_eq!(normalize_archive_path(Path::new("./")).unwrap(), None);
 
-        assert!(safe_archive_path(Path::new("usr/bin/python3")));
+        assert_eq!(
+            normalize_archive_path(Path::new("usr/bin/python3")).unwrap(),
+            Some(PathBuf::from("usr/bin/python3"))
+        );
+    }
+
+    #[test]
+    fn archive_path_rejects_escape_and_absolute_paths() {
+        assert!(normalize_archive_path(Path::new("../escape")).is_err());
+
+        assert!(normalize_archive_path(Path::new("usr/../escape")).is_err());
+
+        assert!(normalize_archive_path(Path::new("/absolute")).is_err());
+    }
+
+    #[test]
+    fn extracts_gzip_deb_payload_with_root_entry_to_staging() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let deb = temporary.path().join("fixture-root.deb");
+        let destination = temporary.path().join("rootfs");
+
+        fs::write(
+            &deb,
+            synthetic_deb("data.tar.gz", &gzip_tar_with_root_and_file()),
+        )
+        .expect("fixture deb must write");
+
+        extract_deb_data_to_staging(&deb, &destination)
+            .expect("root-prefixed fixture deb must extract");
+
+        assert_eq!(
+            fs::read(destination.join("usr/bin/fixture"))
+                .expect("root-prefixed fixture must exist"),
+            b"hello-neebles-root\n"
+        );
     }
 
     #[test]

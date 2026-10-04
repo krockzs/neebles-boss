@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** preparation for **1.0.24**
+**Current source line:** preparation for **1.0.25**
 **Latest published Boss release:** **1.0.22**
-**Current integration status (2026-10-04):** generic module architecture closed; Test Module connectivity path source-certified; Boss 1.0.24 release preparation and Fresh Live Test Module acceptance remain pending.
+**Current integration status (2026-10-04):** generic module architecture closed; Test Module connectivity path source-certified; Boss 1.0.25 release preparation and Fresh Live Test Module acceptance remain pending.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -634,7 +634,7 @@ Boss startup does not depend on running recovery.
 
 # Current source certification
 
-The current source closure before Boss 1.0.24 release preparation has certified:
+The current source closure before Boss 1.0.25 release preparation has certified:
 
 ```text
 cargo fmt --all -- --check          GREEN
@@ -661,9 +661,9 @@ These source gates do not replace Fresh Live acceptance.
 
 The latest published release is **1.0.22**.
 
-The next Boss release is **1.0.24**.
+The next Boss release is **1.0.25**.
 
-Before publishing 1.0.24 the release must be internally coherent across:
+Before publishing 1.0.25 the release must be internally coherent across:
 
 - `Cargo.toml`;
 - `Cargo.lock`;

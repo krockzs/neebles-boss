@@ -1,0 +1,340 @@
+name: Build and release NEEBLES Boss 1.0.25
+
+on:
+  push:
+    paths:
+      - "release/trigger-v1.0.25"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    container:
+      image: debian:trixie-slim
+
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            ca-certificates \
+            git \
+            git-lfs \
+            curl \
+            build-essential \
+            gpg \
+            python3 \
+            patchelf \
+            binutils \
+            musl-tools \
+            tar \
+            gzip \
+            zstd
+
+          mkdir -p /etc/apt/keyrings
+
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg
+
+          chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            > /etc/apt/sources.list.d/github-cli.list
+
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gh
+
+          git lfs version
+          gh --version
+          patchelf --version
+          readelf --version | head -n 1
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain 1.98.1
+
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+          "$HOME/.cargo/bin/rustup" target add x86_64-unknown-linux-musl
+          "$HOME/.cargo/bin/rustc" --version
+          "$HOME/.cargo/bin/cargo" --version
+
+      - name: Checkout Boss
+        uses: actions/checkout@v4
+
+      - name: Checkout certified CUSTOM material
+        uses: actions/checkout@v4
+        with:
+          repository: krockzs/neebles-custom
+          ref: 87e91250e1ae9104216e9381ea60b0046caa26f7
+          path: neebles-custom
+          lfs: true
+          sparse-checkout: |
+            portable/esbirro
+            boss_current_manifest.json
+            runtime/boss/rootfs
+            runtime/manifests/boss.rootfs.tsv
+          sparse-checkout-cone-mode: false
+
+      - name: Restore certified Esbirro workspace
+        shell: bash
+        run: |
+          python3 neebles-custom/portable/esbirro/restore-workspace.py
+
+          test -d neebles-custom/build_deps
+          test -d neebles-custom/build_sysroot_6.8.2
+
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/qmake6 --version
+
+      - name: Project Boss source into controlled Esbirro workspace
+        shell: bash
+        run: |
+          python3 -c 'from pathlib import Path; import subprocess,shutil; src=Path(".").resolve(); dst=Path("neebles-custom/build_sysroot_6.8.2/work/neebles-boss-source").resolve(); names=subprocess.check_output(["git","-c","safe.directory="+str(src),"ls-files"],text=True).splitlines(); shutil.rmtree(dst,ignore_errors=True); dst.mkdir(parents=True); [(lambda a,b: (b.parent.mkdir(parents=True,exist_ok=True),shutil.copy2(a,b)) if a.is_file() else None)(src/name,dst/name) for name in names]; print("PROJECTED BOSS FILES ::",sum(1 for name in names if (src/name).is_file()))'
+
+      - name: Verify certified CUSTOM runtime inputs
+        shell: bash
+        run: |
+          test -d neebles-custom/runtime/boss/rootfs
+          test -s neebles-custom/runtime/manifests/boss.rootfs.tsv
+          test -s neebles-custom/runtime/boss/rootfs/usr/lib/x86_64-linux-gnu/libLLVM.so.19.1
+          test "$(stat -c %s neebles-custom/runtime/boss/rootfs/usr/lib/x86_64-linux-gnu/libLLVM.so.19.1)" -eq 129673080
+          test "$(sha256sum neebles-custom/runtime/boss/rootfs/usr/lib/x86_64-linux-gnu/libLLVM.so.19.1 | cut -d " " -f 1)" = "3523f50f635d2a1ea47518a392451f2854b92823ceaf1345fb806099dd1a3b8a"
+
+      - name: Build Rust release binaries
+        shell: bash
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo build --release --locked --bins
+
+      - name: Build static bootstrap runtime resolver
+        shell: bash
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo build \
+            --release \
+            --locked \
+            --bin neebles-runtime-resolve \
+            --target x86_64-unknown-linux-musl
+
+          readelf -l target/x86_64-unknown-linux-musl/release/neebles-runtime-resolve
+          readelf -d target/x86_64-unknown-linux-musl/release/neebles-runtime-resolve
+
+      - name: Build Boss UI in controlled Esbirro world
+        shell: bash
+        run: |
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake -S /work/neebles-boss-source/ui/client -B /work/neebles-boss-ui-build -DCMAKE_BUILD_TYPE=Release
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake --build /work/neebles-boss-ui-build --parallel
+
+      - name: Build installer UI in controlled Esbirro world
+        shell: bash
+        run: |
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake -S /work/neebles-boss-source/ui/installer -B /work/neebles-installer-build -DCMAKE_BUILD_TYPE=Release
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake --build /work/neebles-installer-build --parallel
+
+      - name: Build authorization agent in controlled Esbirro world
+        shell: bash
+        run: |
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake -S /work/neebles-boss-source/ui/auth-agent -B /work/neebles-auth-agent-build -DCMAKE_BUILD_TYPE=Release
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake --build /work/neebles-auth-agent-build --parallel
+
+      - name: Build Plasma launcher plugin in controlled Esbirro world
+        shell: bash
+        run: |
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake -S /work/neebles-boss-source/client/launcher-plugin -B /work/neebles-launcher-plugin-build -DCMAKE_BUILD_TYPE=Release
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake --build /work/neebles-launcher-plugin-build --parallel
+
+      - name: Install and certify Plasma launcher plugin
+        shell: bash
+        run: |
+          rm -rf neebles-custom/build_sysroot_6.8.2/work/neebles-launcher-plugin-stage
+          rm -rf release-work/launcher-plugin-install
+          mkdir -p release-work
+
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env DESTDIR=/work/neebles-launcher-plugin-stage /usr/bin/cmake --install /work/neebles-launcher-plugin-build --prefix /usr
+
+          python3 scripts/certify-launcher-plugin-stage.py --stage neebles-custom/build_sysroot_6.8.2/work/neebles-launcher-plugin-stage --output release-work/launcher-plugin-install
+
+      - name: Build Qt tray host in controlled Esbirro world
+        shell: bash
+        run: |
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake -S /work/neebles-boss-source/client/tray-host -B /work/neebles-tray-host-build -DCMAKE_BUILD_TYPE=Release
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/cmake --build /work/neebles-tray-host-build --parallel
+
+      - name: Install Qt tray host into certified stage
+        shell: bash
+        run: |
+          rm -rf neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage
+          chroot neebles-custom/build_sysroot_6.8.2 /usr/bin/env DESTDIR=/work/neebles-tray-host-stage /usr/bin/cmake --install /work/neebles-tray-host-build --prefix /usr
+          test -x neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage/usr/bin/neebles-tray-host
+          readelf -d neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage/usr/bin/neebles-tray-host
+          if strings neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage/usr/bin/neebles-tray-host | grep -E "neebles-tray-host-build|neebles-boss-source|build_sysroot_6.8.2"; then
+            echo "Tray Host certification failed: build-world path leaked into installed ELF" >&2
+            exit 1
+          fi
+
+      - name: Materialize domestic Boss runtime manifest
+        shell: bash
+        run: |
+          mkdir -p release-work
+
+          target/release/neebles-domestic-materialize \
+            --contract src/contracts/domesticacion-elfica.schema.json \
+            --grimoire src/contracts/domesticacion-elfica.grimorio.json \
+            --targets src/contracts/domesticacion-elfica.targets.json \
+            --root "$GITHUB_WORKSPACE/neebles-custom/runtime/boss/rootfs" \
+            --output release-work/domestic-runtime.json
+
+      - name: Rehydrate manifest-declared empty runtime directories
+        shell: bash
+        run: |
+          python3 scripts/rehydrate-runtime-directories.py \
+            --root neebles-custom/runtime/boss/rootfs \
+            --manifest neebles-custom/boss_current_manifest.json \
+            --prefix rootfs
+
+      - name: Package and certify domestic Boss runtime
+        shell: bash
+        run: |
+          python3 scripts/package-domestic-runtime.py \
+            --root "$GITHUB_WORKSPACE/neebles-custom/runtime/boss/rootfs" \
+            --manifest release-work/domestic-runtime.json \
+            --output release-work/boss-runtime.tar.gz \
+            --report release-work/boss-runtime-report.txt \
+            --transport-tool target/release/neebles-domestic-transport \
+            --source-manifest neebles-custom/boss_current_manifest.json
+
+          grep -F "GREEN :: BOSS RUNTIME TRANSPORT CERTIFIED" \
+            release-work/boss-runtime-report.txt
+
+      - name: Materialize 1.0.25 release payload
+        shell: bash
+        run: |
+          rm -rf dist
+
+          python3 scripts/materialize-release.py \
+            --dist dist \
+            --backend target/release/neebles-backend \
+            --ui neebles-custom/build_sysroot_6.8.2/work/neebles-boss-ui-build/neebles-ui \
+            --installer neebles-custom/build_sysroot_6.8.2/work/neebles-installer-build/neebles-installer \
+            --auth-agent neebles-custom/build_sysroot_6.8.2/work/neebles-auth-agent-build/neebles-auth-agent \
+            --tray-host neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage/usr/bin/neebles-tray-host \
+            --launcher-plugin-install release-work/launcher-plugin-install \
+            --client-source client \
+            --runtime-resolver target/x86_64-unknown-linux-musl/release/neebles-runtime-resolve \
+            --runtime-archive release-work/boss-runtime.tar.gz
+
+      - name: Verify 1.0.25 release payload
+        shell: bash
+        run: |
+          python3 scripts/verify-release.py \
+            --dist dist \
+            --cargo-toml Cargo.toml
+
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 11
+
+          python3 -c 'from pathlib import Path; expected={"neebles-backend","neebles-ui","neebles-installer","neebles-auth-agent","client-data.tar.gz","install.sh","neebles-runtime-resolve","boss-runtime.tar.gz","critical-update-manifest.json","bootstrap.json","SHA256SUMS"}; actual={p.name for p in Path("dist").iterdir() if p.is_file()}; actual==expected or (_ for _ in ()).throw(RuntimeError("dist asset mismatch: "+repr(sorted(actual))))'
+
+      - name: Publish v1.0.25 release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh --version
+
+          if gh release view v1.0.25 >/dev/null 2>&1; then
+            IS_DRAFT="$(gh release view v1.0.25 --json isDraft --jq ".isDraft")"
+            if [ "$IS_DRAFT" != "true" ]; then
+              echo "ERROR: v1.0.25 already exists as a published release; refusing to mutate it."
+              exit 1
+            fi
+
+            gh release edit v1.0.25 \
+              --draft \
+              --title "N.E.E.B.L.E.S. Boss v1.0.25" \
+              --notes-file release/notes-v1.0.25.md \
+              --target "${GITHUB_SHA}"
+
+            while IFS= read -r asset; do
+              [ -n "$asset" ] || continue
+              gh release delete-asset v1.0.25 "$asset" --yes
+            done < <(
+              gh release view v1.0.25 \
+                --json assets \
+                --jq '.assets[].name'
+            )
+          else
+            gh release create v1.0.25 \
+              --draft \
+              --target "${GITHUB_SHA}" \
+              --title "N.E.E.B.L.E.S. Boss v1.0.25" \
+              --notes-file release/notes-v1.0.25.md
+          fi
+
+          for asset in \
+            dist/neebles-backend \
+            dist/neebles-ui \
+            dist/neebles-installer \
+            dist/neebles-auth-agent \
+            dist/client-data.tar.gz \
+            dist/install.sh \
+            dist/neebles-runtime-resolve \
+            dist/boss-runtime.tar.gz \
+            dist/critical-update-manifest.json \
+            dist/bootstrap.json \
+            dist/SHA256SUMS
+          do
+            uploaded=false
+
+            for attempt in 1 2 3 4 5; do
+              echo "Uploading $asset - attempt $attempt/5"
+
+              if gh release upload v1.0.25 "$asset"; then
+                uploaded=true
+                break
+              fi
+
+              if [ "$attempt" -lt 5 ]; then
+                sleep 15
+              fi
+            done
+
+            if [ "$uploaded" != true ]; then
+              echo "ERROR: failed to upload $asset after 5 attempts."
+              exit 1
+            fi
+          done
+
+          gh release view v1.0.25 \
+            --json assets \
+            --jq '.assets[].name' \
+            | sort > /tmp/neebles-remote-assets.txt
+
+          printf '%s\n' \
+            SHA256SUMS \
+            bootstrap.json \
+            boss-runtime.tar.gz \
+            client-data.tar.gz \
+            critical-update-manifest.json \
+            install.sh \
+            neebles-auth-agent \
+            neebles-backend \
+            neebles-installer \
+            neebles-runtime-resolve \
+            neebles-ui \
+            | sort > /tmp/neebles-expected-assets.txt
+
+          diff -u \
+            /tmp/neebles-expected-assets.txt \
+            /tmp/neebles-remote-assets.txt
+
+          gh release edit v1.0.25 --draft=false --latest
