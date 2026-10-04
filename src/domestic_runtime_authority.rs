@@ -80,6 +80,42 @@ fn load_materialized_runtime_context(manifest_path: &Path) -> Result<(Value, Pat
     Ok((manifest, runtime_root))
 }
 
+pub fn validate_materialized_runtime_manifest(manifest_path: &Path) -> Result<(), String> {
+    let (manifest, _) = load_materialized_runtime_context(manifest_path)?;
+
+    let worlds = manifest
+        .get("worlds")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "materialized runtime worlds is not an object".to_string())?;
+
+    if worlds.is_empty() {
+        return Err("materialized runtime must declare at least one world".to_string());
+    }
+
+    for (world_name, world_value) in worlds {
+        let world = world_value
+            .as_object()
+            .ok_or_else(|| format!("materialized runtime world is not an object: {world_name}"))?;
+
+        let categories = world
+            .get("categories")
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("materialized runtime world {world_name} has no categories"))?;
+
+        if categories.is_empty() {
+            return Err(format!(
+                "materialized runtime world {world_name} has no categories"
+            ));
+        }
+
+        for category_name in categories.keys() {
+            resolve_materialized_runtime_targets(manifest_path, world_name, category_name)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn resolve_materialized_runtime_root(manifest_path: &Path) -> Result<PathBuf, String> {
     let (_, runtime_root) = load_materialized_runtime_context(manifest_path)?;
 

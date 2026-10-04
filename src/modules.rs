@@ -1324,8 +1324,8 @@ fn install_require_tree(
             );
         }
 
-        let preinstall = match crate::module_preinstall::ensure_module_packages(&module_id) {
-            Ok(report) => report,
+        let prepared = match crate::module_preinstall::ensure_module_packages(&module_id) {
+            Ok(prepared) => prepared,
 
             Err(error) => {
                 return Err(require_install_failure(
@@ -1338,10 +1338,57 @@ fn install_require_tree(
         eprintln!(
             "N.E.E.B.L.E.S.: module '{}' preinstall GREEN: required={} reused={} downloaded={} custom_revision={}",
             module_id,
-            preinstall.required,
-            preinstall.reused,
-            preinstall.downloaded,
-            preinstall.custom_revision
+            prepared.report.required,
+            prepared.report.reused,
+            prepared.report.downloaded,
+            prepared.report.custom_revision
+        );
+
+        let materialization = match crate::module_materialization::materialize_recipe(
+            &prepared.recipe,
+            &prepared.package_pool,
+            &prepared.shared_rootfs,
+        ) {
+            Ok(report) => report,
+
+            Err(error) => {
+                return Err(require_install_failure(
+                    format!("module '{}' materialization failed: {}", module_id, error),
+                    &mut transaction,
+                ));
+            }
+        };
+
+        eprintln!(
+            "N.E.E.B.L.E.S.: module '{}' materialization GREEN: packages={} entries={} published={} reused={}",
+            module_id,
+            materialization.packages,
+            materialization.entries,
+            materialization.published,
+            materialization.reused
+        );
+
+        let runtime_manifest_reused = match crate::module_materialization::publish_runtime_manifest(
+            &prepared.runtime_manifest_payload,
+            &prepared.shared_runtime_manifest,
+        ) {
+            Ok(reused) => reused,
+
+            Err(error) => {
+                return Err(require_install_failure(
+                    format!(
+                        "module '{}' runtime world publication failed: {}",
+                        module_id, error
+                    ),
+                    &mut transaction,
+                ));
+            }
+        };
+
+        eprintln!(
+            "N.E.E.B.L.E.S.: shared Esbirro runtime manifest GREEN: path={} reused={}",
+            prepared.shared_runtime_manifest.display(),
+            runtime_manifest_reused
         );
 
         if let Err(error) = execute_module_governor_lifecycle(
@@ -1453,6 +1500,7 @@ fn checkout_registry_commit(
             &platform,
             &[dns],
             &[writable_grant],
+            &std::collections::BTreeMap::new(),
             true,
             true,
             true,
@@ -3379,8 +3427,8 @@ fn update_with_observer(
         }
     }
 
-    let preinstall = match crate::module_preinstall::ensure_module_packages(name) {
-        Ok(report) => report,
+    let prepared = match crate::module_preinstall::ensure_module_packages(name) {
+        Ok(prepared) => prepared,
 
         Err(preinstall_error) => {
             let failed_update_path = root.join(format!(
@@ -3424,10 +3472,82 @@ fn update_with_observer(
     eprintln!(
         "N.E.E.B.L.E.S.: module '{}' update preinstall GREEN: required={} reused={} downloaded={} custom_revision={}",
         name,
-        preinstall.required,
-        preinstall.reused,
-        preinstall.downloaded,
-        preinstall.custom_revision
+        prepared.report.required,
+        prepared.report.reused,
+        prepared.report.downloaded,
+        prepared.report.custom_revision
+    );
+
+    let materialization = match crate::module_materialization::materialize_recipe(
+        &prepared.recipe,
+        &prepared.package_pool,
+        &prepared.shared_rootfs,
+    ) {
+        Ok(report) => report,
+
+        Err(materialization_error) => {
+            let failed_update_path = root.join(format!(
+                ".neebles-failed-materialization-update-{name}-{transaction}"
+            ));
+
+            if let Err(error) = fs::rename(&current_path, &failed_update_path) {
+                return Err(format!(
+                        "CRITICAL: update materialization failed for module '{}': {}; new module could not be moved aside for rollback: {}",
+                        name,
+                        materialization_error,
+                        error
+                    ));
+            }
+
+            match fs::rename(&backup_path, &current_path) {
+                Ok(()) => {
+                    let _ = fs::remove_dir_all(&failed_update_path);
+
+                    return Err(format!(
+                            "update materialization failed for module '{}': {}; previous module version was restored",
+                            name,
+                            materialization_error
+                        ));
+                }
+
+                Err(rollback_error) => {
+                    return Err(format!(
+                            "CRITICAL: update materialization failed for module '{}': {}; rollback also failed: {}; previous version remains at {} and failed update remains at {}",
+                            name,
+                            materialization_error,
+                            rollback_error,
+                            backup_path.display(),
+                            failed_update_path.display()
+                        ));
+                }
+            }
+        }
+    };
+
+    eprintln!(
+        "N.E.E.B.L.E.S.: module '{}' update materialization GREEN: packages={} entries={} published={} reused={}",
+        name,
+        materialization.packages,
+        materialization.entries,
+        materialization.published,
+        materialization.reused
+    );
+
+    let runtime_manifest_reused = crate::module_materialization::publish_runtime_manifest(
+        &prepared.runtime_manifest_payload,
+        &prepared.shared_runtime_manifest,
+    )
+    .map_err(|error| {
+        format!(
+            "module '{}' update runtime world publication failed: {}",
+            name, error
+        )
+    })?;
+
+    eprintln!(
+        "N.E.E.B.L.E.S.: shared Esbirro runtime manifest GREEN: path={} reused={}",
+        prepared.shared_runtime_manifest.display(),
+        runtime_manifest_reused
     );
 
     let lifecycle_runtime = module_governor_lifecycle_runtime()?;

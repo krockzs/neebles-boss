@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Command;
@@ -5,6 +6,9 @@ use std::process::Command;
 use crate::domestic_boundary_execution::{
     build_pure_materialized_boundary_execution_command,
     compose_materialized_boundary_execution_plan_with_writable_data,
+};
+use crate::domestic_dynamic_readonly_authority::{
+    grant_dynamic_readonly_subpath, load_dynamic_readonly_authority_descriptor,
 };
 use crate::domestic_external_data_authority::{
     load_external_data_authority_descriptor, ExternalDataAuthorityDescriptor,
@@ -21,7 +25,23 @@ pub struct WorkspaceReadonlyGrant {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceDynamicReadonlyGrant {
+    pub authority: String,
+    pub descriptor_path: PathBuf,
+    pub source: PathBuf,
+    pub destination: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceWritableGrant {
+    pub authority: String,
+    pub descriptor_path: PathBuf,
+    pub source: PathBuf,
+    pub destination: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSessionReadonlyGrant {
     pub authority: String,
     pub descriptor_path: PathBuf,
     pub source: PathBuf,
@@ -34,7 +54,11 @@ pub struct WorkspaceExecutionRequest {
     pub world: String,
     pub platform_descriptor_path: PathBuf,
     pub readonly: Vec<WorkspaceReadonlyGrant>,
+    pub dynamic_readonly: Vec<WorkspaceDynamicReadonlyGrant>,
     pub writable: Vec<WorkspaceWritableGrant>,
+    pub session_readonly: Vec<WorkspaceSessionReadonlyGrant>,
+    pub environment: BTreeMap<String, String>,
+    pub desktop_identity: Option<(u32, u32)>,
     pub mount_proc: bool,
     pub mount_dev: bool,
     pub mount_tmp: bool,
@@ -49,6 +73,81 @@ fn load_readonly_grants(
         .iter()
         .map(|request| {
             load_external_data_authority_descriptor(&request.descriptor_path, &request.authority)
+        })
+        .collect()
+}
+
+fn load_dynamic_readonly_grants(
+    requests: &[WorkspaceDynamicReadonlyGrant],
+) -> Result<Vec<ExternalDataAuthorityDescriptor>, String> {
+    requests
+        .iter()
+        .map(|request| {
+            let descriptor = load_dynamic_readonly_authority_descriptor(
+                &request.descriptor_path,
+                &request.authority,
+            )?;
+
+            let grant =
+                grant_dynamic_readonly_subpath(&descriptor, &request.source, &request.destination)?;
+
+            Ok(ExternalDataAuthorityDescriptor {
+                authority: grant.authority,
+                descriptor_path: request.descriptor_path.clone(),
+                source: grant.source,
+                destination: grant.destination,
+                access: "read_only".to_string(),
+            })
+        })
+        .collect()
+}
+
+fn load_session_readonly_grants(
+    requests: &[WorkspaceSessionReadonlyGrant],
+) -> Result<Vec<ExternalDataAuthorityDescriptor>, String> {
+    requests
+        .iter()
+        .map(|request| {
+            let descriptor =
+                load_platform_authority_descriptor(&request.descriptor_path, &request.authority)?;
+
+            if descriptor.authority()
+                != crate::domestic_desktop_session_interface::DESKTOP_SESSION_INTERFACE_AUTHORITY
+            {
+                return Err(format!(
+                    "workspace session readonly authority mismatch: {}",
+                    descriptor.authority()
+                ));
+            }
+
+            if descriptor.protocol()
+                != crate::domestic_desktop_session_interface::DESKTOP_SESSION_INTERFACE_PROTOCOL_V1
+            {
+                return Err(format!(
+                    "workspace session readonly protocol mismatch: {}",
+                    descriptor.protocol()
+                ));
+            }
+
+            if !request.source.is_absolute() || !request.destination.is_absolute() {
+                return Err("workspace session readonly paths must be absolute".to_string());
+            }
+
+            if request.source != request.destination {
+                return Err(format!(
+                    "workspace session readonly projection must preserve canonical path: {} -> {}",
+                    request.source.display(),
+                    request.destination.display(),
+                ));
+            }
+
+            Ok(ExternalDataAuthorityDescriptor {
+                authority: request.authority.clone(),
+                descriptor_path: request.descriptor_path.clone(),
+                source: request.source.clone(),
+                destination: request.destination.clone(),
+                access: "read_only".to_string(),
+            })
         })
         .collect()
 }
@@ -112,7 +211,10 @@ pub fn build_workspace_execution_command(
         "platform.filesystem_boundary",
     )?;
 
-    let readonly = load_readonly_grants(&request.readonly)?;
+    let mut readonly = load_readonly_grants(&request.readonly)?;
+    readonly.extend(load_dynamic_readonly_grants(&request.dynamic_readonly)?);
+    readonly.extend(load_session_readonly_grants(&request.session_readonly)?);
+
     let writable = load_writable_grants(&request.writable)?;
 
     let plan = compose_materialized_boundary_execution_plan_with_writable_data(
@@ -121,13 +223,33 @@ pub fn build_workspace_execution_command(
         &platform,
         &readonly,
         &writable,
+        &request.environment,
         request.mount_proc,
         request.mount_dev,
         request.mount_tmp,
         request.chdir.as_deref(),
     )?;
 
-    build_pure_materialized_boundary_execution_command(&plan, &request.arguments)
+    let boundary = build_pure_materialized_boundary_execution_command(&plan, &request.arguments)?;
+
+    let Some((desktop_uid, desktop_gid)) = request.desktop_identity else {
+        return Ok(boundary);
+    };
+
+    let setpriv = crate::domestic_runtime_authority::resolve_boss_executable("boss.setpriv")?;
+
+    let mut command = Command::new(setpriv);
+
+    command.env_clear();
+
+    command
+        .arg(format!("--reuid={desktop_uid}"))
+        .arg(format!("--regid={desktop_gid}"))
+        .arg("--init-groups")
+        .arg(boundary.get_program())
+        .args(boundary.get_args());
+
+    Ok(command)
 }
 
 pub fn execute_workspace_execution_request(
@@ -151,7 +273,11 @@ mod tests {
             world: String::new(),
             platform_descriptor_path: PathBuf::from("/fixture/platform.json"),
             readonly: Vec::new(),
+            dynamic_readonly: Vec::new(),
             writable: Vec::new(),
+            session_readonly: Vec::new(),
+            environment: std::collections::BTreeMap::new(),
+            desktop_identity: None,
             mount_proc: false,
             mount_dev: false,
             mount_tmp: false,
@@ -169,7 +295,11 @@ mod tests {
             world: "fixture.tool".to_string(),
             platform_descriptor_path: PathBuf::from("/fixture/platform.json"),
             readonly: Vec::new(),
+            dynamic_readonly: Vec::new(),
             writable: Vec::new(),
+            session_readonly: Vec::new(),
+            environment: std::collections::BTreeMap::new(),
+            desktop_identity: None,
             mount_proc: false,
             mount_dev: false,
             mount_tmp: false,
@@ -187,7 +317,11 @@ mod tests {
             world: "fixture.tool".to_string(),
             platform_descriptor_path: PathBuf::from("platform.json"),
             readonly: Vec::new(),
+            dynamic_readonly: Vec::new(),
             writable: Vec::new(),
+            session_readonly: Vec::new(),
+            environment: std::collections::BTreeMap::new(),
+            desktop_identity: None,
             mount_proc: false,
             mount_dev: false,
             mount_tmp: false,
@@ -205,7 +339,11 @@ mod tests {
             world: "fixture.tool".to_string(),
             platform_descriptor_path: PathBuf::from("/fixture/platform.json"),
             readonly: Vec::new(),
+            dynamic_readonly: Vec::new(),
             writable: Vec::new(),
+            session_readonly: Vec::new(),
+            environment: std::collections::BTreeMap::new(),
+            desktop_identity: None,
             mount_proc: false,
             mount_dev: false,
             mount_tmp: false,
@@ -217,13 +355,67 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_readonly_grant_lowers_to_read_only_external_data() {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("fixture clock must work")
+            .as_nanos();
+
+        let base = std::env::temp_dir().join(format!(
+            "neebles-workspace-dynamic-readonly-{}-{unique}",
+            std::process::id()
+        ));
+
+        let root = base.join("root");
+        let selected = root.join("module");
+        let descriptor_path = base.join("descriptor.json");
+
+        fs::create_dir_all(&selected).expect("selected directory must exist");
+
+        fs::write(
+            &descriptor_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "1",
+                "name": "neebles-dynamic-readonly-authority",
+                "authority": "fixture.dynamic",
+                "root": root,
+            }))
+            .expect("descriptor must serialize"),
+        )
+        .expect("descriptor must exist");
+
+        let grants = load_dynamic_readonly_grants(&[WorkspaceDynamicReadonlyGrant {
+            authority: "fixture.dynamic".to_string(),
+            descriptor_path: descriptor_path.clone(),
+            source: selected.clone(),
+            destination: PathBuf::from("/modules/fixture"),
+        }])
+        .expect("dynamic readonly grant must lower");
+
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0].authority, "fixture.dynamic");
+        assert_eq!(grants[0].source, fs::canonicalize(selected).unwrap());
+        assert_eq!(grants[0].destination, PathBuf::from("/modules/fixture"));
+        assert_eq!(grants[0].access, "read_only");
+
+        fs::remove_dir_all(base).expect("fixture must clean");
+    }
+
+    #[test]
     fn shared_execution_primitive_reuses_workspace_validation() {
         let request = WorkspaceExecutionRequest {
             manifest_path: PathBuf::from("/fixture/runtime.json"),
             world: String::new(),
             platform_descriptor_path: PathBuf::from("/fixture/platform.json"),
             readonly: Vec::new(),
+            dynamic_readonly: Vec::new(),
             writable: Vec::new(),
+            session_readonly: Vec::new(),
+            environment: std::collections::BTreeMap::new(),
+            desktop_identity: None,
             mount_proc: false,
             mount_dev: false,
             mount_tmp: false,

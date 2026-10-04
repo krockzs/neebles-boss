@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,6 +24,7 @@ pub fn compose_materialized_boundary_execution_plan(
     world_name: &str,
     platform: &PlatformAuthorityDescriptor,
     readonly_data: &[ExternalDataAuthorityDescriptor],
+    environment: &BTreeMap<String, String>,
     mount_proc: bool,
     mount_dev: bool,
     mount_tmp: bool,
@@ -34,6 +36,7 @@ pub fn compose_materialized_boundary_execution_plan(
         platform,
         readonly_data,
         &[],
+        environment,
         mount_proc,
         mount_dev,
         mount_tmp,
@@ -47,6 +50,7 @@ pub fn compose_materialized_boundary_execution_plan_with_writable_data(
     platform: &PlatformAuthorityDescriptor,
     readonly_data: &[ExternalDataAuthorityDescriptor],
     writable_data: &[WritableDataGrant],
+    environment: &BTreeMap<String, String>,
     mount_proc: bool,
     mount_dev: bool,
     mount_tmp: bool,
@@ -65,6 +69,7 @@ pub fn compose_materialized_boundary_execution_plan_with_writable_data(
         &runtime_root,
         readonly_data,
         writable_data,
+        environment,
         mount_proc,
         mount_dev,
         mount_tmp,
@@ -259,6 +264,7 @@ mod tests {
             "boss.fixture",
             &platform,
             &[],
+            &BTreeMap::new(),
             true,
             true,
             true,
@@ -304,6 +310,7 @@ mod tests {
             "boss.fixture",
             &platform,
             &[],
+            &BTreeMap::new(),
             true,
             true,
             true,

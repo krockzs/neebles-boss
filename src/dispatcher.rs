@@ -529,19 +529,9 @@ fn dispatch_domestic_construction(request: &ExecutionRequest) -> ExecutionRespon
             }
         };
 
-    let runtime_manifest =
-        match neebles_backend::domestic_runtime_authority::current_boss_runtime_manifest() {
-            Ok(runtime_manifest) => runtime_manifest,
-
-            Err(error) => {
-                return ExecutionResponse::fail(1, "domestic_construction_runtime", error);
-            }
-        };
-
     let exit_code = match neebles_backend::domestic_construction::execute_construction_step(
         &declaration,
         step,
-        &runtime_manifest,
         registry,
     ) {
         Ok(exit_code) => exit_code,

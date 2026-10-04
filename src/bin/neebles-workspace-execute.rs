@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -8,9 +9,16 @@ use neebles_backend::domestic_platform_control::{
     load_platform_controlled_authority_supply, register_platform_controlled_authorities,
 };
 use neebles_backend::domestic_workspace_execution::{
-    execute_workspace_execution_request, WorkspaceExecutionRequest, WorkspaceReadonlyGrant,
-    WorkspaceWritableGrant,
+    execute_workspace_execution_request, WorkspaceDynamicReadonlyGrant, WorkspaceExecutionRequest,
+    WorkspaceReadonlyGrant, WorkspaceWritableGrant,
 };
+
+#[derive(Debug)]
+struct DynamicReadonlyInput {
+    authority: String,
+    source: PathBuf,
+    destination: PathBuf,
+}
 
 #[derive(Debug)]
 struct WritableInput {
@@ -39,6 +47,24 @@ fn require_text(args: &[OsString], index: &mut usize, option: &str) -> Result<St
     Ok(value)
 }
 
+fn parse_dynamic_readonly(value: &str) -> Result<DynamicReadonlyInput, String> {
+    let fields = value.splitn(3, '=').collect::<Vec<_>>();
+
+    if fields.len() != 3 {
+        return Err("--dynamic-readonly must use authority=source=destination".to_string());
+    }
+
+    if fields.iter().any(|field| field.trim().is_empty()) {
+        return Err("--dynamic-readonly fields cannot be empty".to_string());
+    }
+
+    Ok(DynamicReadonlyInput {
+        authority: fields[0].to_string(),
+        source: PathBuf::from(fields[1]),
+        destination: PathBuf::from(fields[2]),
+    })
+}
+
 fn parse_writable(value: &str) -> Result<WritableInput, String> {
     let fields = value.splitn(3, '=').collect::<Vec<_>>();
 
@@ -64,6 +90,7 @@ fn main_result() -> Result<i32, String> {
     let mut manifest_path = None::<PathBuf>;
     let mut world = None::<String>;
     let mut readonly_authorities = Vec::<String>::new();
+    let mut dynamic_readonly_inputs = Vec::<DynamicReadonlyInput>::new();
     let mut writable_inputs = Vec::<WritableInput>::new();
     let mut chdir = None::<PathBuf>;
     let mut mount_proc = false;
@@ -99,6 +126,12 @@ fn main_result() -> Result<i32, String> {
 
             "--readonly" => {
                 readonly_authorities.push(require_text(&args, &mut index, "--readonly")?);
+            }
+
+            "--dynamic-readonly" => {
+                let value = require_text(&args, &mut index, "--dynamic-readonly")?;
+
+                dynamic_readonly_inputs.push(parse_dynamic_readonly(&value)?);
             }
 
             "--writable" => {
@@ -148,6 +181,12 @@ fn main_result() -> Result<i32, String> {
 
     requested.extend(readonly_authorities.iter().cloned());
 
+    requested.extend(
+        dynamic_readonly_inputs
+            .iter()
+            .map(|input| input.authority.clone()),
+    );
+
     requested.extend(writable_inputs.iter().map(|input| input.authority.clone()));
 
     let grants = build_authority_grant_set(&registry, &requested)?;
@@ -167,6 +206,20 @@ fn main_result() -> Result<i32, String> {
         })
         .collect::<Result<Vec<_>, String>>()?;
 
+    let dynamic_readonly = dynamic_readonly_inputs
+        .into_iter()
+        .map(|input| {
+            let descriptor_path = grants.descriptor_path(&registry, &input.authority)?;
+
+            Ok(WorkspaceDynamicReadonlyGrant {
+                authority: input.authority,
+                descriptor_path,
+                source: input.source,
+                destination: input.destination,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
     let writable = writable_inputs
         .into_iter()
         .map(|input| {
@@ -182,11 +235,15 @@ fn main_result() -> Result<i32, String> {
         .collect::<Result<Vec<_>, String>>()?;
 
     let request = WorkspaceExecutionRequest {
+        desktop_identity: None,
         manifest_path: manifest_path.ok_or_else(|| "missing --manifest".to_string())?,
         world: world.ok_or_else(|| "missing --world".to_string())?,
         platform_descriptor_path,
         readonly,
+        dynamic_readonly,
         writable,
+        session_readonly: Vec::new(),
+        environment: BTreeMap::new(),
         mount_proc,
         mount_dev,
         mount_tmp,

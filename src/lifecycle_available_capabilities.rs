@@ -199,40 +199,65 @@ async fn execute_workspace_operation(
     let registry =
         neebles_backend::domestic_authority_supply_process::process_supplied_authority_registry()?;
 
-    let runtime_manifest =
-        neebles_backend::domestic_runtime_authority::current_boss_runtime_manifest()?;
+    let execution = declaration.step(&step)?.execution;
 
-    let command = neebles_backend::domestic_construction::build_construction_step_command(
+    let mut command = neebles_backend::domestic_construction::build_construction_step_command(
         &declaration,
         &step,
-        &runtime_manifest,
         registry,
     )?;
 
-    let status = async_domestic_command(command)
-        .status()
-        .await
-        .map_err(|error| {
-            format!(
-                "domestic workspace execution failed to start: subject={} step={} error={}",
-                subject, step, error,
-            )
-        })?;
+    match execution {
+        neebles_backend::domestic_construction::DomesticConstructionExecution::Foreground => {
+            let status = async_domestic_command(command)
+                .status()
+                .await
+                .map_err(|error| {
+                    format!(
+                        "domestic workspace execution failed to start: subject={} step={} error={}",
+                        subject, step, error,
+                    )
+                })?;
 
-    let exit_code = status.code().unwrap_or(125);
+            let exit_code = status.code().unwrap_or(125);
 
-    if !status.success() {
-        return Err(format!(
-            "domestic workspace execution failed: subject={} step={} exit_code={}",
-            subject, step, exit_code,
-        ));
+            if !status.success() {
+                return Err(format!(
+                    "domestic workspace execution failed: subject={} step={} exit_code={}",
+                    subject, step, exit_code,
+                ));
+            }
+
+            Ok(ExecutionPayload::from([
+                ("subject".to_string(), subject),
+                ("step".to_string(), step),
+                ("execution".to_string(), "foreground".to_string()),
+                ("exit_code".to_string(), exit_code.to_string()),
+            ]))
+        }
+
+        neebles_backend::domestic_construction::DomesticConstructionExecution::Persistent => {
+            let mut child = command.spawn().map_err(|error| {
+                format!(
+                    "persistent domestic workspace failed to start: subject={} step={} error={}",
+                    subject, step, error,
+                )
+            })?;
+
+            let pid = child.id();
+
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+
+            Ok(ExecutionPayload::from([
+                ("subject".to_string(), subject),
+                ("step".to_string(), step),
+                ("execution".to_string(), "persistent".to_string()),
+                ("pid".to_string(), pid.to_string()),
+            ]))
+        }
     }
-
-    Ok(ExecutionPayload::from([
-        ("subject".to_string(), subject),
-        ("step".to_string(), step),
-        ("exit_code".to_string(), exit_code.to_string()),
-    ]))
 }
 
 fn workspace_execution_handler(operation: PreparedOperation) -> CapabilityFuture {

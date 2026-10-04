@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,8 @@ use crate::domestic_authority_supply::{build_authority_grant_set, SuppliedAuthor
 use crate::domestic_platform_control::authenticate_platform_controlled_file;
 use crate::domestic_workspace_execution::{
     build_workspace_execution_command, execute_workspace_execution_request,
-    WorkspaceExecutionRequest, WorkspaceReadonlyGrant, WorkspaceWritableGrant,
+    WorkspaceDynamicReadonlyGrant, WorkspaceExecutionRequest, WorkspaceReadonlyGrant,
+    WorkspaceWritableGrant,
 };
 
 pub const DOMESTIC_CONSTRUCTION_SCHEMA: &str = "1";
@@ -96,14 +97,27 @@ pub struct DomesticConstructionDeclaration {
     pub steps: Vec<DomesticConstructionStep>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DomesticConstructionExecution {
+    Foreground,
+    Persistent,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DomesticConstructionStep {
     pub id: String,
+    pub runtime_authority: String,
     pub world: String,
+    pub execution: DomesticConstructionExecution,
+    pub session: bool,
 
     #[serde(default)]
     pub readonly: Vec<String>,
+
+    #[serde(default)]
+    pub dynamic_readonly: Vec<DomesticConstructionDynamicReadonly>,
 
     #[serde(default)]
     pub writable: Vec<DomesticConstructionWritable>,
@@ -116,6 +130,14 @@ pub struct DomesticConstructionStep {
 
     #[serde(default)]
     pub arguments: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DomesticConstructionDynamicReadonly {
+    pub authority: String,
+    pub source: PathBuf,
+    pub destination: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -202,6 +224,13 @@ impl DomesticConstructionStep {
             return Err("domestic construction step id cannot be empty".to_string());
         }
 
+        if self.runtime_authority.trim().is_empty() {
+            return Err(format!(
+                "domestic construction step {} runtime authority cannot be empty",
+                self.id
+            ));
+        }
+
         if self.world.trim().is_empty() {
             return Err(format!(
                 "domestic construction step {} world cannot be empty",
@@ -214,6 +243,19 @@ impl DomesticConstructionStep {
                 return Err(format!(
                     "domestic construction step {} readonly authority cannot be empty",
                     self.id
+                ));
+            }
+        }
+
+        let mut dynamic_readonly_authorities = BTreeSet::<String>::new();
+
+        for readonly in &self.dynamic_readonly {
+            readonly.validate(&self.id)?;
+
+            if !dynamic_readonly_authorities.insert(readonly.authority.clone()) {
+                return Err(format!(
+                    "domestic construction step {} contains duplicate dynamic readonly authority {}",
+                    self.id, readonly.authority
                 ));
             }
         }
@@ -246,9 +288,24 @@ impl DomesticConstructionStep {
 
         requested.push("platform.filesystem_boundary".to_string());
 
+        requested.push(self.runtime_authority.clone());
+
+        if self.session {
+            requested.push(
+                crate::domestic_desktop_session_interface::DESKTOP_SESSION_INTERFACE_AUTHORITY
+                    .to_string(),
+            );
+        }
+
         for authority in &self.readonly {
             if !requested.contains(authority) {
                 requested.push(authority.clone());
+            }
+        }
+
+        for readonly in &self.dynamic_readonly {
+            if !requested.contains(&readonly.authority) {
+                requested.push(readonly.authority.clone());
             }
         }
 
@@ -259,6 +316,28 @@ impl DomesticConstructionStep {
         }
 
         requested
+    }
+}
+
+impl DomesticConstructionDynamicReadonly {
+    fn validate(&self, step_id: &str) -> Result<(), String> {
+        if self.authority.trim().is_empty() {
+            return Err(format!(
+                "domestic construction step {step_id} dynamic readonly authority cannot be empty"
+            ));
+        }
+
+        require_absolute_clean_path(
+            &self.source,
+            &format!("domestic construction step {step_id} dynamic readonly source"),
+        )?;
+
+        require_absolute_clean_path(
+            &self.destination,
+            &format!("domestic construction step {step_id} dynamic readonly destination"),
+        )?;
+
+        Ok(())
     }
 }
 
@@ -307,15 +386,9 @@ fn require_absolute_clean_path(path: &Path, label: &str) -> Result<(), String> {
 pub fn project_construction_step(
     declaration: &DomesticConstructionDeclaration,
     step_id: &str,
-    runtime_manifest_path: &Path,
     registry: &SuppliedAuthorityRegistry,
 ) -> Result<WorkspaceExecutionRequest, String> {
     declaration.validate()?;
-
-    require_absolute_clean_path(
-        runtime_manifest_path,
-        "domestic construction runtime manifest path",
-    )?;
 
     let step = declaration.step(step_id)?;
 
@@ -326,6 +399,14 @@ pub fn project_construction_step(
     let platform_descriptor_path =
         grants.descriptor_path(registry, "platform.filesystem_boundary")?;
 
+    let runtime_descriptor_path = grants.descriptor_path(registry, &step.runtime_authority)?;
+
+    let runtime_descriptor =
+        crate::domestic_runtime_manifest_authority::load_runtime_manifest_authority_descriptor(
+            &runtime_descriptor_path,
+            &step.runtime_authority,
+        )?;
+
     let readonly = step
         .readonly
         .iter()
@@ -335,6 +416,21 @@ pub fn project_construction_step(
             Ok(WorkspaceReadonlyGrant {
                 authority: authority.clone(),
                 descriptor_path,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let dynamic_readonly = step
+        .dynamic_readonly
+        .iter()
+        .map(|entry| {
+            let descriptor_path = grants.descriptor_path(registry, &entry.authority)?;
+
+            Ok(WorkspaceDynamicReadonlyGrant {
+                authority: entry.authority.clone(),
+                descriptor_path,
+                source: entry.source.clone(),
+                destination: entry.destination.clone(),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -354,12 +450,59 @@ pub fn project_construction_step(
         })
         .collect::<Result<Vec<_>, String>>()?;
 
+    let (environment, session_readonly, desktop_identity) = if step.session {
+        let session_authority =
+            crate::domestic_desktop_session_interface::DESKTOP_SESSION_INTERFACE_AUTHORITY;
+
+        let session_descriptor_path = grants.descriptor_path(registry, session_authority)?;
+
+        let session_descriptor =
+            crate::domestic_platform_authority::load_platform_authority_descriptor(
+                &session_descriptor_path,
+                session_authority,
+            )?;
+
+        let (desktop_uid, desktop_gid) = crate::runtime_identity::desktop_identity()?;
+
+        let session_interface =
+            crate::domestic_desktop_session_interface::resolve_desktop_session_interface_from_descriptor(
+                &session_descriptor,
+                desktop_uid,
+                desktop_gid,
+            )?;
+
+        let session_readonly = session_interface
+            .readonly_paths()
+            .iter()
+            .map(
+                |path| crate::domestic_workspace_execution::WorkspaceSessionReadonlyGrant {
+                    authority: session_authority.to_string(),
+                    descriptor_path: session_descriptor_path.clone(),
+                    source: path.source.clone(),
+                    destination: path.destination.clone(),
+                },
+            )
+            .collect::<Vec<_>>();
+
+        (
+            session_interface.environment().clone(),
+            session_readonly,
+            Some((desktop_uid as u32, desktop_gid as u32)),
+        )
+    } else {
+        (BTreeMap::new(), Vec::new(), None)
+    };
+
     Ok(WorkspaceExecutionRequest {
-        manifest_path: runtime_manifest_path.to_path_buf(),
+        manifest_path: runtime_descriptor.manifest,
         world: step.world.clone(),
         platform_descriptor_path,
         readonly,
+        dynamic_readonly,
         writable,
+        session_readonly,
+        environment,
+        desktop_identity,
         mount_proc: step.mounts.proc,
         mount_dev: step.mounts.dev,
         mount_tmp: step.mounts.tmp,
@@ -371,10 +514,9 @@ pub fn project_construction_step(
 pub fn build_construction_step_command(
     declaration: &DomesticConstructionDeclaration,
     step_id: &str,
-    runtime_manifest_path: &Path,
     registry: &SuppliedAuthorityRegistry,
 ) -> Result<std::process::Command, String> {
-    let request = project_construction_step(declaration, step_id, runtime_manifest_path, registry)?;
+    let request = project_construction_step(declaration, step_id, registry)?;
 
     build_workspace_execution_command(&request)
 }
@@ -382,12 +524,29 @@ pub fn build_construction_step_command(
 pub fn execute_construction_step(
     declaration: &DomesticConstructionDeclaration,
     step_id: &str,
-    runtime_manifest_path: &Path,
     registry: &SuppliedAuthorityRegistry,
 ) -> Result<i32, String> {
-    let request = project_construction_step(declaration, step_id, runtime_manifest_path, registry)?;
+    let execution = declaration.step(step_id)?.execution;
 
-    execute_workspace_execution_request(&request)
+    let request = project_construction_step(declaration, step_id, registry)?;
+
+    match execution {
+        DomesticConstructionExecution::Foreground => execute_workspace_execution_request(&request),
+
+        DomesticConstructionExecution::Persistent => {
+            let mut child = build_workspace_execution_command(&request)?
+                .spawn()
+                .map_err(|error| {
+                    format!("could not start persistent domestic workspace: {error}")
+                })?;
+
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+
+            Ok(0)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -421,7 +580,10 @@ mod tests {
             "steps": [
                 {
                     "id": "fetch",
+                    "runtime_authority": "boss.runtime",
                     "world": "boss.git",
+                    "execution": "foreground",
+                    "session": false,
                     "readonly": [
                         "system.fixture.readonly"
                     ],
@@ -487,6 +649,8 @@ mod tests {
                 {
                     "id": "build",
                     "world": "boss.git",
+                    "execution": "foreground",
+                    "session": false,
                     "writable": [
                         {
                             "authority": "neebles.domestic_workspace",
@@ -535,6 +699,8 @@ mod tests {
                 {
                     "id": "build",
                     "world": "boss.git",
+                    "execution": "foreground",
+                    "session": false,
                     "writable": [
                         {
                             "authority": "neebles.domestic_workspace",
@@ -560,6 +726,7 @@ mod tests {
         let platform = descriptors.join("platform.json");
         let readonly = descriptors.join("readonly.json");
         let writable = descriptors.join("writable.json");
+        let runtime = descriptors.join("runtime.json");
         let supply_path = base.join("authority-supply.json");
 
         fs::write(
@@ -590,6 +757,18 @@ mod tests {
         .expect("writable descriptor must exist");
 
         fs::write(
+            &runtime,
+            serde_json::json!({
+                "schema": "1",
+                "name": "neebles-runtime-manifest-authority",
+                "authority": "boss.runtime",
+                "manifest": "/opt/fixture/domestic-runtime.json"
+            })
+            .to_string(),
+        )
+        .expect("runtime descriptor must exist");
+
+        fs::write(
             &supply_path,
             serde_json::json!({
                 "schema": "1",
@@ -606,6 +785,10 @@ mod tests {
                     {
                         "authority": "neebles.domestic_workspace",
                         "location": writable
+                    },
+                    {
+                        "authority": "boss.runtime",
+                        "location": runtime
                     }
                 ]
             })
@@ -621,13 +804,8 @@ mod tests {
         let declaration =
             DomesticConstructionDeclaration::parse(&valid_json()).expect("declaration must parse");
 
-        let request = project_construction_step(
-            &declaration,
-            "fetch",
-            Path::new("/opt/neebles-build/runtime/domestic-runtime.json"),
-            &registry,
-        )
-        .expect("construction step must project");
+        let request = project_construction_step(&declaration, "fetch", &registry)
+            .expect("construction step must project");
 
         assert_eq!(request.platform_descriptor_path, platform);
 
@@ -636,6 +814,11 @@ mod tests {
         assert_eq!(request.writable[0].descriptor_path, writable);
 
         assert_eq!(request.writable[0].authority, "neebles.domestic_workspace");
+
+        assert_eq!(
+            request.manifest_path,
+            PathBuf::from("/opt/fixture/domestic-runtime.json")
+        );
 
         assert_eq!(request.world, "boss.git");
 
@@ -690,13 +873,7 @@ mod tests {
         let declaration =
             DomesticConstructionDeclaration::parse(&valid_json()).expect("declaration must parse");
 
-        assert!(project_construction_step(
-            &declaration,
-            "fetch",
-            Path::new("/opt/neebles-build/runtime/domestic-runtime.json"),
-            &registry,
-        )
-        .is_err());
+        assert!(project_construction_step(&declaration, "fetch", &registry,).is_err());
 
         fs::remove_dir_all(base).expect("fixture must clean");
     }
@@ -763,13 +940,9 @@ mod tests {
         let declaration =
             DomesticConstructionDeclaration::parse(&valid_json()).expect("declaration must parse");
 
-        let error = build_construction_step_command(
-            &declaration,
-            "fetch",
-            Path::new("/opt/neebles-build/runtime/domestic-runtime.json"),
-            &registry,
-        )
-        .expect_err("invalid platform descriptor must be rejected by existing workspace engine");
+        let error = build_construction_step_command(&declaration, "fetch", &registry).expect_err(
+            "invalid platform descriptor must be rejected by existing workspace engine",
+        );
 
         assert!(
             error.contains("platform")
@@ -850,5 +1023,44 @@ mod tests {
         );
 
         fs::remove_dir_all(base).expect("fixture must clean");
+    }
+
+    #[test]
+    fn construction_execution_is_explicit_and_closed() {
+        let valid: serde_json::Value =
+            serde_json::from_str(&valid_json()).expect("fixture JSON must parse");
+
+        let mut missing = valid.clone();
+
+        missing["steps"][0]
+            .as_object_mut()
+            .expect("step must be an object")
+            .remove("execution");
+
+        assert!(
+            serde_json::from_value::<DomesticConstructionDeclaration>(missing).is_err(),
+            "construction execution must be explicit"
+        );
+
+        let mut unknown = valid.clone();
+
+        unknown["steps"][0]["execution"] = serde_json::Value::String("random-mode".to_string());
+
+        assert!(
+            serde_json::from_value::<DomesticConstructionDeclaration>(unknown).is_err(),
+            "construction execution vocabulary must be closed"
+        );
+
+        let mut persistent = valid;
+
+        persistent["steps"][0]["execution"] = serde_json::Value::String("persistent".to_string());
+
+        let parsed = serde_json::from_value::<DomesticConstructionDeclaration>(persistent)
+            .expect("persistent execution must parse");
+
+        assert_eq!(
+            parsed.steps[0].execution,
+            DomesticConstructionExecution::Persistent
+        );
     }
 }

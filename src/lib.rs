@@ -12,6 +12,7 @@ pub mod runtime_identity;
 pub mod spell_world;
 
 pub mod domestic_construction;
+pub mod domestic_dynamic_readonly_authority;
 pub mod domestic_external_data_authority;
 pub mod domestic_filesystem_boundary;
 pub mod domestic_platform_authority;
@@ -26,3 +27,4 @@ pub mod domestic_authority_supply;
 
 pub mod domestic_authority_supply_process;
 pub mod domestic_platform_control;
+pub mod domestic_runtime_manifest_authority;

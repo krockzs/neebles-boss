@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -15,6 +15,7 @@ pub struct FilesystemBoundaryPlan {
     pub root: PathBuf,
     pub readonly_data: Vec<ExternalDataAuthorityDescriptor>,
     pub writable_data: Vec<WritableDataGrant>,
+    pub environment: BTreeMap<String, String>,
     pub mount_proc: bool,
     pub mount_dev: bool,
     pub mount_tmp: bool,
@@ -60,6 +61,7 @@ pub fn compose_filesystem_boundary_plan(
     platform: &PlatformAuthorityDescriptor,
     root: &Path,
     readonly_data: &[ExternalDataAuthorityDescriptor],
+    environment: &BTreeMap<String, String>,
     mount_proc: bool,
     mount_dev: bool,
     mount_tmp: bool,
@@ -114,6 +116,7 @@ pub fn compose_filesystem_boundary_plan(
         root: root.to_path_buf(),
         readonly_data: readonly_data.to_vec(),
         writable_data: Vec::new(),
+        environment: environment.clone(),
         mount_proc,
         mount_dev,
         mount_tmp,
@@ -126,6 +129,7 @@ pub fn compose_filesystem_boundary_plan_with_writable_data(
     root: &Path,
     readonly_data: &[ExternalDataAuthorityDescriptor],
     writable_data: &[WritableDataGrant],
+    environment: &BTreeMap<String, String>,
     mount_proc: bool,
     mount_dev: bool,
     mount_tmp: bool,
@@ -135,6 +139,7 @@ pub fn compose_filesystem_boundary_plan_with_writable_data(
         platform,
         root,
         readonly_data,
+        environment,
         mount_proc,
         mount_dev,
         mount_tmp,
@@ -199,6 +204,24 @@ pub fn build_filesystem_boundary_command(
             .arg("--writable-data")
             .arg(&grant.source)
             .arg(&grant.destination);
+    }
+
+    for (key, value) in &plan.environment {
+        if key.is_empty()
+            || !key.chars().enumerate().all(|(index, character)| {
+                if index == 0 {
+                    character == '_' || character.is_ascii_alphabetic()
+                } else {
+                    character == '_' || character.is_ascii_alphanumeric()
+                }
+            })
+        {
+            return Err(format!(
+                "filesystem boundary environment key is invalid: {key}"
+            ));
+        }
+
+        command.arg("--environment").arg(key).arg(value);
     }
 
     if plan.mount_proc {
@@ -318,6 +341,7 @@ mod tests {
             &platform,
             &world,
             &[],
+            &BTreeMap::new(),
             true,
             true,
             true,
@@ -331,6 +355,7 @@ mod tests {
             &platform,
             &world,
             &[dns.clone()],
+            &BTreeMap::new(),
             true,
             true,
             true,
@@ -341,6 +366,83 @@ mod tests {
         assert_eq!(with_grant.readonly_data, vec![dns]);
 
         fs::remove_dir_all(&base).expect("fixture must clean");
+    }
+
+    #[test]
+    fn boundary_command_projects_only_explicit_environment_through_neebles_protocol() {
+        let platform = test_platform_authority_descriptor(
+            "platform.filesystem_boundary".to_string(),
+            PathBuf::from("/usr/lib/neebles/platform/authority/fixture.json"),
+            FILESYSTEM_BOUNDARY_PROTOCOL_V1.to_string(),
+            PathBuf::from("/usr/lib/neebles/platform/bin/fixture-provider"),
+        );
+
+        let environment = BTreeMap::from([
+            ("DISPLAY".to_string(), ":0".to_string()),
+            ("XDG_RUNTIME_DIR".to_string(), "/run/user/1000".to_string()),
+        ]);
+
+        let plan = compose_filesystem_boundary_plan(
+            &platform,
+            Path::new("/tmp"),
+            &[],
+            &environment,
+            false,
+            false,
+            false,
+            None,
+        )
+        .expect("explicit environment must compose");
+
+        let command = build_filesystem_boundary_command(&plan, Path::new("/usr/bin/python3"), &[])
+            .expect("boundary command must build");
+
+        let args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(args
+            .windows(3)
+            .any(|window| { window == ["--environment", "DISPLAY", ":0"] }));
+
+        assert!(args
+            .windows(3)
+            .any(|window| { window == ["--environment", "XDG_RUNTIME_DIR", "/run/user/1000"] }));
+
+        assert!(
+            !args.iter().any(|value| value == "--setenv"),
+            "Boss must speak NEEBLES boundary protocol, not backend bwrap protocol",
+        );
+    }
+
+    #[test]
+    fn boundary_command_rejects_invalid_environment_key() {
+        let platform = test_platform_authority_descriptor(
+            "platform.filesystem_boundary".to_string(),
+            PathBuf::from("/usr/lib/neebles/platform/authority/fixture.json"),
+            FILESYSTEM_BOUNDARY_PROTOCOL_V1.to_string(),
+            PathBuf::from("/usr/lib/neebles/platform/bin/fixture-provider"),
+        );
+
+        let environment = BTreeMap::from([("INVALID=KEY".to_string(), "value".to_string())]);
+
+        let plan = compose_filesystem_boundary_plan(
+            &platform,
+            Path::new("/tmp"),
+            &[],
+            &environment,
+            false,
+            false,
+            false,
+            None,
+        )
+        .expect("plan construction may retain opaque environment until command certification");
+
+        let error = build_filesystem_boundary_command(&plan, Path::new("/usr/bin/python3"), &[])
+            .expect_err("invalid environment key must be rejected");
+
+        assert!(error.contains("environment"));
     }
 
     #[test]
@@ -366,6 +468,7 @@ mod tests {
             &platform,
             &world,
             &[],
+            &BTreeMap::new(),
             true,
             true,
             true,
@@ -408,6 +511,58 @@ mod tests {
         );
 
         fs::remove_dir_all(&base).expect("fixture must clean");
+    }
+
+    #[test]
+    fn boundary_command_keeps_dynamic_readonly_on_readonly_protocol() {
+        let base = fixture_root("dynamic-readonly-command");
+        let world = base.join("rootfs");
+        let provider = base.join("provider");
+        let source = base.join("module");
+
+        fs::create_dir_all(&world).expect("world must exist");
+        fs::create_dir_all(&source).expect("source must exist");
+        fs::write(&provider, b"provider").expect("provider must exist");
+
+        let platform = test_platform_authority_descriptor(
+            "platform.filesystem_boundary".to_string(),
+            base.join("platform.json"),
+            FILESYSTEM_BOUNDARY_PROTOCOL_V1.to_string(),
+            provider,
+        );
+
+        let grant = ExternalDataAuthorityDescriptor {
+            authority: "modules.installed_runtime".to_string(),
+            descriptor_path: base.join("dynamic.json"),
+            source: source.clone(),
+            destination: PathBuf::from("/modules/test-module"),
+            access: "read_only".to_string(),
+        };
+
+        let plan = compose_filesystem_boundary_plan(
+            &platform,
+            &world,
+            &[grant],
+            &BTreeMap::new(),
+            false,
+            false,
+            false,
+            None,
+        )
+        .expect("dynamic readonly plan must compose");
+
+        let command = build_filesystem_boundary_command(&plan, Path::new("/usr/bin/tool"), &[])
+            .expect("boundary command must compose");
+
+        let args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(args.iter().any(|value| value == "--readonly-data"));
+        assert!(!args.iter().any(|value| value == "--writable-data"));
+
+        fs::remove_dir_all(base).expect("fixture must clean");
     }
 
     #[test]
@@ -470,6 +625,7 @@ mod tests {
             &platform,
             &world,
             &[first, second,],
+            &BTreeMap::new(),
             true,
             true,
             true,
@@ -503,6 +659,7 @@ mod tests {
             &platform,
             &world,
             &[],
+            &BTreeMap::new(),
             true,
             true,
             true,

@@ -120,6 +120,7 @@ fn main_result() -> Result<i32, String> {
         &world,
         &platform,
         &external,
+        &std::collections::BTreeMap::new(),
         true,
         true,
         true,

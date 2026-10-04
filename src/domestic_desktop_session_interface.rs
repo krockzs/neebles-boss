@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use crate::domestic_authority_supply::build_authority_grant_set;
 use crate::domestic_capability_provider::resolve_platform_capability;
@@ -14,11 +15,24 @@ pub const XDG_RUNTIME_DIR_KEY: &str = "XDG_RUNTIME_DIR";
 
 pub const DBUS_SESSION_BUS_ADDRESS_KEY: &str = "DBUS_SESSION_BUS_ADDRESS";
 
+pub const DISPLAY_KEY: &str = "DISPLAY";
+
+pub const WAYLAND_DISPLAY_KEY: &str = "WAYLAND_DISPLAY";
+
+pub const XAUTHORITY_KEY: &str = "XAUTHORITY";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopSessionReadonlyPath {
+    pub source: PathBuf,
+    pub destination: PathBuf,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopSessionInterface {
     desktop_uid: libc::uid_t,
     desktop_gid: libc::gid_t,
     environment: BTreeMap<String, String>,
+    readonly_paths: Vec<DesktopSessionReadonlyPath>,
 }
 
 impl DesktopSessionInterface {
@@ -32,6 +46,10 @@ impl DesktopSessionInterface {
 
     pub fn environment(&self) -> &BTreeMap<String, String> {
         &self.environment
+    }
+
+    pub fn readonly_paths(&self) -> &[DesktopSessionReadonlyPath] {
+        &self.readonly_paths
     }
 
     pub fn runtime_dir(&self) -> &str {
@@ -51,25 +69,106 @@ fn explicit_identity_inputs(
     desktop_uid: libc::uid_t,
     desktop_gid: libc::gid_t,
 ) -> BTreeMap<String, String> {
-    BTreeMap::from([
+    let mut inputs = BTreeMap::from([
         ("NEEBLES_DESKTOP_UID".to_string(), desktop_uid.to_string()),
         ("NEEBLES_DESKTOP_GID".to_string(), desktop_gid.to_string()),
-    ])
+    ]);
+
+    for key in [DISPLAY_KEY, WAYLAND_DISPLAY_KEY, XAUTHORITY_KEY] {
+        if let Some(value) = std::env::var_os(key) {
+            let value = value.to_string_lossy().into_owned();
+
+            if !value.trim().is_empty() {
+                inputs.insert(key.to_string(), value);
+            }
+        }
+    }
+
+    inputs
+}
+
+fn desktop_session_readonly_paths(
+    environment: &BTreeMap<String, String>,
+) -> Result<Vec<DesktopSessionReadonlyPath>, String> {
+    let runtime_dir = PathBuf::from(
+        environment
+            .get(XDG_RUNTIME_DIR_KEY)
+            .ok_or_else(|| "desktop session missing XDG_RUNTIME_DIR".to_string())?,
+    );
+
+    let bus_address = environment
+        .get(DBUS_SESSION_BUS_ADDRESS_KEY)
+        .ok_or_else(|| "desktop session missing DBUS_SESSION_BUS_ADDRESS".to_string())?;
+
+    let bus_path = bus_address
+        .strip_prefix("unix:path=")
+        .ok_or_else(|| "desktop session bus address is not unix:path".to_string())?;
+
+    let mut paths = Vec::<DesktopSessionReadonlyPath>::new();
+
+    let mut push_path = |path: PathBuf| {
+        if !paths.iter().any(|entry| entry.source == path) {
+            paths.push(DesktopSessionReadonlyPath {
+                source: path.clone(),
+                destination: path,
+            });
+        }
+    };
+
+    push_path(PathBuf::from(bus_path));
+
+    if let Some(wayland) = environment.get(WAYLAND_DISPLAY_KEY) {
+        push_path(runtime_dir.join(wayland));
+    }
+
+    if let Some(xauthority) = environment.get(XAUTHORITY_KEY) {
+        push_path(PathBuf::from(xauthority));
+    }
+
+    if let Some(display) = environment.get(DISPLAY_KEY) {
+        let number = display
+            .strip_prefix(":")
+            .ok_or_else(|| format!("desktop session DISPLAY is not local: {display}"))?;
+
+        if number.is_empty() || !number.chars().all(|character| character.is_ascii_digit()) {
+            return Err(format!(
+                "desktop session DISPLAY does not contain a numeric display: {display}"
+            ));
+        }
+
+        push_path(PathBuf::from("/tmp/.X11-unix").join(format!("X{number}")));
+    }
+
+    Ok(paths)
 }
 
 fn validate_desktop_session_values(
     values: BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, String> {
-    let expected = BTreeSet::from([
+    let required = BTreeSet::from([
         XDG_RUNTIME_DIR_KEY.to_string(),
         DBUS_SESSION_BUS_ADDRESS_KEY.to_string(),
     ]);
 
+    let allowed = BTreeSet::from([
+        XDG_RUNTIME_DIR_KEY.to_string(),
+        DBUS_SESSION_BUS_ADDRESS_KEY.to_string(),
+        DISPLAY_KEY.to_string(),
+        WAYLAND_DISPLAY_KEY.to_string(),
+        XAUTHORITY_KEY.to_string(),
+    ]);
+
     let actual = values.keys().cloned().collect::<BTreeSet<_>>();
 
-    if actual != expected {
+    if !required.is_subset(&actual) {
         return Err(format!(
-            "desktop session interface values mismatch: expected={expected:?} actual={actual:?}"
+            "desktop session interface missing required values: required={required:?} actual={actual:?}"
+        ));
+    }
+
+    if !actual.is_subset(&allowed) {
+        return Err(format!(
+            "desktop session interface contains unauthorized values: allowed={allowed:?} actual={actual:?}"
         ));
     }
 
@@ -138,11 +237,13 @@ where
     let values = resolver(descriptor, &inputs)?;
 
     let environment = validate_desktop_session_values(values)?;
+    let readonly_paths = desktop_session_readonly_paths(&environment)?;
 
     Ok(DesktopSessionInterface {
         desktop_uid,
         desktop_gid,
         environment,
+        readonly_paths,
     })
 }
 
@@ -227,7 +328,30 @@ mod tests {
                 Some("1001"),
             );
 
-            assert_eq!(inputs.len(), 2);
+            let allowed_inputs = BTreeSet::from([
+                "NEEBLES_DESKTOP_UID".to_string(),
+                "NEEBLES_DESKTOP_GID".to_string(),
+                DISPLAY_KEY.to_string(),
+                WAYLAND_DISPLAY_KEY.to_string(),
+                XAUTHORITY_KEY.to_string(),
+            ]);
+
+            let actual_inputs = inputs.keys().cloned().collect::<BTreeSet<_>>();
+
+            assert!(
+                actual_inputs.is_subset(&allowed_inputs),
+                "desktop session resolver received unauthorized inputs: {actual_inputs:?}",
+            );
+
+            assert!(
+                actual_inputs.contains("NEEBLES_DESKTOP_UID"),
+                "desktop session resolver must receive desktop UID",
+            );
+
+            assert!(
+                actual_inputs.contains("NEEBLES_DESKTOP_GID"),
+                "desktop session resolver must receive desktop GID",
+            );
 
             Ok(valid_values())
         })
@@ -286,7 +410,7 @@ mod tests {
             .expect_err("missing protocol value must fail");
 
         assert!(
-            error.contains("values mismatch"),
+            error.contains("missing required values"),
             "unexpected error: {error}"
         );
     }
@@ -306,7 +430,7 @@ mod tests {
             .expect_err("extra protocol value must fail");
 
         assert!(
-            error.contains("values mismatch"),
+            error.contains("unauthorized values"),
             "unexpected error: {error}"
         );
     }

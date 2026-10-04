@@ -1,6 +1,4 @@
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Read;
@@ -8,39 +6,14 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use crate::module_material::{
+    parse_material_recipe, valid_module_id, MaterialRecipe, PackageRequirement,
+};
+
 const CUSTOM_REPOSITORY: &str = "krockzs/neebles-custom";
 const CUSTOM_REPOSITORY_GIT: &str = "https://github.com/krockzs/neebles-custom.git";
 const CUSTOM_BRANCH_CANDIDATES: [&str; 2] = ["main", "master"];
 const DOMESTIC_WORKSPACE_AUTHORITY: &str = "neebles.domestic_workspace";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PackageSelector {
-    filename: String,
-    sha256: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PackageRequirement {
-    filename: String,
-    sha256: String,
-    mode: u32,
-}
-
-#[derive(Debug, Deserialize)]
-struct MaterialManifest {
-    module: String,
-    version: String,
-    entries: Vec<MaterialManifestEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MaterialManifestEntry {
-    path: String,
-    #[serde(rename = "type")]
-    kind: String,
-    mode: String,
-    sha256: Option<String>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModulePreinstallReport {
@@ -51,195 +24,14 @@ pub struct ModulePreinstallReport {
     pub downloaded: usize,
 }
 
-fn valid_module_id(value: &str) -> bool {
-    !value.is_empty()
-        && value != "."
-        && value != ".."
-        && value.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
-        })
-}
-
-fn valid_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|value| value.is_ascii_hexdigit())
-}
-
-fn valid_single_filename(value: &str) -> bool {
-    if value.is_empty() || value == "." || value == ".." {
-        return false;
-    }
-
-    let path = Path::new(value);
-
-    !path.is_absolute()
-        && path.components().count() == 1
-        && path.file_name().and_then(|name| name.to_str()) == Some(value)
-}
-
-fn parse_mode(value: &str) -> Result<u32, String> {
-    let digits = value
-        .strip_prefix("0o")
-        .ok_or_else(|| format!("material mode must use 0o notation: {value}"))?;
-
-    let mode = u32::from_str_radix(digits, 8)
-        .map_err(|error| format!("invalid material mode '{value}': {error}"))?;
-
-    if mode > 0o7777 {
-        return Err(format!("material mode is outside supported range: {value}"));
-    }
-
-    Ok(mode)
-}
-
-fn parse_packages_tsv(payload: &str) -> Result<BTreeMap<String, PackageSelector>, String> {
-    let mut packages = BTreeMap::new();
-
-    for (index, raw) in payload.lines().enumerate() {
-        let line = raw.trim();
-
-        if line.is_empty() {
-            continue;
-        }
-
-        let fields = line.split('\t').collect::<Vec<_>>();
-
-        if fields.len() != 5 {
-            return Err(format!(
-                "invalid module package selector line {}",
-                index + 1
-            ));
-        }
-
-        let package = fields[0].trim();
-        let version = fields[1].trim();
-        let arch = fields[2].trim();
-        let filename = fields[3].trim();
-        let sha256 = fields[4].trim();
-
-        if package.is_empty() || version.is_empty() || arch.is_empty() {
-            return Err(format!(
-                "incomplete module package selector line {}",
-                index + 1
-            ));
-        }
-
-        if !valid_single_filename(filename) {
-            return Err(format!("unsafe module package filename: {filename}"));
-        }
-
-        if !valid_sha256(sha256) {
-            return Err(format!("invalid module package sha256 for {filename}"));
-        }
-
-        let selector = PackageSelector {
-            filename: filename.to_string(),
-            sha256: sha256.to_ascii_lowercase(),
-        };
-
-        if packages.insert(filename.to_string(), selector).is_some() {
-            return Err(format!("duplicate module package filename: {filename}"));
-        }
-    }
-
-    Ok(packages)
-}
-
-fn validate_material_recipe(
-    module_id: &str,
-    module_version: &str,
-    selectors: &BTreeMap<String, PackageSelector>,
-    payload: &[u8],
-) -> Result<Vec<PackageRequirement>, String> {
-    let manifest: MaterialManifest = serde_json::from_slice(payload)
-        .map_err(|error| format!("invalid module material manifest JSON: {error}"))?;
-
-    if manifest.module != module_id {
-        return Err(format!(
-            "module material manifest identity mismatch: expected={module_id} actual={}",
-            manifest.module
-        ));
-    }
-
-    if manifest.version != module_version {
-        return Err(format!(
-            "module material manifest version mismatch: module={module_version} material={}",
-            manifest.version
-        ));
-    }
-
-    let mut entries = BTreeMap::<String, &MaterialManifestEntry>::new();
-
-    for entry in &manifest.entries {
-        let Some(filename) = entry.path.strip_prefix("packages/") else {
-            continue;
-        };
-
-        if !valid_single_filename(filename) {
-            return Err(format!(
-                "unsafe package path in module material manifest: {}",
-                entry.path
-            ));
-        }
-
-        if entries.insert(filename.to_string(), entry).is_some() {
-            return Err(format!(
-                "duplicate package entry in module material manifest: {filename}"
-            ));
-        }
-    }
-
-    let declared = selectors.keys().cloned().collect::<Vec<_>>();
-    let manifested = entries.keys().cloned().collect::<Vec<_>>();
-
-    if declared != manifested {
-        return Err(format!(
-            "module package membership mismatch: selector={declared:?} manifest={manifested:?}"
-        ));
-    }
-
-    let mut requirements = Vec::with_capacity(selectors.len());
-
-    for selector in selectors.values() {
-        let entry = entries.get(&selector.filename).ok_or_else(|| {
-            format!(
-                "module material manifest is missing package {}",
-                selector.filename
-            )
-        })?;
-
-        if entry.kind != "file" {
-            return Err(format!(
-                "module package entry is not a file: {}",
-                selector.filename
-            ));
-        }
-
-        let manifest_sha = entry
-            .sha256
-            .as_deref()
-            .ok_or_else(|| {
-                format!(
-                    "module package manifest sha256 missing: {}",
-                    selector.filename
-                )
-            })?
-            .to_ascii_lowercase();
-
-        if manifest_sha != selector.sha256 {
-            return Err(format!(
-                "module package sha256 authority mismatch: {}",
-                selector.filename
-            ));
-        }
-
-        requirements.push(PackageRequirement {
-            filename: selector.filename.clone(),
-            sha256: selector.sha256.clone(),
-            mode: parse_mode(&entry.mode)?,
-        });
-    }
-
-    Ok(requirements)
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedModulePackages {
+    pub(crate) report: ModulePreinstallReport,
+    pub(crate) recipe: MaterialRecipe,
+    pub(crate) package_pool: PathBuf,
+    pub(crate) shared_rootfs: PathBuf,
+    pub(crate) runtime_manifest_payload: Vec<u8>,
+    pub(crate) shared_runtime_manifest: PathBuf,
 }
 
 fn resolve_custom_revision() -> Result<String, String> {
@@ -385,7 +177,7 @@ fn verify_package(path: &Path, expected_sha256: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-fn authorized_package_pool() -> Result<PathBuf, String> {
+fn authorized_material_territory() -> Result<(PathBuf, PathBuf, PathBuf), String> {
     let registry =
         neebles_backend::domestic_authority_supply_process::process_supplied_authority_registry()?;
 
@@ -402,15 +194,37 @@ fn authorized_package_pool() -> Result<PathBuf, String> {
             DOMESTIC_WORKSPACE_AUTHORITY,
         )?;
 
-    let pool = descriptor.root.join("modules").join("packages");
+    let modules = descriptor.root.join("modules");
+    let packages = modules.join("packages");
+    let rootfs = modules.join("rootfs");
+    let runtime_manifest = modules.join("domestic-runtime.json");
 
-    let grant = neebles_backend::domestic_writable_data_authority::grant_writable_data_subpath(
-        &descriptor,
-        &pool,
-        &pool,
-    )?;
+    let packages_grant =
+        neebles_backend::domestic_writable_data_authority::grant_writable_data_subpath(
+            &descriptor,
+            &packages,
+            &packages,
+        )?;
 
-    Ok(grant.source)
+    let rootfs_grant =
+        neebles_backend::domestic_writable_data_authority::grant_writable_data_subpath(
+            &descriptor,
+            &rootfs,
+            &rootfs,
+        )?;
+
+    let runtime_manifest_grant =
+        neebles_backend::domestic_writable_data_authority::grant_writable_data_subpath(
+            &descriptor,
+            &runtime_manifest,
+            &runtime_manifest,
+        )?;
+
+    Ok((
+        packages_grant.source,
+        rootfs_grant.source,
+        runtime_manifest_grant.source,
+    ))
 }
 
 fn download_package(
@@ -500,7 +314,7 @@ fn download_package(
     }
 }
 
-pub fn ensure_module_packages(module_id: &str) -> Result<ModulePreinstallReport, String> {
+pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePackages, String> {
     if !valid_module_id(module_id) {
         return Err(format!("invalid module id for preinstall: {module_id}"));
     }
@@ -518,19 +332,26 @@ pub fn ensure_module_packages(module_id: &str) -> Result<ModulePreinstallReport,
     let packages_text = String::from_utf8(packages_payload)
         .map_err(|error| format!("module package selector is not UTF-8: {error}"))?;
 
-    let selectors = parse_packages_tsv(&packages_text)?;
-
     let manifest_payload = fetch_remote_bytes(&revision, &manifest_path, 30)?;
 
-    let requirements =
-        validate_material_recipe(module_id, &installed.version, &selectors, &manifest_payload)?;
+    let recipe = parse_material_recipe(
+        module_id,
+        &installed.version,
+        &packages_text,
+        &manifest_payload,
+    )?;
 
-    let pool = authorized_package_pool()?;
+    let requirements = &recipe.packages;
+
+    let runtime_manifest_payload =
+        fetch_remote_bytes(&revision, "runtime/modules/domestic-runtime.json", 30)?;
+
+    let (pool, shared_rootfs, shared_runtime_manifest) = authorized_material_territory()?;
 
     let mut reused = 0usize;
     let mut downloaded = 0usize;
 
-    for requirement in &requirements {
+    for requirement in requirements {
         let target = pool.join(&requirement.filename);
 
         if verify_package(&target, &requirement.sha256)? {
@@ -545,106 +366,18 @@ pub fn ensure_module_packages(module_id: &str) -> Result<ModulePreinstallReport,
         }
     }
 
-    Ok(ModulePreinstallReport {
-        module: module_id.to_string(),
-        custom_revision: revision,
-        required: requirements.len(),
-        reused,
-        downloaded,
+    Ok(PreparedModulePackages {
+        report: ModulePreinstallReport {
+            module: module_id.to_string(),
+            custom_revision: revision,
+            required: requirements.len(),
+            reused,
+            downloaded,
+        },
+        recipe,
+        package_pool: pool,
+        shared_rootfs,
+        runtime_manifest_payload,
+        shared_runtime_manifest,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sha(character: char) -> String {
-        std::iter::repeat_n(character, 64).collect()
-    }
-
-    #[test]
-    fn package_selector_carries_filename_and_sha() {
-        let payload = format!(
-            "python3.13-minimal\t3.13.5\tamd64\tpython.deb\t{}\n",
-            sha('a')
-        );
-
-        let parsed = parse_packages_tsv(&payload).expect("valid package selector must parse");
-
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed["python.deb"].sha256, sha('a'));
-    }
-
-    #[test]
-    fn package_selector_rejects_path_escape() {
-        let payload = format!(
-            "python3.13-minimal\t3.13.5\tamd64\t../python.deb\t{}\n",
-            sha('a')
-        );
-
-        let error =
-            parse_packages_tsv(&payload).expect_err("package selector path escape must fail");
-
-        assert!(error.contains("unsafe module package filename"));
-    }
-
-    #[test]
-    fn material_recipe_requires_same_package_sha() {
-        let payload = format!(
-            r#"{{
-                "module": "fixture",
-                "version": "1.0.0",
-                "entries": [
-                    {{
-                        "path": "packages/python.deb",
-                        "type": "file",
-                        "mode": "0o664",
-                        "sha256": "{}"
-                    }}
-                ]
-            }}"#,
-            sha('b')
-        );
-
-        let selectors =
-            parse_packages_tsv(&format!("python\t1\tamd64\tpython.deb\t{}\n", sha('a')))
-                .expect("fixture selector must parse");
-
-        let error = validate_material_recipe("fixture", "1.0.0", &selectors, payload.as_bytes())
-            .expect_err("divergent package sha must fail");
-
-        assert!(error.contains("sha256 authority mismatch"));
-    }
-
-    #[test]
-    fn material_recipe_accepts_matching_membership() {
-        let expected_sha = sha('a');
-
-        let payload = format!(
-            r#"{{
-                "module": "fixture",
-                "version": "1.0.0",
-                "entries": [
-                    {{
-                        "path": "packages/python.deb",
-                        "type": "file",
-                        "mode": "0o664",
-                        "sha256": "{expected_sha}"
-                    }}
-                ]
-            }}"#
-        );
-
-        let selectors =
-            parse_packages_tsv(&format!("python\t1\tamd64\tpython.deb\t{expected_sha}\n"))
-                .expect("fixture selector must parse");
-
-        let requirements =
-            validate_material_recipe("fixture", "1.0.0", &selectors, payload.as_bytes())
-                .expect("matching material recipe must validate");
-
-        assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].filename, "python.deb");
-        assert_eq!(requirements[0].mode, 0o664);
-    }
 }

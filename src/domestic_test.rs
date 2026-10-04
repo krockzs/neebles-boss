@@ -3862,11 +3862,15 @@ fn execute_workspace_execution_case(
     let chdir_state = if chdir.is_some() { "present" } else { "absent" };
 
     let request = WorkspaceExecutionRequest {
+        desktop_identity: None,
         manifest_path,
         world,
         platform_descriptor_path,
         readonly,
+        dynamic_readonly: Vec::new(),
         writable,
+        session_readonly: Vec::new(),
+        environment: std::collections::BTreeMap::new(),
         mount_proc: false,
         mount_dev: false,
         mount_tmp: false,

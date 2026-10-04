@@ -36,6 +36,7 @@ pub fn command(world_name: &str, arguments: &[OsString]) -> Result<Command, Stri
             world_name,
             &platform,
             &[dns],
+            &std::collections::BTreeMap::new(),
             true,
             true,
             true,
