@@ -201,11 +201,13 @@ async fn execute_workspace_operation(
 
     let execution = declaration.step(&step)?.execution;
 
-    let mut command = neebles_backend::domestic_construction::build_construction_step_command(
+    let prepared = neebles_backend::domestic_construction::build_construction_step_command(
         &declaration,
         &step,
         registry,
     )?;
+
+    let (command, runtime_lease) = prepared.into_parts();
 
     match execution {
         neebles_backend::domestic_construction::DomesticConstructionExecution::Foreground => {
@@ -220,6 +222,8 @@ async fn execute_workspace_operation(
                 })?;
 
             let exit_code = status.code().unwrap_or(125);
+
+            drop(runtime_lease);
 
             if !status.success() {
                 return Err(format!(
@@ -237,6 +241,8 @@ async fn execute_workspace_operation(
         }
 
         neebles_backend::domestic_construction::DomesticConstructionExecution::Persistent => {
+            let mut command = command;
+
             let mut child = command.spawn().map_err(|error| {
                 format!(
                     "persistent domestic workspace failed to start: subject={} step={} error={}",
@@ -247,6 +253,7 @@ async fn execute_workspace_operation(
             let pid = child.id();
 
             std::thread::spawn(move || {
+                let _runtime_lease = runtime_lease;
                 let _ = child.wait();
             });
 

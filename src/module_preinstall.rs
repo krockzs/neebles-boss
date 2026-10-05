@@ -2,18 +2,17 @@ use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Read;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::module_material::{
-    parse_material_recipe, valid_module_id, MaterialRecipe, PackageRequirement,
+use neebles_backend::module_material::{
+    parse_material_layer, parse_material_recipe, valid_module_id, PackageRequirement,
 };
+use neebles_backend::module_material_binding::MaterialBindingInput;
 
 const CUSTOM_REPOSITORY: &str = "krockzs/neebles-custom";
 const CUSTOM_REPOSITORY_GIT: &str = "https://github.com/krockzs/neebles-custom.git";
 const CUSTOM_BRANCH_CANDIDATES: [&str; 2] = ["main", "master"];
-const DOMESTIC_WORKSPACE_AUTHORITY: &str = "neebles.domestic_workspace";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModulePreinstallReport {
@@ -27,11 +26,8 @@ pub struct ModulePreinstallReport {
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedModulePackages {
     pub(crate) report: ModulePreinstallReport,
-    pub(crate) recipe: MaterialRecipe,
-    pub(crate) package_pool: PathBuf,
-    pub(crate) shared_rootfs: PathBuf,
-    pub(crate) runtime_manifest_payload: Vec<u8>,
-    pub(crate) shared_runtime_manifest: PathBuf,
+    pub(crate) binding_input: MaterialBindingInput,
+    pub(crate) material_root: PathBuf,
 }
 
 fn resolve_custom_revision() -> Result<String, String> {
@@ -177,59 +173,10 @@ fn verify_package(path: &Path, expected_sha256: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-fn authorized_material_territory() -> Result<(PathBuf, PathBuf, PathBuf), String> {
-    let registry =
-        neebles_backend::domestic_authority_supply_process::process_supplied_authority_registry()?;
-
-    let grants = neebles_backend::domestic_authority_supply::build_authority_grant_set(
-        registry,
-        [DOMESTIC_WORKSPACE_AUTHORITY],
-    )?;
-
-    let descriptor_path = grants.descriptor_path(registry, DOMESTIC_WORKSPACE_AUTHORITY)?;
-
-    let descriptor =
-        neebles_backend::domestic_writable_data_authority::load_writable_data_authority_descriptor(
-            &descriptor_path,
-            DOMESTIC_WORKSPACE_AUTHORITY,
-        )?;
-
-    let modules = descriptor.root.join("modules");
-    let packages = modules.join("packages");
-    let rootfs = modules.join("rootfs");
-    let runtime_manifest = modules.join("domestic-runtime.json");
-
-    let packages_grant =
-        neebles_backend::domestic_writable_data_authority::grant_writable_data_subpath(
-            &descriptor,
-            &packages,
-            &packages,
-        )?;
-
-    let rootfs_grant =
-        neebles_backend::domestic_writable_data_authority::grant_writable_data_subpath(
-            &descriptor,
-            &rootfs,
-            &rootfs,
-        )?;
-
-    let runtime_manifest_grant =
-        neebles_backend::domestic_writable_data_authority::grant_writable_data_file_subpath(
-            &descriptor,
-            &runtime_manifest,
-            &runtime_manifest,
-        )?;
-
-    Ok((
-        packages_grant.source,
-        rootfs_grant.source,
-        runtime_manifest_grant.source,
-    ))
-}
-
 fn download_package(
     revision: &str,
     pool: &Path,
+    remote_pool: &str,
     requirement: &PackageRequirement,
 ) -> Result<bool, String> {
     let target = pool.join(&requirement.filename);
@@ -249,7 +196,7 @@ fn download_package(
         .reopen()
         .map_err(|error| format!("could not reopen module package staging file: {error}"))?;
 
-    let remote_path = format!("runtime/modules/packages/{}", requirement.filename);
+    let remote_path = format!("{remote_pool}/{}", requirement.filename);
 
     let url = custom_raw_url(revision, &remote_path);
 
@@ -277,17 +224,6 @@ fn download_package(
         ));
     }
 
-    fs::set_permissions(
-        temporary.path(),
-        fs::Permissions::from_mode(requirement.mode),
-    )
-    .map_err(|error| {
-        format!(
-            "could not apply module package mode to '{}': {error}",
-            requirement.filename
-        )
-    })?;
-
     if !verify_package(temporary.path(), &requirement.sha256)? {
         return Err(format!(
             "downloaded module package disappeared before verification: {}",
@@ -314,40 +250,12 @@ fn download_package(
     }
 }
 
-pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePackages, String> {
-    if !valid_module_id(module_id) {
-        return Err(format!("invalid module id for preinstall: {module_id}"));
-    }
-
-    let installed = crate::modules::installed_module_manifest(module_id)?;
-
-    let revision = resolve_custom_revision()?;
-
-    let packages_path = format!("runtime/manifests/modules/{module_id}.packages.tsv");
-
-    let manifest_path = format!("runtime/manifests/modules/{module_id}.manifest.json");
-
-    let packages_payload = fetch_remote_bytes(&revision, &packages_path, 30)?;
-
-    let packages_text = String::from_utf8(packages_payload)
-        .map_err(|error| format!("module package selector is not UTF-8: {error}"))?;
-
-    let manifest_payload = fetch_remote_bytes(&revision, &manifest_path, 30)?;
-
-    let recipe = parse_material_recipe(
-        module_id,
-        &installed.version,
-        &packages_text,
-        &manifest_payload,
-    )?;
-
-    let requirements = &recipe.packages;
-
-    let runtime_manifest_payload =
-        fetch_remote_bytes(&revision, "runtime/modules/domestic-runtime.json", 30)?;
-
-    let (pool, shared_rootfs, shared_runtime_manifest) = authorized_material_territory()?;
-
+fn ensure_package_requirements(
+    revision: &str,
+    pool: &Path,
+    remote_pool: &str,
+    requirements: &[PackageRequirement],
+) -> Result<(usize, usize), String> {
     let mut reused = 0usize;
     let mut downloaded = 0usize;
 
@@ -359,25 +267,113 @@ pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePa
             continue;
         }
 
-        if download_package(&revision, &pool, requirement)? {
+        if download_package(revision, pool, remote_pool, requirement)? {
             downloaded += 1;
         } else {
             reused += 1;
         }
     }
 
+    Ok((reused, downloaded))
+}
+
+pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePackages, String> {
+    if !valid_module_id(module_id) {
+        return Err(format!("invalid module id for preinstall: {module_id}"));
+    }
+
+    let installed = crate::modules::installed_module_manifest(module_id)?;
+
+    let revision = resolve_custom_revision()?;
+
+    let essentials_payload = fetch_remote_bytes(
+        &revision,
+        "runtime/manifests/modules/essentials.packages.tsv",
+        30,
+    )?;
+
+    let essentials_text = std::str::from_utf8(&essentials_payload)
+        .map_err(|error| format!("Essential package selector is not UTF-8: {error}"))?;
+
+    let essentials_manifest_payload = fetch_remote_bytes(
+        &revision,
+        "runtime/manifests/modules/essentials.manifest.json",
+        30,
+    )?;
+
+    let essential_layer =
+        parse_material_layer("Essential", essentials_text, &essentials_manifest_payload)?;
+
+    let packages_path = format!("runtime/manifests/modules/{module_id}.packages.tsv");
+    let manifest_path = format!("runtime/manifests/modules/{module_id}.manifest.json");
+
+    let packages_payload = fetch_remote_bytes(&revision, &packages_path, 30)?;
+
+    let packages_text = std::str::from_utf8(&packages_payload)
+        .map_err(|error| format!("module package selector is not UTF-8: {error}"))?;
+
+    let manifest_payload = fetch_remote_bytes(&revision, &manifest_path, 30)?;
+
+    let recipe = parse_material_recipe(
+        module_id,
+        &installed.version,
+        packages_text,
+        &manifest_payload,
+    )?;
+
+    for requirement in &recipe.packages {
+        if essential_layer
+            .packages
+            .iter()
+            .any(|essential| essential.filename.as_str() == requirement.filename.as_str())
+        {
+            return Err(format!(
+                "module package delta repeats Essential package: {}",
+                requirement.filename
+            ));
+        }
+    }
+
+    let runtime_manifest_payload =
+        fetch_remote_bytes(&revision, "runtime/modules/domestic-runtime.json", 30)?;
+
+    let territory =
+        neebles_backend::module_material_territory::resolve_module_material_territory()?;
+
+    let (essential_reused, essential_downloaded) = ensure_package_requirements(
+        &revision,
+        &territory.essential_package_pool,
+        "runtime/modules/packages/essentials",
+        &essential_layer.packages,
+    )?;
+
+    let (module_reused, module_downloaded) = ensure_package_requirements(
+        &revision,
+        &territory.package_pool,
+        "runtime/modules/packages",
+        &recipe.packages,
+    )?;
+
+    let binding_input = MaterialBindingInput {
+        module: module_id.to_string(),
+        version: installed.version.clone(),
+        custom_revision: revision.clone(),
+        essential_packages_payload: essentials_payload,
+        essential_manifest_payload: essentials_manifest_payload,
+        module_packages_payload: packages_payload,
+        module_manifest_payload: manifest_payload,
+        runtime_manifest_payload: runtime_manifest_payload.clone(),
+    };
+
     Ok(PreparedModulePackages {
         report: ModulePreinstallReport {
             module: module_id.to_string(),
             custom_revision: revision,
-            required: requirements.len(),
-            reused,
-            downloaded,
+            required: essential_layer.packages.len() + recipe.packages.len(),
+            reused: essential_reused + module_reused,
+            downloaded: essential_downloaded + module_downloaded,
         },
-        recipe,
-        package_pool: pool,
-        shared_rootfs,
-        runtime_manifest_payload,
-        shared_runtime_manifest,
+        binding_input,
+        material_root: territory.material_root,
     })
 }

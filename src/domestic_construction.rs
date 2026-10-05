@@ -8,9 +8,8 @@ use serde::Deserialize;
 use crate::domestic_authority_supply::{build_authority_grant_set, SuppliedAuthorityRegistry};
 use crate::domestic_platform_control::authenticate_platform_controlled_file;
 use crate::domestic_workspace_execution::{
-    build_workspace_execution_command, execute_workspace_execution_request,
-    WorkspaceDynamicReadonlyGrant, WorkspaceExecutionRequest, WorkspaceReadonlyGrant,
-    WorkspaceWritableGrant,
+    build_workspace_execution_command, WorkspaceDynamicReadonlyGrant, WorkspaceExecutionRequest,
+    WorkspaceReadonlyGrant, WorkspaceWritableGrant,
 };
 
 pub const DOMESTIC_CONSTRUCTION_SCHEMA: &str = "1";
@@ -511,14 +510,85 @@ pub fn project_construction_step(
     })
 }
 
+const MODULE_RUNTIME_AUTHORITY: &str = "modules.runtime";
+
+#[derive(Debug)]
+pub struct PreparedConstructionCommand {
+    command: std::process::Command,
+    runtime_lease: Option<crate::module_runtime_lease::ModuleRuntimeLease>,
+}
+
+impl PreparedConstructionCommand {
+    pub fn has_runtime_lease(&self) -> bool {
+        self.runtime_lease.is_some()
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (
+        std::process::Command,
+        Option<crate::module_runtime_lease::ModuleRuntimeLease>,
+    ) {
+        (self.command, self.runtime_lease)
+    }
+}
+
+impl std::ops::Deref for PreparedConstructionCommand {
+    type Target = std::process::Command;
+
+    fn deref(&self) -> &Self::Target {
+        &self.command
+    }
+}
+
+impl std::ops::DerefMut for PreparedConstructionCommand {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.command
+    }
+}
+
+fn project_construction_step_for_execution(
+    declaration: &DomesticConstructionDeclaration,
+    step_id: &str,
+    registry: &SuppliedAuthorityRegistry,
+) -> Result<
+    (
+        WorkspaceExecutionRequest,
+        Option<crate::module_runtime_lease::ModuleRuntimeLease>,
+    ),
+    String,
+> {
+    let mut request = project_construction_step(declaration, step_id, registry)?;
+
+    let step = declaration.step(step_id)?;
+
+    let runtime_lease = if step.runtime_authority == MODULE_RUNTIME_AUTHORITY {
+        let lease = crate::module_runtime_lease::create_module_runtime_lease(&declaration.subject)?;
+
+        request.manifest_path = lease.manifest_path().to_path_buf();
+
+        Some(lease)
+    } else {
+        None
+    };
+
+    Ok((request, runtime_lease))
+}
+
 pub fn build_construction_step_command(
     declaration: &DomesticConstructionDeclaration,
     step_id: &str,
     registry: &SuppliedAuthorityRegistry,
-) -> Result<std::process::Command, String> {
-    let request = project_construction_step(declaration, step_id, registry)?;
+) -> Result<PreparedConstructionCommand, String> {
+    let (request, runtime_lease) =
+        project_construction_step_for_execution(declaration, step_id, registry)?;
 
-    build_workspace_execution_command(&request)
+    let command = build_workspace_execution_command(&request)?;
+
+    Ok(PreparedConstructionCommand {
+        command,
+        runtime_lease,
+    })
 }
 
 pub fn execute_construction_step(
@@ -528,19 +598,30 @@ pub fn execute_construction_step(
 ) -> Result<i32, String> {
     let execution = declaration.step(step_id)?.execution;
 
-    let request = project_construction_step(declaration, step_id, registry)?;
+    let prepared = build_construction_step_command(declaration, step_id, registry)?;
 
     match execution {
-        DomesticConstructionExecution::Foreground => execute_workspace_execution_request(&request),
+        DomesticConstructionExecution::Foreground => {
+            let (mut command, runtime_lease) = prepared.into_parts();
+
+            let status = command
+                .status()
+                .map_err(|error| format!("could not execute domestic workspace: {error}"))?;
+
+            drop(runtime_lease);
+
+            Ok(status.code().unwrap_or(125))
+        }
 
         DomesticConstructionExecution::Persistent => {
-            let mut child = build_workspace_execution_command(&request)?
-                .spawn()
-                .map_err(|error| {
-                    format!("could not start persistent domestic workspace: {error}")
-                })?;
+            let (mut command, runtime_lease) = prepared.into_parts();
+
+            let mut child = command.spawn().map_err(|error| {
+                format!("could not start persistent domestic workspace: {error}")
+            })?;
 
             std::thread::spawn(move || {
+                let _runtime_lease = runtime_lease;
                 let _ = child.wait();
             });
 

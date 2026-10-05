@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** preparation for **1.0.25**
-**Latest published Boss release:** **1.0.22**
-**Current integration status (2026-10-04):** generic module architecture closed; Test Module connectivity path source-certified; Boss 1.0.25 release preparation and Fresh Live Test Module acceptance remain pending.
+**Current source line:** **1.0.25 preparation**
+**Latest published Boss release recorded by the repository:** **1.0.22**
+**Current integration status (2026-10-05):** **Point 1 CLOSED / GREEN.** MaterialBinding + RuntimeLease are the productive module-material architecture; the legacy persistent shared module rootfs/runtime-manifest model has been removed. **Point 2 remains pending. No new Boss release is claimed by this document.**
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -70,13 +70,23 @@ Host tools are never an implicit fallback authority.
 ## Ecosystem ownership
 
 ```text
-N.E.E.B.L.E.S. CUSTOM / Esbirro
-    -> certified domestic material
-    -> package membership
-    -> material integrity
-    -> domestic runtime worlds
-    -> construction declarations
-    -> controlled build worlds
+N.E.E.B.L.E.S. CUSTOM classic
+    -> certified Boss runtime corpus
+    -> certified Calamares runtime corpus
+    -> controlled Boss/Calamares build material
+
+N.E.E.B.L.E.S. CUSTOM V2
+    -> certified module package material
+    -> global Essential layer
+    -> per-module package deltas
+    -> per-module membership + integrity manifests
+    -> module domestic runtime/world truth
+    -> module Construction declaration truth
+
+N.E.E.B.L.E.S. Esbirro
+    -> controlled engineering/certification workspace
+    -> creation and certification of worlds/material
+    -> portable restoration of controlled laboratories
 
 N.E.E.B.L.E.S. OS
     -> platform authority semantics
@@ -85,7 +95,6 @@ N.E.E.B.L.E.S. OS
 
 N.E.E.B.L.E.S. BUILD
     -> image-side materialization
-    -> shared module territory
     -> recovery environment
     -> ISO composition
 
@@ -95,7 +104,8 @@ N.E.E.B.L.E.S. Boss
     -> registration
     -> grants
     -> Preinstall
-    -> materialization orchestration
+    -> MaterialBinding ownership
+    -> RuntimeLease ownership
     -> Lifecycle
     -> runtime IPC
     -> desktop integration
@@ -104,6 +114,8 @@ Module
     -> declares identity, contracts, lifecycle and intent
     -> implements its own behavior
 ```
+
+**CUSTOM classic and CUSTOM V2 are not interchangeable names.** Point 1 changed the module-material path owned by CUSTOM V2 and Boss; it did not redefine the classic Boss/Calamares corpus.
 
 ---
 
@@ -347,17 +359,117 @@ The host executable is not the authority.
 
 ## Module runtime
 
-The shared module runtime authority is supplied from the module material world.
+`modules.runtime` is a governed runtime authority, **not** a persistent shared rootfs.
 
-The current Test Module uses:
+The productive model is:
+
+```text
+permanent certified package pools
+        +
+persistent MaterialBinding for the installed module
+        -> modules.runtime execution
+        -> fresh RuntimeLease
+        -> Essential layer + module delta
+        -> authenticated domestic-runtime.json
+        -> generic Workspace execution
+        -> process exit
+        -> RuntimeLease drop
+```
+
+The current reference world remains:
 
 ```text
 modules.python3.13-tk
 ```
 
-That identity belongs to CUSTOM material truth, not to Boss source logic.
+That identity belongs to CUSTOM V2 material truth, not to Boss source logic. Boss does not gain Python/Tk-specific branches.
 
-Future module worlds can be added without creating `boss.python`, `boss.node`, `boss.java` or equivalent technology branches.
+### Essential layer
+
+Essential is a **global material layer**, not a fake module and not a module-specific recipe.
+
+The current certified split is:
+
+```text
+Essential                59 DEBs
+Test Module delta        32 DEBs
+```
+
+The delta must not duplicate material already owned by Essential merely because a module consumes it.
+
+### Persistent MaterialBinding
+
+After Preinstall, Boss persists a module-specific authenticated MaterialBinding containing the exact material authority needed to recreate the runtime later.
+
+Its identity binds at least:
+
+```text
+module identity
+installed module version
+CUSTOM V2 revision
+```
+
+The binding preserves authenticated authority blobs for Essential membership/integrity, module membership/integrity and the runtime manifest payload. It does **not** duplicate the `.deb` files themselves; those remain in permanent package pools.
+
+This prevents a future execution from accidentally combining an installed old module with unrelated "latest" module-runtime metadata.
+
+### Ephemeral RuntimeLease
+
+For `modules.runtime`, Construction uses the module subject to request a fresh RuntimeLease.
+
+A lease:
+
+```text
+loads the active MaterialBinding
+    -> creates a new private temporary territory
+    -> materializes Essential + module delta into lease/rootfs
+    -> writes the authenticated domestic-runtime.json
+    -> validates the runtime manifest
+    -> verifies manifest.root resolves to lease/rootfs
+    -> hands the absolute manifest to generic Workspace
+```
+
+The lease owns its temporary rootfs. Drop destroys it.
+
+Two concurrent executions receive physically independent leases. There is no global rootfs symlink swap and no mutable global runtime manifest.
+
+Lifetime is part of correctness:
+
+```text
+foreground
+    -> retain lease through command.status()
+
+persistent
+    -> move lease with the child waiter
+    -> retain through child.wait()
+```
+
+`modules.installed_runtime` remains a separate read-only authority for the installed module tree under `/opt/neebles/modules`. It must not be repurposed as `modules.runtime` or as the composed runtime rootfs.
+
+### Module material territories
+
+The productive Boss-side territories are:
+
+```text
+/opt/neebles-build/modules/packages/essentials/
+    -> permanent verified Essential DEB cache
+
+/opt/neebles-build/modules/packages/
+    -> permanent verified module-delta DEB cache
+
+/opt/neebles-build/modules/material/<module-id>/
+    -> persistent authenticated MaterialBinding
+
+/opt/neebles-build/modules/runtime-leases/
+    -> ephemeral independent runtime leases
+```
+
+The following legacy shape is **not** productive architecture:
+
+```text
+/opt/neebles-build/modules/rootfs
+shared mutable domestic-runtime.json
+```
 
 ---
 
@@ -403,21 +515,27 @@ Boss does not copy arbitrary domestic trees to manufacture authority.
 
 # Module Preinstall and materialization
 
-A module does **not** download or materialize its own package world.
+A module does **not** download, authenticate or materialize its own package world.
 
-Correct flow:
+The productive flow after Point 1 is:
 
 ```text
-module declares requirements
-    -> CUSTOM owns package membership and integrity truth
-    -> Boss Preinstall ensures exact required DEBs exist
-    -> Boss materializes required rootfs material
-    -> Lifecycle executes
+module declares requirement
+    -> CUSTOM V2 owns exact module material truth
+    -> Boss Preinstall authenticates the selected CUSTOM V2 revision
+    -> Boss validates Essential package membership + integrity
+    -> Boss validates module-delta package membership + integrity
+    -> Boss validates the module runtime manifest payload
+    -> Boss reuses/downloads exact certified DEBs into permanent pools
+    -> Boss produces MaterialBindingInput
+    -> install/update transaction activates the MaterialBinding
+    -> Lifecycle may execute
+    -> modules.runtime creates a RuntimeLease only when runtime is actually needed
 ```
 
-Preinstall is Boss responsibility.
+Preinstall **does not publish a composed shared module rootfs** and does not publish a mutable shared runtime manifest.
 
-CUSTOM package membership and material integrity remain distinct contracts.
+CUSTOM V2 package membership and material integrity remain distinct contracts.
 
 Boss supports native `.deb` extraction for controlled module material:
 
@@ -428,7 +546,8 @@ Boss supports native `.deb` extraction for controlled module material:
     -> tar
     -> safe path validation
     -> fresh staging
-    -> symlink-safe publication
+    -> certified metadata verification
+    -> strict layer merge into a new destination
 ```
 
 There is no host `dpkg-deb` compatibility fallback in the canonical materializer.
@@ -437,20 +556,34 @@ There is no host `dpkg-deb` compatibility fallback in the canonical materializer
 
 ## Shared package pool law
 
-The shared module package pool is cumulative.
+Module packages are a cumulative reusable arsenal split by material role:
 
 ```text
-install
-    -> reuse verified package when present
-    -> download missing required package
-    -> reject mismatched package
+Essential pool
+    -> /opt/neebles-build/modules/packages/essentials/
 
-uninstall
-    -> remove module state/runtime
-    -> do not remove shared DEBs
+module-delta pool
+    -> /opt/neebles-build/modules/packages/
 ```
 
-There is no productive per-module package ownership, refcount or package garbage collection.
+For either pool:
+
+```text
+existing file + correct SHA
+    -> reuse
+
+missing required file
+    -> obtain exact certified payload
+
+existing file + wrong SHA
+    -> reject
+```
+
+A later module may reuse an already-certified Essential or module package without downloading it again when identity and SHA match.
+
+Uninstall removes module state/binding as required by the transaction but **does not erase the permanent DEB arsenal**.
+
+There is no productive per-module package ownership, package refcount or package garbage collection.
 
 ---
 
@@ -489,22 +622,29 @@ Installed contracts remain the source of endpoint and privilege truth.
 
 ## Runtime birth
 
-The canonical runtime birth model is:
+The canonical runtime birth model for a module is now:
 
 ```text
 Governor action
     -> Lifecycle transition
     -> construction.step
-    -> runtime authority
+    -> runtime authority selection
+    -> if modules.runtime: load active MaterialBinding
+    -> create independent RuntimeLease
+    -> materialize Essential + module delta
+    -> validate lease domestic-runtime.json
     -> world resolution
     -> desktop identity when requested
     -> session projection when requested
     -> filesystem boundary
-    -> persistent spawn when requested
+    -> foreground/persistent spawn
+    -> retain RuntimeLease for the real process lifetime
     -> Module IPC register
     -> subscribe
     -> runtime serves endpoints
 ```
+
+Workspace remains generic. It receives an absolute valid manifest and executes; it does not know about MaterialBinding, module package pools or RuntimeLease semantics.
 
 The runtime may then execute module-specific UI, Tray or other behavior.
 
@@ -594,13 +734,49 @@ Runtime registration does not imply privilege.
 
 # Transactions
 
-Install/update/uninstall remain governed transactions.
+Install/update/uninstall remain governed transactions, and MaterialBinding is now part of that same truth.
 
 An incomplete candidate does not become installed truth.
 
-Update keeps recovery material until publication succeeds.
+### Install
 
-Rollback and compensation remain explicit.
+```text
+Preinstall
+    -> prepare authenticated MaterialBinding staging
+    -> module transaction succeeds
+    -> activate_install()
+```
+
+Activation refuses to silently replace an unexpected active binding.
+
+### Update
+
+Update carries both filesystem publication and MaterialBinding state through rollback.
+
+The certified physical outcomes are:
+
+```text
+PreviousRestored
+    -> previous module path is active
+    -> previous binding remains/restores active
+
+NewPreserved
+    -> previous version could not be restored
+    -> new module path remains active
+    -> new binding remains/finalizes active
+
+NoActiveModule
+    -> neither previous nor new module path is active
+    -> no binding may claim an active installed module
+```
+
+The rollback classification is derived from the filesystem reality that survives the failed operation, not from a guessed textual phase.
+
+### Uninstall
+
+Binding removal is staged transactionally. If uninstall does not finalize, the previous binding can be restored. Once uninstall is committed and the module is no longer active, the active binding is removed.
+
+This keeps installed module state, physical module state and authenticated runtime-material truth synchronized.
 
 ---
 
@@ -634,55 +810,70 @@ Boss startup does not depend on running recovery.
 
 # Current source certification
 
-The current source closure before Boss 1.0.25 release preparation has certified:
+Point 1 closure was followed by the required exhaustive post-cleanup gates on the exact working tree.
+
+Current evidence:
 
 ```text
-cargo fmt --all -- --check          GREEN
-cargo check --locked --all-targets  GREEN
-Rust lib suite                      77 / 77
-neebles-backend suite               589 / 589
-runtime resolver                    3 / 3
-domesticacion                       13 pass / 1 intentional ignore
-module materialization              GREEN
-runtime authority                   GREEN
-desktop session projection          GREEN
-dynamic readonly authority          GREEN
-persistent execution                GREEN
-Module IPC peer policy              GREEN
-Test Module runtime birth preflight GREEN
-git diff --check                    GREEN
+git diff --check                       GREEN
+cargo fmt -- --check                  GREEN
+cargo test --lib                      109 / 109 GREEN
+cargo test --bin neebles-backend      578 / 578 GREEN
+cargo check --lib                     GREEN
+cargo check --bin neebles-backend     GREEN
 ```
 
-These source gates do not replace Fresh Live acceptance.
+The binary check currently emits **87 known non-blocking warnings**, primarily historical Lifecycle `dead_code` / naming warnings. Point 1 does not authorize an unrelated warning-cleanup refactor.
+
+The Point 1 closure additionally certifies the directed behavior of:
+
+- module material parsing/materialization;
+- MaterialBinding roundtrip, tamper/untracked-file rejection and transaction semantics;
+- RuntimeLease authenticated manifest bytes, ephemeral lifetime and concurrent independence;
+- Construction projection into generic Workspace;
+- update rollback physical states `PreviousRestored`, `NewPreserved` and `NoActiveModule`.
+
+**Point 1 is CLOSED / GREEN. Point 2 remains pending.**
+
+These source gates do not claim a new published Boss release and do not replace later integrated Fresh Live acceptance.
 
 ---
 
 # Release policy
 
-The latest published release is **1.0.22**.
+The repository currently carries **1.0.25 preparation** surfaces in source/workflow metadata. The latest published Boss release recorded by the current repository documentation remains **1.0.22**.
 
-The next Boss release is **1.0.25**.
+This README deliberately does **not** promote the preparation version into a release claim.
 
-Before publishing 1.0.25 the release must be internally coherent across:
+Current sequencing is:
 
-- `Cargo.toml`;
-- `Cargo.lock`;
-- release workflow;
-- trigger;
+```text
+Point 1 architecture + exhaustive gates
+    -> CLOSED / GREEN
+
+Point 1 documentation + repository cleanup/audit
+    -> current work
+
+Point 2
+    -> PENDING
+
+release preparation/publication
+    -> only after Point 2 closes
+```
+
+Before any future release is cut, the repository must again be audited for coherent versioning and release surfaces, including:
+
+- `Cargo.toml` / `Cargo.lock`;
+- current release workflow and trigger;
 - release notes;
-- pinned CUSTOM revision;
-- controlled Qt 6.8.2 build world;
-- Rust 1.98.1 release toolchain;
+- pinned CUSTOM/CUSTOM V2 revisions as actually required by that release;
+- controlled Qt 6.8.2 build world where applicable;
+- Rust release toolchain;
 - Boss runtime materialization;
-- installer;
-- auth agent;
-- Launcher;
-- Tray Host;
-- runtime resolver;
-- bootstrap;
+- installer/auth agent/Launcher/Tray Host/runtime resolver/bootstrap;
 - final payload verification.
 
-The release must not be cut while those surfaces disagree.
+A source preparation number is not, by itself, release authority.
 
 ---
 
@@ -690,20 +881,22 @@ The release must not be cut while those surfaces disagree.
 
 Source certification is not final installed-system certification.
 
-The next integrated image must prove:
+After Point 2 and the corresponding release/integration work, the next integrated image must prove the final installed path, including at minimum:
 
 ```text
-new OS authorities present
+OS authorities present
     -> Boss bootstrap
     -> module discovery
     -> Test Module install
-    -> Preinstall
-    -> real 47-DEB materialization
-    -> installed module
+    -> Preinstall authenticates Essential + module delta
+    -> permanent package pools are correct
+    -> active MaterialBinding matches installed module truth
     -> Open
     -> Lifecycle open-runtime
+    -> modules.runtime creates independent RuntimeLease
+    -> Essential + Test Module delta compose in the lease rootfs
     -> desktop identity/session authority
-    -> persistent runtime
+    -> persistent runtime retains lease for child lifetime
     -> Module IPC registration
     -> UI
     -> settings
@@ -711,7 +904,9 @@ new OS authorities present
     -> uninstall / reinstall package reuse
 ```
 
-Only that gate permits the final production-ready claim.
+The old acceptance phrase "real 47-DEB materialization" is obsolete. The certified model is **59-DEB Essential layer + 32-DEB Test Module delta**, consumed through MaterialBinding + RuntimeLease.
+
+Only the later integrated gate permits an installed-system production-ready claim.
 
 ---
 

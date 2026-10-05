@@ -10,16 +10,21 @@ struct PackageSelector {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PackageRequirement {
-    pub(crate) filename: String,
-    pub(crate) sha256: String,
-    pub(crate) mode: u32,
+pub struct PackageRequirement {
+    pub filename: String,
+    pub sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct MaterialManifest {
     module: String,
     version: String,
+    entries: Vec<MaterialManifestEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MaterialLayerManifest {
     entries: Vec<MaterialManifestEntry>,
 }
 
@@ -43,24 +48,30 @@ struct MaterialManifestEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MaterialEntry {
-    pub(crate) path: String,
-    pub(crate) kind: String,
-    pub(crate) mode: u32,
-    pub(crate) size: Option<u64>,
-    pub(crate) sha256: Option<String>,
-    pub(crate) target: Option<String>,
+pub struct MaterialEntry {
+    pub path: String,
+    pub kind: String,
+    pub mode: u32,
+    pub size: Option<u64>,
+    pub sha256: Option<String>,
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MaterialRecipe {
-    pub(crate) module: String,
-    pub(crate) version: String,
-    pub(crate) packages: Vec<PackageRequirement>,
-    pub(crate) entries: Vec<MaterialEntry>,
+pub struct MaterialRecipe {
+    pub module: String,
+    pub version: String,
+    pub packages: Vec<PackageRequirement>,
+    pub entries: Vec<MaterialEntry>,
 }
 
-pub(crate) fn valid_module_id(value: &str) -> bool {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterialLayer {
+    pub packages: Vec<PackageRequirement>,
+    pub entries: Vec<MaterialEntry>,
+}
+
+pub fn valid_module_id(value: &str) -> bool {
     !value.is_empty()
         && value != "."
         && value != ".."
@@ -175,7 +186,200 @@ fn valid_material_path(value: &str) -> bool {
     })
 }
 
-pub(crate) fn parse_material_recipe(
+fn parse_material_entries(
+    entries: &[MaterialManifestEntry],
+    authority: &str,
+) -> Result<(Vec<MaterialEntry>, BTreeMap<String, usize>), String> {
+    let mut material_entries = Vec::<MaterialEntry>::with_capacity(entries.len());
+    let mut package_entries = BTreeMap::<String, usize>::new();
+
+    for (index, entry) in entries.iter().enumerate() {
+        if !valid_material_path(&entry.path) {
+            return Err(format!("unsafe {authority} material path: {}", entry.path));
+        }
+
+        let mode = parse_mode(&entry.mode)?;
+
+        let sha256 = match entry.sha256.as_deref() {
+            Some(value) => {
+                if !valid_sha256(value) {
+                    return Err(format!(
+                        "invalid {authority} material sha256: {}",
+                        entry.path
+                    ));
+                }
+
+                Some(value.to_ascii_lowercase())
+            }
+
+            None => None,
+        };
+
+        match entry.kind.as_str() {
+            "file" => {
+                if entry.size.is_none() {
+                    return Err(format!(
+                        "{authority} material file size missing: {}",
+                        entry.path
+                    ));
+                }
+
+                if sha256.is_none() {
+                    return Err(format!(
+                        "{authority} material file sha256 missing: {}",
+                        entry.path
+                    ));
+                }
+
+                if entry.target.is_some() {
+                    return Err(format!(
+                        "{authority} material file cannot declare symlink target: {}",
+                        entry.path
+                    ));
+                }
+            }
+
+            "directory" | "dir" => {
+                if entry.target.is_some() {
+                    return Err(format!(
+                        "{authority} material directory cannot declare symlink target: {}",
+                        entry.path
+                    ));
+                }
+            }
+
+            "symlink" => {
+                if entry.target.as_deref().unwrap_or("").is_empty() {
+                    return Err(format!(
+                        "{authority} material symlink target missing: {}",
+                        entry.path
+                    ));
+                }
+            }
+
+            other => {
+                return Err(format!(
+                    "unsupported {authority} material type {other}: {}",
+                    entry.path
+                ));
+            }
+        }
+
+        if let Some(filename) = entry.path.strip_prefix("packages/") {
+            if !valid_single_filename(filename) {
+                return Err(format!(
+                    "unsafe package path in {authority} material manifest: {}",
+                    entry.path
+                ));
+            }
+
+            if package_entries
+                .insert(filename.to_string(), index)
+                .is_some()
+            {
+                return Err(format!(
+                    "duplicate package entry in {authority} material manifest: {filename}"
+                ));
+            }
+        }
+
+        material_entries.push(MaterialEntry {
+            path: entry.path.clone(),
+            kind: entry.kind.clone(),
+            mode,
+            size: entry.size,
+            sha256,
+            target: entry.target.clone(),
+        });
+    }
+
+    Ok((material_entries, package_entries))
+}
+
+fn validate_package_authority(
+    selectors: &BTreeMap<String, PackageSelector>,
+    entries: &[MaterialManifestEntry],
+    package_entries: &BTreeMap<String, usize>,
+    authority: &str,
+) -> Result<Vec<PackageRequirement>, String> {
+    let declared = selectors.keys().cloned().collect::<Vec<_>>();
+    let manifested = package_entries.keys().cloned().collect::<Vec<_>>();
+
+    if declared != manifested {
+        return Err(format!(
+            "{authority} package membership mismatch: selector={declared:?} manifest={manifested:?}"
+        ));
+    }
+
+    let mut packages = Vec::with_capacity(selectors.len());
+
+    for selector in selectors.values() {
+        let index = package_entries.get(&selector.filename).ok_or_else(|| {
+            format!(
+                "{authority} material manifest is missing package {}",
+                selector.filename
+            )
+        })?;
+
+        let entry = &entries[*index];
+
+        if entry.kind != "file" {
+            return Err(format!(
+                "{authority} package entry is not a file: {}",
+                selector.filename
+            ));
+        }
+
+        let manifest_sha = entry
+            .sha256
+            .as_deref()
+            .ok_or_else(|| {
+                format!(
+                    "{authority} package manifest sha256 missing: {}",
+                    selector.filename
+                )
+            })?
+            .to_ascii_lowercase();
+
+        if manifest_sha != selector.sha256 {
+            return Err(format!(
+                "{authority} package sha256 authority mismatch: {}",
+                selector.filename
+            ));
+        }
+
+        packages.push(PackageRequirement {
+            filename: selector.filename.clone(),
+            sha256: selector.sha256.clone(),
+        });
+    }
+
+    Ok(packages)
+}
+
+pub fn parse_material_layer(
+    authority: &str,
+    packages_payload: &str,
+    manifest_payload: &[u8],
+) -> Result<MaterialLayer, String> {
+    if authority.trim().is_empty() {
+        return Err("material authority label cannot be empty".to_string());
+    }
+
+    let selectors = parse_packages_tsv(packages_payload)?;
+
+    let manifest: MaterialLayerManifest = serde_json::from_slice(manifest_payload)
+        .map_err(|error| format!("invalid {authority} material manifest JSON: {error}"))?;
+
+    let (entries, package_entries) = parse_material_entries(&manifest.entries, authority)?;
+
+    let packages =
+        validate_package_authority(&selectors, &manifest.entries, &package_entries, authority)?;
+
+    Ok(MaterialLayer { packages, entries })
+}
+
+pub fn parse_material_recipe(
     module_id: &str,
     module_version: &str,
     packages_payload: &str,
@@ -206,155 +410,10 @@ pub(crate) fn parse_material_recipe(
         ));
     }
 
-    let mut material_entries = Vec::<MaterialEntry>::with_capacity(manifest.entries.len());
+    let (material_entries, package_entries) = parse_material_entries(&manifest.entries, "module")?;
 
-    let mut package_entries = BTreeMap::<String, &MaterialManifestEntry>::new();
-
-    for entry in &manifest.entries {
-        if !valid_material_path(&entry.path) {
-            return Err(format!("unsafe module material path: {}", entry.path));
-        }
-
-        let mode = parse_mode(&entry.mode)?;
-
-        let sha256 = match entry.sha256.as_deref() {
-            Some(value) => {
-                if !valid_sha256(value) {
-                    return Err(format!("invalid module material sha256: {}", entry.path));
-                }
-
-                Some(value.to_ascii_lowercase())
-            }
-
-            None => None,
-        };
-
-        match entry.kind.as_str() {
-            "file" => {
-                if entry.size.is_none() {
-                    return Err(format!("module material file size missing: {}", entry.path));
-                }
-
-                if sha256.is_none() {
-                    return Err(format!(
-                        "module material file sha256 missing: {}",
-                        entry.path
-                    ));
-                }
-
-                if entry.target.is_some() {
-                    return Err(format!(
-                        "module material file cannot declare symlink target: {}",
-                        entry.path
-                    ));
-                }
-            }
-
-            "directory" | "dir" => {
-                if entry.target.is_some() {
-                    return Err(format!(
-                        "module material directory cannot declare symlink target: {}",
-                        entry.path
-                    ));
-                }
-            }
-
-            "symlink" => {
-                if entry.target.as_deref().unwrap_or("").is_empty() {
-                    return Err(format!(
-                        "module material symlink target missing: {}",
-                        entry.path
-                    ));
-                }
-            }
-
-            other => {
-                return Err(format!(
-                    "unsupported module material type '{other}': {}",
-                    entry.path
-                ));
-            }
-        }
-
-        if let Some(filename) = entry.path.strip_prefix("packages/") {
-            if !valid_single_filename(filename) {
-                return Err(format!(
-                    "unsafe package path in module material manifest: {}",
-                    entry.path
-                ));
-            }
-
-            if package_entries
-                .insert(filename.to_string(), entry)
-                .is_some()
-            {
-                return Err(format!(
-                    "duplicate package entry in module material manifest: {filename}"
-                ));
-            }
-        }
-
-        material_entries.push(MaterialEntry {
-            path: entry.path.clone(),
-            kind: entry.kind.clone(),
-            mode,
-            size: entry.size,
-            sha256,
-            target: entry.target.clone(),
-        });
-    }
-
-    let declared = selectors.keys().cloned().collect::<Vec<_>>();
-
-    let manifested = package_entries.keys().cloned().collect::<Vec<_>>();
-
-    if declared != manifested {
-        return Err(format!(
-            "module package membership mismatch: selector={declared:?} manifest={manifested:?}"
-        ));
-    }
-
-    let mut packages = Vec::with_capacity(selectors.len());
-
-    for selector in selectors.values() {
-        let entry = package_entries.get(&selector.filename).ok_or_else(|| {
-            format!(
-                "module material manifest is missing package {}",
-                selector.filename
-            )
-        })?;
-
-        if entry.kind != "file" {
-            return Err(format!(
-                "module package entry is not a file: {}",
-                selector.filename
-            ));
-        }
-
-        let manifest_sha = entry
-            .sha256
-            .as_deref()
-            .ok_or_else(|| {
-                format!(
-                    "module package manifest sha256 missing: {}",
-                    selector.filename
-                )
-            })?
-            .to_ascii_lowercase();
-
-        if manifest_sha != selector.sha256 {
-            return Err(format!(
-                "module package sha256 authority mismatch: {}",
-                selector.filename
-            ));
-        }
-
-        packages.push(PackageRequirement {
-            filename: selector.filename.clone(),
-            sha256: selector.sha256.clone(),
-            mode: parse_mode(&entry.mode)?,
-        });
-    }
+    let packages =
+        validate_package_authority(&selectors, &manifest.entries, &package_entries, "module")?;
 
     Ok(MaterialRecipe {
         module: manifest.module,
@@ -370,6 +429,74 @@ mod tests {
 
     fn sha(character: char) -> String {
         std::iter::repeat_n(character, 64).collect()
+    }
+
+    #[test]
+    fn shared_material_layer_parses_without_module_identity() {
+        let package_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        let packages = format!("base-files\t13.8\tamd64\tbase-files.deb\t{}\n", package_sha);
+
+        let manifest = serde_json::json!({
+            "entries": [
+                {
+                    "path": "packages/base-files.deb",
+                    "type": "file",
+                    "mode": "0o664",
+                    "size": 10,
+                    "sha256": package_sha
+                },
+                {
+                    "path": "rootfs/lib64",
+                    "type": "symlink",
+                    "mode": "0o777",
+                    "target": "usr/lib64"
+                }
+            ]
+        });
+
+        let layer = parse_material_layer("Essential", &packages, manifest.to_string().as_bytes())
+            .expect("shared material layer must parse");
+
+        assert_eq!(layer.packages.len(), 1);
+        assert_eq!(layer.entries.len(), 2);
+        assert_eq!(layer.packages[0].filename, "base-files.deb");
+
+        assert!(layer.entries.iter().any(|entry| {
+            entry.path == "rootfs/lib64"
+                && entry.kind == "symlink"
+                && entry.target.as_deref() == Some("usr/lib64")
+        }));
+    }
+
+    #[test]
+    fn shared_material_layer_rejects_package_authority_mismatch() {
+        let packages = concat!(
+            "base-files\t13.8\tamd64\tbase-files.deb\t",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "\n"
+        );
+
+        let manifest = serde_json::json!({
+            "entries": [
+                {
+                    "path": "packages/base-files.deb",
+                    "type": "file",
+                    "mode": "0o664",
+                    "size": 10,
+                    "sha256":
+                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+            ]
+        });
+
+        let error = parse_material_layer("Essential", packages, manifest.to_string().as_bytes())
+            .expect_err("mismatched package authority must fail");
+
+        assert!(
+            error.contains("Essential package sha256 authority mismatch"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -452,7 +579,6 @@ mod tests {
 
         assert_eq!(recipe.packages.len(), 1);
         assert_eq!(recipe.packages[0].filename, "python.deb");
-        assert_eq!(recipe.packages[0].mode, 0o664);
     }
     #[test]
     fn material_recipe_exposes_rootfs_entries() {

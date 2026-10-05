@@ -10,7 +10,7 @@ use tar::Archive;
 use xz2::read::XzDecoder;
 use zstd::stream::read::Decoder as ZstdDecoder;
 
-use crate::module_material::{MaterialEntry, MaterialRecipe};
+use crate::module_material::{MaterialEntry, MaterialLayer, MaterialRecipe, PackageRequirement};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DebDataMember {
@@ -337,16 +337,6 @@ pub(crate) fn extract_deb_data_to_staging(
     unpack_data_member(&member, destination)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ModuleMaterializationReport {
-    pub(crate) module: String,
-    pub(crate) version: String,
-    pub(crate) packages: usize,
-    pub(crate) entries: usize,
-    pub(crate) published: usize,
-    pub(crate) reused: usize,
-}
-
 fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = fs::File::open(path)
         .map_err(|error| format!("could not open material file {}: {error}", path.display()))?;
@@ -425,12 +415,12 @@ fn collect_tree(root: &Path) -> Result<BTreeSet<PathBuf>, String> {
     Ok(collected)
 }
 
-fn rootfs_recipe_entries(
-    recipe: &MaterialRecipe,
+fn rootfs_material_entries(
+    material_entries: &[MaterialEntry],
 ) -> Result<BTreeMap<PathBuf, &MaterialEntry>, String> {
     let mut entries = BTreeMap::<PathBuf, &MaterialEntry>::new();
 
-    for entry in &recipe.entries {
+    for entry in material_entries {
         let Some(relative) = entry.path.strip_prefix("rootfs/") else {
             continue;
         };
@@ -564,8 +554,11 @@ fn verify_material_entry(
     Ok(())
 }
 
-fn apply_certified_metadata(staging: &Path, recipe: &MaterialRecipe) -> Result<(), String> {
-    let entries = rootfs_recipe_entries(recipe)?;
+fn apply_certified_metadata(
+    staging: &Path,
+    material_entries: &[MaterialEntry],
+) -> Result<(), String> {
+    let entries = rootfs_material_entries(material_entries)?;
 
     for (relative, entry) in entries {
         let path = staging.join(&relative);
@@ -635,8 +628,8 @@ fn apply_certified_metadata(staging: &Path, recipe: &MaterialRecipe) -> Result<(
     Ok(())
 }
 
-fn verify_staging_exact(staging: &Path, recipe: &MaterialRecipe) -> Result<(), String> {
-    let expected = rootfs_recipe_entries(recipe)?;
+fn verify_staging_exact(staging: &Path, material_entries: &[MaterialEntry]) -> Result<(), String> {
+    let expected = rootfs_material_entries(material_entries)?;
 
     let actual = collect_tree(staging)?;
 
@@ -870,25 +863,53 @@ fn merge_package_into_candidate(package_tree: &Path, candidate: &Path) -> Result
     merge_tree(package_tree, candidate)
 }
 
-pub(crate) fn materialize_recipe(
-    recipe: &MaterialRecipe,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterialLayerMaterializationReport {
+    pub authority: String,
+    pub packages: usize,
+    pub entries: usize,
+    pub published: usize,
+    pub reused: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeMaterializationReport {
+    pub essential: MaterialLayerMaterializationReport,
+    pub module: MaterialLayerMaterializationReport,
+}
+
+fn materialize_certified_layer(
+    authority: &str,
+    packages: &[PackageRequirement],
+    entries: &[MaterialEntry],
     package_pool: &Path,
-    shared_rootfs: &Path,
-) -> Result<ModuleMaterializationReport, String> {
-    let modules_root = package_pool.parent().ok_or_else(|| {
+    destination_rootfs: &Path,
+) -> Result<MaterialLayerMaterializationReport, String> {
+    if authority.trim().is_empty() {
+        return Err("material layer authority cannot be empty".to_string());
+    }
+
+    let staging_parent = destination_rootfs.parent().ok_or_else(|| {
         format!(
-            "module package pool has no parent: {}",
-            package_pool.display()
+            "material destination rootfs has no parent: {}",
+            destination_rootfs.display()
+        )
+    })?;
+
+    fs::create_dir_all(staging_parent).map_err(|error| {
+        format!(
+            "could not create material staging parent {}: {error}",
+            staging_parent.display()
         )
     })?;
 
     let temporary = tempfile::Builder::new()
-        .prefix(".neebles-module-materialize-")
-        .tempdir_in(modules_root)
+        .prefix(".neebles-material-layer-")
+        .tempdir_in(staging_parent)
         .map_err(|error| {
             format!(
-                "could not create module materialization staging under {}: {error}",
-                modules_root.display()
+                "could not create certified material layer staging under {}: {error}",
+                staging_parent.display()
             )
         })?;
 
@@ -896,24 +917,24 @@ pub(crate) fn materialize_recipe(
 
     fs::create_dir(&candidate).map_err(|error| {
         format!(
-            "could not create candidate module rootfs {}: {error}",
+            "could not create certified material layer rootfs {}: {error}",
             candidate.display()
         )
     })?;
 
-    for (index, requirement) in recipe.packages.iter().enumerate() {
+    for (index, requirement) in packages.iter().enumerate() {
         let package = package_pool.join(&requirement.filename);
 
         let metadata = fs::symlink_metadata(&package).map_err(|error| {
             format!(
-                "required module package missing {}: {error}",
+                "required {authority} package missing {}: {error}",
                 package.display()
             )
         })?;
 
         if !metadata.file_type().is_file() {
             return Err(format!(
-                "required module package is not a regular file: {}",
+                "required {authority} package is not a regular file: {}",
                 package.display()
             ));
         }
@@ -922,7 +943,7 @@ pub(crate) fn materialize_recipe(
 
         if actual_sha != requirement.sha256 {
             return Err(format!(
-                "required module package sha256 mismatch: {}",
+                "required {authority} package sha256 mismatch: {}",
                 package.display()
             ));
         }
@@ -934,92 +955,98 @@ pub(crate) fn materialize_recipe(
         merge_package_into_candidate(&package_staging, &candidate)?;
     }
 
-    apply_certified_metadata(&candidate, recipe)?;
+    apply_certified_metadata(&candidate, entries)?;
 
-    verify_staging_exact(&candidate, recipe)?;
+    verify_staging_exact(&candidate, entries)?;
 
-    let (published, reused) = preflight_merge(&candidate, shared_rootfs)?;
+    let (published, reused) = preflight_merge(&candidate, destination_rootfs)?;
 
-    merge_tree(&candidate, shared_rootfs)?;
+    merge_tree(&candidate, destination_rootfs)?;
 
-    Ok(ModuleMaterializationReport {
-        module: recipe.module.clone(),
-        version: recipe.version.clone(),
-        packages: recipe.packages.len(),
-        entries: rootfs_recipe_entries(recipe)?.len(),
+    Ok(MaterialLayerMaterializationReport {
+        authority: authority.to_string(),
+        packages: packages.len(),
+        entries: rootfs_material_entries(entries)?.len(),
         published,
         reused,
     })
 }
 
-pub(crate) fn publish_runtime_manifest(payload: &[u8], target: &Path) -> Result<bool, String> {
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-
-    if !target.is_absolute() {
+pub fn materialize_runtime_layers(
+    essential: &MaterialLayer,
+    essential_package_pool: &Path,
+    module: &MaterialRecipe,
+    module_package_pool: &Path,
+    destination_rootfs: &Path,
+) -> Result<RuntimeMaterializationReport, String> {
+    if fs::symlink_metadata(destination_rootfs).is_ok() {
         return Err(format!(
-            "module runtime manifest target must be absolute: {}",
-            target.display()
+            "runtime rootfs destination already exists: {}",
+            destination_rootfs.display()
         ));
     }
 
-    let parent = target.parent().ok_or_else(|| {
+    let parent = destination_rootfs.parent().ok_or_else(|| {
         format!(
-            "module runtime manifest target has no parent: {}",
-            target.display()
+            "runtime rootfs destination has no parent: {}",
+            destination_rootfs.display()
         )
     })?;
 
-    if !parent.is_dir() {
-        return Err(format!(
-            "module runtime manifest parent is not a directory: {}",
-            parent.display()
-        ));
-    }
-
-    if let Ok(existing) = fs::read(target) {
-        if existing == payload {
-            neebles_backend::domestic_runtime_authority::validate_materialized_runtime_manifest(
-                target,
-            )?;
-
-            return Ok(true);
-        }
-    }
-
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|error| {
+    fs::create_dir_all(parent).map_err(|error| {
         format!(
-            "could not create runtime manifest staging file in {}: {error}",
+            "could not create runtime rootfs parent {}: {error}",
             parent.display()
         )
     })?;
 
-    temporary
-        .write_all(payload)
-        .map_err(|error| format!("could not write runtime manifest staging file: {error}"))?;
+    let temporary = tempfile::Builder::new()
+        .prefix(".neebles-runtime-rootfs-")
+        .tempdir_in(parent)
+        .map_err(|error| {
+            format!(
+                "could not create runtime rootfs composition staging under {}: {error}",
+                parent.display()
+            )
+        })?;
 
-    temporary
-        .flush()
-        .map_err(|error| format!("could not flush runtime manifest staging file: {error}"))?;
+    let composed_rootfs = temporary.path().join("rootfs");
 
-    fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o644))
-        .map_err(|error| format!("could not apply runtime manifest mode: {error}"))?;
+    fs::create_dir(&composed_rootfs).map_err(|error| {
+        format!(
+            "could not create runtime rootfs composition {}: {error}",
+            composed_rootfs.display()
+        )
+    })?;
 
-    neebles_backend::domestic_runtime_authority::validate_materialized_runtime_manifest(
-        temporary.path(),
+    let essential_report = materialize_certified_layer(
+        "Essential",
+        &essential.packages,
+        &essential.entries,
+        essential_package_pool,
+        &composed_rootfs,
     )?;
 
-    temporary.persist(target).map_err(|error| {
+    let module_report = materialize_certified_layer(
+        "module",
+        &module.packages,
+        &module.entries,
+        module_package_pool,
+        &composed_rootfs,
+    )?;
+
+    fs::rename(&composed_rootfs, destination_rootfs).map_err(|error| {
         format!(
-            "could not publish runtime manifest {}: {}",
-            target.display(),
-            error.error
+            "could not publish completed runtime rootfs {} -> {}: {error}",
+            composed_rootfs.display(),
+            destination_rootfs.display()
         )
     })?;
 
-    neebles_backend::domestic_runtime_authority::validate_materialized_runtime_manifest(target)?;
-
-    Ok(false)
+    Ok(RuntimeMaterializationReport {
+        essential: essential_report,
+        module: module_report,
+    })
 }
 
 #[cfg(test)]
@@ -1198,191 +1225,6 @@ mod tests {
     }
 
     #[test]
-    fn materialize_recipe_publishes_certified_rootfs() {
-        let temporary = tempfile::tempdir().expect("temporary directory");
-
-        let packages = temporary.path().join("packages");
-
-        let rootfs = temporary.path().join("rootfs");
-
-        fs::create_dir(&packages).expect("package pool must exist");
-
-        fs::create_dir(&rootfs).expect("shared rootfs must exist");
-
-        let deb_payload = synthetic_deb("data.tar.gz", &gzip_tar_with_file());
-
-        let deb = packages.join("fixture.deb");
-
-        fs::write(&deb, &deb_payload).expect("fixture deb must write");
-
-        let mut hasher = Sha256::new();
-        hasher.update(&deb_payload);
-
-        let deb_sha = hasher
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-
-        let body = b"hello-neebles\n";
-
-        let mut hasher = Sha256::new();
-        hasher.update(body);
-
-        let body_sha = hasher
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-
-        let recipe = MaterialRecipe {
-            module: "fixture".to_string(),
-            version: "1.0.0".to_string(),
-            packages: vec![crate::module_material::PackageRequirement {
-                filename: "fixture.deb".to_string(),
-                sha256: deb_sha,
-                mode: 0o664,
-            }],
-            entries: vec![
-                MaterialEntry {
-                    path: "rootfs/usr".to_string(),
-                    kind: "directory".to_string(),
-                    mode: 0o755,
-                    size: None,
-                    sha256: None,
-                    target: None,
-                },
-                MaterialEntry {
-                    path: "rootfs/usr/bin".to_string(),
-                    kind: "directory".to_string(),
-                    mode: 0o755,
-                    size: None,
-                    sha256: None,
-                    target: None,
-                },
-                MaterialEntry {
-                    path: "rootfs/usr/bin/fixture".to_string(),
-                    kind: "file".to_string(),
-                    mode: 0o755,
-                    size: Some(body.len() as u64),
-                    sha256: Some(body_sha),
-                    target: None,
-                },
-            ],
-        };
-
-        let report = materialize_recipe(&recipe, &packages, &rootfs)
-            .expect("certified recipe must materialize");
-
-        assert_eq!(
-            fs::read(rootfs.join("usr/bin/fixture")).expect("published fixture"),
-            body
-        );
-
-        assert_eq!(report.packages, 1);
-        assert_eq!(report.entries, 3);
-        assert_eq!(report.published, 3);
-        assert_eq!(report.reused, 0);
-    }
-
-    #[test]
-    fn materialize_recipe_is_idempotent() {
-        let temporary = tempfile::tempdir().expect("temporary directory");
-
-        let source = temporary.path().join("source");
-
-        let destination = temporary.path().join("destination");
-
-        fs::create_dir_all(source.join("usr/bin")).expect("source dirs");
-
-        fs::write(source.join("usr/bin/fixture"), b"same").expect("source file");
-
-        fs::set_permissions(source.join("usr"), fs::Permissions::from_mode(0o755))
-            .expect("usr mode");
-
-        fs::set_permissions(source.join("usr/bin"), fs::Permissions::from_mode(0o755))
-            .expect("bin mode");
-
-        fs::set_permissions(
-            source.join("usr/bin/fixture"),
-            fs::Permissions::from_mode(0o644),
-        )
-        .expect("fixture mode");
-
-        fs::create_dir_all(destination.join("usr/bin")).expect("destination dirs");
-
-        fs::write(destination.join("usr/bin/fixture"), b"same").expect("destination file");
-
-        fs::set_permissions(destination.join("usr"), fs::Permissions::from_mode(0o755))
-            .expect("destination usr mode");
-
-        fs::set_permissions(
-            destination.join("usr/bin"),
-            fs::Permissions::from_mode(0o755),
-        )
-        .expect("destination bin mode");
-
-        fs::set_permissions(
-            destination.join("usr/bin/fixture"),
-            fs::Permissions::from_mode(0o644),
-        )
-        .expect("destination fixture mode");
-
-        let result = preflight_merge(&source, &destination).expect("identical tree must reuse");
-
-        assert_eq!(result, (0, 3));
-    }
-
-    #[test]
-    fn materialize_recipe_rejects_conflicting_shared_material() {
-        let temporary = tempfile::tempdir().expect("temporary directory");
-
-        let source = temporary.path().join("source");
-
-        let destination = temporary.path().join("destination");
-
-        fs::create_dir_all(source.join("usr/bin")).expect("source dirs");
-
-        fs::create_dir_all(destination.join("usr/bin")).expect("destination dirs");
-
-        fs::write(source.join("usr/bin/fixture"), b"new").expect("source file");
-
-        fs::write(destination.join("usr/bin/fixture"), b"old").expect("destination file");
-
-        fs::set_permissions(source.join("usr"), fs::Permissions::from_mode(0o755))
-            .expect("source usr mode");
-
-        fs::set_permissions(source.join("usr/bin"), fs::Permissions::from_mode(0o755))
-            .expect("source bin mode");
-
-        fs::set_permissions(
-            source.join("usr/bin/fixture"),
-            fs::Permissions::from_mode(0o644),
-        )
-        .expect("source fixture mode");
-
-        fs::set_permissions(destination.join("usr"), fs::Permissions::from_mode(0o755))
-            .expect("destination usr mode");
-
-        fs::set_permissions(
-            destination.join("usr/bin"),
-            fs::Permissions::from_mode(0o755),
-        )
-        .expect("destination bin mode");
-
-        fs::set_permissions(
-            destination.join("usr/bin/fixture"),
-            fs::Permissions::from_mode(0o644),
-        )
-        .expect("destination fixture mode");
-
-        let error = preflight_merge(&source, &destination)
-            .expect_err("different shared material must fail");
-
-        assert!(error.contains("material collision differs"));
-    }
-
-    #[test]
     fn staging_destination_must_be_new() {
         let temporary = tempfile::tempdir().expect("temporary directory");
 
@@ -1399,5 +1241,80 @@ mod tests {
             .expect_err("existing staging destination must fail");
 
         assert!(error.contains("staging destination already exists"));
+    }
+
+    #[test]
+    fn runtime_layers_publish_one_fresh_composed_rootfs() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let essential_pool = temporary.path().join("essentials");
+        let module_pool = temporary.path().join("packages");
+        let runtime_rootfs = temporary.path().join("lease").join("rootfs");
+
+        fs::create_dir_all(&essential_pool).expect("Essential pool");
+        fs::create_dir_all(&module_pool).expect("module pool");
+
+        let essential = MaterialLayer {
+            packages: Vec::new(),
+            entries: Vec::new(),
+        };
+
+        let module = MaterialRecipe {
+            module: "fixture".to_string(),
+            version: "1.0.0".to_string(),
+            packages: Vec::new(),
+            entries: Vec::new(),
+        };
+
+        let report = materialize_runtime_layers(
+            &essential,
+            &essential_pool,
+            &module,
+            &module_pool,
+            &runtime_rootfs,
+        )
+        .expect("runtime layers must compose");
+
+        assert!(runtime_rootfs.is_dir());
+        assert_eq!(report.essential.authority, "Essential");
+        assert_eq!(report.module.authority, "module");
+        assert_eq!(report.essential.packages, 0);
+        assert_eq!(report.module.packages, 0);
+    }
+
+    #[test]
+    fn runtime_layers_refuse_existing_destination() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let essential_pool = temporary.path().join("essentials");
+        let module_pool = temporary.path().join("packages");
+        let runtime_rootfs = temporary.path().join("rootfs");
+
+        fs::create_dir_all(&essential_pool).expect("Essential pool");
+        fs::create_dir_all(&module_pool).expect("module pool");
+        fs::create_dir(&runtime_rootfs).expect("existing runtime rootfs");
+
+        let essential = MaterialLayer {
+            packages: Vec::new(),
+            entries: Vec::new(),
+        };
+
+        let module = MaterialRecipe {
+            module: "fixture".to_string(),
+            version: "1.0.0".to_string(),
+            packages: Vec::new(),
+            entries: Vec::new(),
+        };
+
+        let error = materialize_runtime_layers(
+            &essential,
+            &essential_pool,
+            &module,
+            &module_pool,
+            &runtime_rootfs,
+        )
+        .expect_err("existing runtime rootfs must be rejected");
+
+        assert!(error.contains("already exists"));
     }
 }

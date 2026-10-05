@@ -1344,40 +1344,31 @@ fn install_require_tree(
             prepared.report.custom_revision
         );
 
-        let materialization = match crate::module_materialization::materialize_recipe(
-            &prepared.recipe,
-            &prepared.package_pool,
-            &prepared.shared_rootfs,
-        ) {
-            Ok(report) => report,
+        let prepared_binding =
+            match neebles_backend::module_material_binding::prepare_material_binding(
+                &prepared.material_root,
+                prepared.binding_input.clone(),
+            ) {
+                Ok(binding) => binding,
 
-            Err(error) => {
-                return Err(require_install_failure(
-                    format!("module '{}' materialization failed: {}", module_id, error),
-                    &mut transaction,
-                ));
-            }
-        };
+                Err(error) => {
+                    return Err(require_install_failure(
+                        format!(
+                            "module {} material binding preparation failed: {}",
+                            module_id, error
+                        ),
+                        &mut transaction,
+                    ));
+                }
+            };
 
-        eprintln!(
-            "N.E.E.B.L.E.S.: module '{}' materialization GREEN: packages={} entries={} published={} reused={}",
-            module_id,
-            materialization.packages,
-            materialization.entries,
-            materialization.published,
-            materialization.reused
-        );
-
-        let runtime_manifest_reused = match crate::module_materialization::publish_runtime_manifest(
-            &prepared.runtime_manifest_payload,
-            &prepared.shared_runtime_manifest,
-        ) {
-            Ok(reused) => reused,
+        let active_binding_path = match prepared_binding.activate_install() {
+            Ok(path) => path,
 
             Err(error) => {
                 return Err(require_install_failure(
                     format!(
-                        "module '{}' runtime world publication failed: {}",
+                        "module {} material binding activation failed: {}",
                         module_id, error
                     ),
                     &mut transaction,
@@ -1386,9 +1377,9 @@ fn install_require_tree(
         };
 
         eprintln!(
-            "N.E.E.B.L.E.S.: shared Esbirro runtime manifest GREEN: path={} reused={}",
-            prepared.shared_runtime_manifest.display(),
-            runtime_manifest_reused
+            "N.E.E.B.L.E.S.: module {} material binding ACTIVE: {}",
+            module_id,
+            active_binding_path.display()
         );
 
         if let Err(error) = execute_module_governor_lifecycle(
@@ -3024,6 +3015,10 @@ fn uninstall_internal(
     lifecycle_runtime: Option<&crate::lifecycle_governor_runtime::GovernorLifecycleRuntime>,
     observer_factory: Option<&ModuleLifecycleObserverFactory>,
 ) -> Result<(), String> {
+    let material_root =
+        neebles_backend::module_material_territory::resolve_module_material_territory()?
+            .material_root;
+
     /*
      * Uninstall is inherently destructive and therefore
      * owns the complete module lifecycle.
@@ -3140,6 +3135,35 @@ fn uninstall_internal(
         None
     };
 
+    let mut staged_material_binding =
+        match neebles_backend::module_material_binding::stage_material_binding_removal(
+            &material_root,
+            name,
+        ) {
+            Ok(removal) => removal,
+
+            Err(binding_error) => {
+                if let Some(staged) = staged_settings_path.as_ref() {
+                    let _ = fs::rename(staged, &local_settings_path);
+                }
+
+                return match fs::rename(&removal_path, &path) {
+                    Ok(()) => Err(format!(
+                        "could not stage material binding removal for module {}: {}; module installation and local settings were restored",
+                        name,
+                        binding_error
+                    )),
+
+                    Err(rollback_error) => Err(format!(
+                        "CRITICAL: could not stage material binding removal for module {}: {}; module rollback also failed: {}; active material binding state may require recovery",
+                        name,
+                        binding_error,
+                        rollback_error
+                    )),
+                };
+            }
+        };
+
     /*
      * Boss-owned state for an uninstalled module must not
      * survive the uninstall.
@@ -3168,6 +3192,10 @@ fn uninstall_internal(
             }
 
             Err(rollback_error) => {
+                if let Some(binding) = staged_material_binding.take() {
+                    binding.finalize();
+                }
+
                 return Err(format!(
                     "CRITICAL: could not clean Boss state while uninstalling module '{}': {}; rollback also failed: {}; module remains at {}",
                     name,
@@ -3177,6 +3205,17 @@ fn uninstall_internal(
                 ));
             }
         }
+    }
+
+    /*
+     * The module no longer owns an active installation path and
+     * Boss-owned state cleanup succeeded.
+     *
+     * The material binding must therefore stop being active before
+     * destruction of the detached module copy is attempted.
+     */
+    if let Some(binding) = staged_material_binding.take() {
+        binding.finalize();
     }
 
     /*
@@ -3200,7 +3239,7 @@ fn uninstall_internal(
     }
 
     /*
-     * Module uninstall is committed.
+     * Module uninstall is finalized.
      *
      * Only now destroy local settings that were selected for
      * removal. Preserved settings never left their final path.
@@ -3231,6 +3270,219 @@ fn uninstall_internal(
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveUpdateRollbackState {
+    PreviousRestored,
+    NewPreserved,
+    NoActiveModule,
+}
+
+#[derive(Debug)]
+struct LiveUpdateRollbackReport {
+    state: LiveUpdateRollbackState,
+    detail: String,
+}
+
+fn rollback_live_update_paths(
+    current_path: &Path,
+    backup_path: &Path,
+    failed_update_path: &Path,
+) -> LiveUpdateRollbackReport {
+    match fs::rename(current_path, failed_update_path) {
+        Ok(()) => {}
+
+        Err(move_error) => match fs::symlink_metadata(current_path) {
+            Ok(metadata) if metadata.file_type().is_dir() => {
+                return LiveUpdateRollbackReport {
+                        state: LiveUpdateRollbackState::NewPreserved,
+                        detail: format!(
+                            "new module could not be moved aside: {move_error}; active new version remains at {} and previous version remains at {}",
+                            current_path.display(),
+                            backup_path.display()
+                        ),
+                    };
+            }
+
+            Ok(_) => {
+                return LiveUpdateRollbackReport {
+                        state: LiveUpdateRollbackState::NoActiveModule,
+                        detail: format!(
+                            "new module could not be moved aside: {move_error}; active path {} exists but is not a module directory; previous version remains at {}",
+                            current_path.display(),
+                            backup_path.display()
+                        ),
+                    };
+            }
+
+            Err(inspect_error) if inspect_error.kind() == std::io::ErrorKind::NotFound => {
+                return match fs::rename(backup_path, current_path) {
+                        Ok(()) => LiveUpdateRollbackReport {
+                            state: LiveUpdateRollbackState::PreviousRestored,
+                            detail: format!(
+                                "new active path had disappeared after rollback move failed: {move_error}; previous version was restored"
+                            ),
+                        },
+
+                        Err(restore_error) => LiveUpdateRollbackReport {
+                            state: LiveUpdateRollbackState::NoActiveModule,
+                            detail: format!(
+                                "new active path is absent after rollback move failed: {move_error}; previous version also could not be restored from {}: {restore_error}",
+                                backup_path.display()
+                            ),
+                        },
+                    };
+            }
+
+            Err(inspect_error) => {
+                return LiveUpdateRollbackReport {
+                        state: LiveUpdateRollbackState::NewPreserved,
+                        detail: format!(
+                            "new module could not be moved aside: {move_error}; active path state could not be inspected safely: {inspect_error}; previous version remains at {}",
+                            backup_path.display()
+                        ),
+                    };
+            }
+        },
+    }
+
+    match fs::rename(backup_path, current_path) {
+        Ok(()) => {
+            let detail = match fs::remove_dir_all(failed_update_path) {
+                Ok(()) => "failed new copy was removed".to_string(),
+
+                Err(error) => format!(
+                    "previous version was restored but failed new copy {} could not be removed: {error}",
+                    failed_update_path.display()
+                ),
+            };
+
+            LiveUpdateRollbackReport {
+                state: LiveUpdateRollbackState::PreviousRestored,
+                detail,
+            }
+        }
+
+        Err(rollback_error) => match fs::rename(failed_update_path, current_path) {
+            Ok(()) => LiveUpdateRollbackReport {
+                state: LiveUpdateRollbackState::NewPreserved,
+                detail: format!(
+                    "previous version could not be restored from {}: {rollback_error}; new version was returned to the active path",
+                    backup_path.display()
+                ),
+            },
+
+            Err(recovery_error) => LiveUpdateRollbackReport {
+                state: LiveUpdateRollbackState::NoActiveModule,
+                detail: format!(
+                    "previous version could not be restored from {}: {rollback_error}; new version also could not be returned from {}: {recovery_error}",
+                    backup_path.display(),
+                    failed_update_path.display()
+                ),
+            },
+        },
+    }
+}
+
+fn format_live_update_failure(
+    name: &str,
+    phase: &str,
+    cause: &str,
+    rollback: &LiveUpdateRollbackReport,
+) -> String {
+    match rollback.state {
+        LiveUpdateRollbackState::PreviousRestored => format!(
+            "module {} update {} failed: {}; previous module version was restored; {}",
+            name,
+            phase,
+            cause,
+            rollback.detail
+        ),
+
+        LiveUpdateRollbackState::NewPreserved => format!(
+            "CRITICAL: module {} update {} failed: {}; rollback could not restore the previous version, but the new version remains active; {}",
+            name,
+            phase,
+            cause,
+            rollback.detail
+        ),
+
+        LiveUpdateRollbackState::NoActiveModule => format!(
+            "CRITICAL: module {} update {} failed: {}; rollback could not leave either version active; {}",
+            name,
+            phase,
+            cause,
+            rollback.detail
+        ),
+    }
+}
+
+fn finalize_active_material_binding_absence(
+    material_root: &Path,
+    module_id: &str,
+) -> Result<(), String> {
+    if let Some(removal) = neebles_backend::module_material_binding::stage_material_binding_removal(
+        material_root,
+        module_id,
+    )? {
+        removal.finalize();
+    }
+
+    Ok(())
+}
+
+fn synchronize_existing_material_binding_after_update_rollback(
+    material_root: &Path,
+    module_id: &str,
+    state: LiveUpdateRollbackState,
+) -> Result<(), String> {
+    match state {
+        LiveUpdateRollbackState::PreviousRestored => Ok(()),
+
+        LiveUpdateRollbackState::NewPreserved | LiveUpdateRollbackState::NoActiveModule => {
+            finalize_active_material_binding_absence(material_root, module_id)
+        }
+    }
+}
+
+fn synchronize_activated_material_binding_after_update_rollback(
+    binding: neebles_backend::module_material_binding::ActivatedMaterialBindingUpdate,
+    material_root: &Path,
+    module_id: &str,
+    state: LiveUpdateRollbackState,
+) -> Result<(), String> {
+    match state {
+        LiveUpdateRollbackState::PreviousRestored => binding.rollback(),
+
+        LiveUpdateRollbackState::NewPreserved => {
+            binding.finalize();
+            Ok(())
+        }
+
+        LiveUpdateRollbackState::NoActiveModule => {
+            binding.finalize();
+            finalize_active_material_binding_absence(material_root, module_id)
+        }
+    }
+}
+
+fn format_live_update_failure_with_binding(
+    name: &str,
+    phase: &str,
+    cause: &str,
+    rollback: &LiveUpdateRollbackReport,
+    binding_sync: Result<(), String>,
+) -> String {
+    let base = format_live_update_failure(name, phase, cause, rollback);
+
+    match binding_sync {
+        Ok(()) => base,
+
+        Err(error) => {
+            format!("{base}; CRITICAL: material binding synchronization also failed: {error}")
+        }
+    }
 }
 
 pub fn update(name: &str, close_running: bool) -> Result<(), String> {
@@ -3274,6 +3526,10 @@ fn update_with_observer(
     }
 
     let current_path = find_module_dir(name)?;
+
+    let material_root =
+        neebles_backend::module_material_territory::resolve_module_material_territory()?
+            .material_root;
 
     let registry = fetch_registry()?;
 
@@ -3400,30 +3656,27 @@ fn update_with_observer(
     match staging.commit(&current_path) {
         Ok(()) => {}
 
-        Err(commit_error) => {
-            /*
-             * The new version could not take the live path.
-             * Restore the previous known-good copy.
-             */
-            match fs::rename(&backup_path, &current_path) {
-                Ok(()) => {
-                    return Err(format!(
-                        "could not commit staged update for module '{}': {}; previous version was restored",
-                        name,
-                        commit_error
-                    ));
-                }
+        Err(publication_error) => {
+            let failed_update_path = root.join(format!(
+                ".neebles-failed-publication-update-{name}-{transaction}"
+            ));
 
-                Err(rollback_error) => {
-                    return Err(format!(
-                        "CRITICAL: could not commit staged update for module '{}': {}; rollback also failed: {}; previous module remains at {}",
-                        name,
-                        commit_error,
-                        rollback_error,
-                        backup_path.display()
-                    ));
-                }
-            }
+            let rollback =
+                rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
+
+            let binding_sync = synchronize_existing_material_binding_after_update_rollback(
+                &material_root,
+                name,
+                rollback.state,
+            );
+
+            return Err(format_live_update_failure_with_binding(
+                name,
+                "candidate publication",
+                &publication_error,
+                &rollback,
+                binding_sync,
+            ));
         }
     }
 
@@ -3435,37 +3688,22 @@ fn update_with_observer(
                 ".neebles-failed-preinstall-update-{name}-{transaction}"
             ));
 
-            if let Err(error) = fs::rename(&current_path, &failed_update_path) {
-                return Err(format!(
-                    "CRITICAL: update preinstall failed for module '{}': {}; new module could not be moved aside for rollback: {}",
-                    name,
-                    preinstall_error,
-                    error
-                ));
-            }
+            let rollback =
+                rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
 
-            match fs::rename(&backup_path, &current_path) {
-                Ok(()) => {
-                    let _ = fs::remove_dir_all(&failed_update_path);
+            let binding_sync = synchronize_existing_material_binding_after_update_rollback(
+                &material_root,
+                name,
+                rollback.state,
+            );
 
-                    return Err(format!(
-                        "update preinstall failed for module '{}': {}; previous module version was restored",
-                        name,
-                        preinstall_error
-                    ));
-                }
-
-                Err(rollback_error) => {
-                    return Err(format!(
-                        "CRITICAL: update preinstall failed for module '{}': {}; rollback also failed: {}; previous version remains at {} and failed update remains at {}",
-                        name,
-                        preinstall_error,
-                        rollback_error,
-                        backup_path.display(),
-                        failed_update_path.display()
-                    ));
-                }
-            }
+            return Err(format_live_update_failure_with_binding(
+                name,
+                "preinstall",
+                &preinstall_error,
+                &rollback,
+                binding_sync,
+            ));
         }
     };
 
@@ -3478,79 +3716,96 @@ fn update_with_observer(
         prepared.report.custom_revision
     );
 
-    let materialization = match crate::module_materialization::materialize_recipe(
-        &prepared.recipe,
-        &prepared.package_pool,
-        &prepared.shared_rootfs,
+    let prepared_binding = match neebles_backend::module_material_binding::prepare_material_binding(
+        &prepared.material_root,
+        prepared.binding_input.clone(),
     ) {
-        Ok(report) => report,
+        Ok(binding) => binding,
 
-        Err(materialization_error) => {
+        Err(binding_error) => {
             let failed_update_path = root.join(format!(
-                ".neebles-failed-materialization-update-{name}-{transaction}"
+                ".neebles-failed-binding-prepare-update-{name}-{transaction}"
             ));
 
-            if let Err(error) = fs::rename(&current_path, &failed_update_path) {
-                return Err(format!(
-                        "CRITICAL: update materialization failed for module '{}': {}; new module could not be moved aside for rollback: {}",
-                        name,
-                        materialization_error,
-                        error
-                    ));
-            }
+            let rollback =
+                rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
 
-            match fs::rename(&backup_path, &current_path) {
-                Ok(()) => {
-                    let _ = fs::remove_dir_all(&failed_update_path);
+            let binding_sync = synchronize_existing_material_binding_after_update_rollback(
+                &material_root,
+                name,
+                rollback.state,
+            );
 
-                    return Err(format!(
-                            "update materialization failed for module '{}': {}; previous module version was restored",
-                            name,
-                            materialization_error
-                        ));
-                }
+            return Err(format_live_update_failure_with_binding(
+                name,
+                "material binding preparation",
+                &binding_error,
+                &rollback,
+                binding_sync,
+            ));
+        }
+    };
 
-                Err(rollback_error) => {
-                    return Err(format!(
-                            "CRITICAL: update materialization failed for module '{}': {}; rollback also failed: {}; previous version remains at {} and failed update remains at {}",
-                            name,
-                            materialization_error,
-                            rollback_error,
-                            backup_path.display(),
-                            failed_update_path.display()
-                        ));
-                }
-            }
+    let material_binding_update = match prepared_binding.activate_update() {
+        Ok(binding) => binding,
+
+        Err(binding_error) => {
+            let failed_update_path = root.join(format!(
+                ".neebles-failed-binding-activation-update-{name}-{transaction}"
+            ));
+
+            let rollback =
+                rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
+
+            let binding_sync = synchronize_existing_material_binding_after_update_rollback(
+                &material_root,
+                name,
+                rollback.state,
+            );
+
+            return Err(format_live_update_failure_with_binding(
+                name,
+                "material binding activation",
+                &binding_error,
+                &rollback,
+                binding_sync,
+            ));
         }
     };
 
     eprintln!(
-        "N.E.E.B.L.E.S.: module '{}' update materialization GREEN: packages={} entries={} published={} reused={}",
+        "N.E.E.B.L.E.S.: module {} update material binding ACTIVE: {}",
         name,
-        materialization.packages,
-        materialization.entries,
-        materialization.published,
-        materialization.reused
+        material_binding_update.active_path().display()
     );
 
-    let runtime_manifest_reused = crate::module_materialization::publish_runtime_manifest(
-        &prepared.runtime_manifest_payload,
-        &prepared.shared_runtime_manifest,
-    )
-    .map_err(|error| {
-        format!(
-            "module '{}' update runtime world publication failed: {}",
-            name, error
-        )
-    })?;
+    let lifecycle_runtime = match module_governor_lifecycle_runtime() {
+        Ok(runtime) => runtime,
 
-    eprintln!(
-        "N.E.E.B.L.E.S.: shared Esbirro runtime manifest GREEN: path={} reused={}",
-        prepared.shared_runtime_manifest.display(),
-        runtime_manifest_reused
-    );
+        Err(error) => {
+            let failed_update_path = root.join(format!(
+                ".neebles-failed-lifecycle-runtime-update-{name}-{transaction}"
+            ));
 
-    let lifecycle_runtime = module_governor_lifecycle_runtime()?;
+            let rollback =
+                rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
+
+            let binding_sync = synchronize_activated_material_binding_after_update_rollback(
+                material_binding_update,
+                &material_root,
+                name,
+                rollback.state,
+            );
+
+            return Err(format_live_update_failure_with_binding(
+                name,
+                "Lifecycle runtime acquisition",
+                &error,
+                &rollback,
+                binding_sync,
+            ));
+        }
+    };
 
     if let Err(lifecycle_error) = execute_module_governor_lifecycle(
         &lifecycle_runtime,
@@ -3563,37 +3818,22 @@ fn update_with_observer(
             ".neebles-failed-lifecycle-update-{name}-{transaction}"
         ));
 
-        if let Err(error) = fs::rename(&current_path, &failed_update_path) {
-            return Err(format!(
-                "CRITICAL: update Lifecycle failed for module '{}': {}; new module could not be moved aside for rollback: {}",
-                name,
-                lifecycle_error,
-                error
-            ));
-        }
+        let rollback = rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
 
-        match fs::rename(&backup_path, &current_path) {
-            Ok(()) => {
-                let _ = fs::remove_dir_all(&failed_update_path);
+        let binding_sync = synchronize_activated_material_binding_after_update_rollback(
+            material_binding_update,
+            &material_root,
+            name,
+            rollback.state,
+        );
 
-                return Err(format!(
-                    "update Lifecycle failed for module '{}': {}; previous module version was restored",
-                    name,
-                    lifecycle_error
-                ));
-            }
-
-            Err(rollback_error) => {
-                return Err(format!(
-                    "CRITICAL: update Lifecycle failed for module '{}': {}; rollback also failed: {}; previous version remains at {} and failed update remains at {}",
-                    name,
-                    lifecycle_error,
-                    rollback_error,
-                    backup_path.display(),
-                    failed_update_path.display()
-                ));
-            }
-        }
+        return Err(format_live_update_failure_with_binding(
+            name,
+            "Lifecycle",
+            &lifecycle_error,
+            &rollback,
+            binding_sync,
+        ));
     }
 
     /*
@@ -3605,52 +3845,41 @@ fn update_with_observer(
     let settings_path = settings::module_settings_path(&neebles_root(), name);
 
     if let Err(settings_error) = settings::update_from_default(&settings_path, &settings_default) {
-        /*
-         * Settings reconciliation is part of the update
-         * transaction. Restore the previous module version.
-         */
-        let failed_update_path = root.join(format!(".neebles-failed-update-{name}-{transaction}"));
+        let failed_update_path = root.join(format!(
+            ".neebles-failed-settings-update-{name}-{transaction}"
+        ));
 
-        if let Err(error) = fs::rename(&current_path, &failed_update_path) {
-            return Err(format!(
-                "CRITICAL: module '{}' was updated but settings reconciliation failed: {}; new module could not be moved aside for rollback: {}",
-                name,
-                settings_error,
-                error
-            ));
-        }
+        let rollback = rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
 
-        match fs::rename(&backup_path, &current_path) {
-            Ok(()) => {
-                let _ = fs::remove_dir_all(&failed_update_path);
+        let binding_sync = synchronize_activated_material_binding_after_update_rollback(
+            material_binding_update,
+            &material_root,
+            name,
+            rollback.state,
+        );
 
-                return Err(format!(
-                    "could not reconcile settings for module '{}': {}; previous module version was restored",
-                    name,
-                    settings_error
-                ));
-            }
-
-            Err(rollback_error) => {
-                return Err(format!(
-                    "CRITICAL: could not reconcile settings for module '{}': {}; module rollback also failed: {}; previous version remains at {} and failed update remains at {}",
-                    name,
-                    settings_error,
-                    rollback_error,
-                    backup_path.display(),
-                    failed_update_path.display()
-                ));
-            }
-        }
+        return Err(format_live_update_failure_with_binding(
+            name,
+            "settings reconciliation",
+            &settings_error,
+            &rollback,
+            binding_sync,
+        ));
     }
 
     /*
-     * Module and persistent settings are now committed.
+     * All fallible update phases that require rollback have completed.
+     * The new material binding is now the persistent active truth.
+     */
+    material_binding_update.finalize();
+
+    /*
+     * Module and persistent settings are now finalized.
      * Remove the old known-good copy last.
      */
     if let Err(error) = fs::remove_dir_all(&backup_path) {
         eprintln!(
-            "N.E.E.B.L.E.S.: module '{}' update was committed successfully, but transactional backup {} could not be removed: {error}",
+            "N.E.E.B.L.E.S.: module '{}' update was finalized successfully, but transactional backup {} could not be removed: {error}",
             name,
             backup_path.display()
         );
@@ -4778,6 +5007,83 @@ mod module_transaction_certification_tests {
         }
 
         assert!(!path.exists(), "uncommitted staging survived Drop cleanup");
+    }
+
+    #[test]
+    fn certification_live_update_rollback_restores_previous_version() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let current = temporary.path().join("current");
+        let backup = temporary.path().join("backup");
+        let failed = temporary.path().join("failed");
+
+        std::fs::create_dir(&current).expect("current fixture");
+        std::fs::create_dir(&backup).expect("backup fixture");
+
+        std::fs::write(current.join("identity"), b"new").expect("new identity");
+        std::fs::write(backup.join("identity"), b"old").expect("old identity");
+
+        let report = super::rollback_live_update_paths(&current, &backup, &failed);
+
+        assert_eq!(
+            report.state,
+            super::LiveUpdateRollbackState::PreviousRestored
+        );
+
+        assert_eq!(
+            std::fs::read(current.join("identity")).expect("restored identity"),
+            b"old"
+        );
+
+        assert!(!backup.exists());
+        assert!(!failed.exists());
+    }
+
+    #[test]
+    fn certification_live_update_rollback_preserves_new_when_move_aside_fails() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let current = temporary.path().join("current");
+        let backup = temporary.path().join("backup");
+
+        let failed = temporary.path().join("missing-parent").join("failed");
+
+        std::fs::create_dir(&current).expect("current fixture");
+        std::fs::create_dir(&backup).expect("backup fixture");
+
+        std::fs::write(current.join("identity"), b"new").expect("new identity");
+        std::fs::write(backup.join("identity"), b"old").expect("old identity");
+
+        let report = super::rollback_live_update_paths(&current, &backup, &failed);
+
+        assert_eq!(report.state, super::LiveUpdateRollbackState::NewPreserved);
+
+        assert_eq!(
+            std::fs::read(current.join("identity")).expect("active identity"),
+            b"new"
+        );
+
+        assert_eq!(
+            std::fs::read(backup.join("identity")).expect("backup identity"),
+            b"old"
+        );
+    }
+
+    #[test]
+    fn certification_live_update_rollback_reports_no_active_module_when_both_are_absent() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let current = temporary.path().join("current");
+        let backup = temporary.path().join("backup");
+        let failed = temporary.path().join("failed");
+
+        let report = super::rollback_live_update_paths(&current, &backup, &failed);
+
+        assert_eq!(report.state, super::LiveUpdateRollbackState::NoActiveModule);
+
+        assert!(!current.exists());
+        assert!(!backup.exists());
+        assert!(!failed.exists());
     }
 
     #[test]
