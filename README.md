@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.25 preparation**
-**Latest published Boss release recorded by the repository:** **1.0.22**
-**Current integration status (2026-10-05):** **Point 1 CLOSED / GREEN.** MaterialBinding + RuntimeLease are the productive module-material architecture; the legacy persistent shared module rootfs/runtime-manifest model has been removed. **Point 2 remains pending. No new Boss release is claimed by this document.**
+**Current source line:** **1.0.26 preparation**
+**Latest published Boss release recorded by the repository:** **1.0.25**
+**Current integration status (2026-10-05):** **Point 1 CLOSED / GREEN. Point 2 CLOSED / GREEN at source level.** MaterialBinding + RuntimeLease are the productive module-material architecture. Tray providers now enter through module-owned Construction, `modules.runtime`, authenticated RuntimeLease material, desktop-session authority and governed process ownership. The legacy persistent shared module rootfs/runtime-manifest model and direct host Tray-provider spawn path are retired. **Fresh Live and installed-system acceptance remain pending. No new Boss release is claimed by this document.**
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -810,63 +810,97 @@ Boss startup does not depend on running recovery.
 
 # Current source certification
 
-Point 1 closure was followed by the required exhaustive post-cleanup gates on the exact working tree.
+Point 1 and Point 2 closure were followed by directed security gates and full regression on the exact working tree.
 
-Current evidence:
+Current Point 2 closure evidence:
 
 ```text
 git diff --check                       GREEN
-cargo fmt -- --check                  GREEN
-cargo test --lib                      109 / 109 GREEN
-cargo test --bin neebles-backend      578 / 578 GREEN
+
+desktop-session runtime grants        2 / 2 GREEN
+Construction Point 2 directed tests   5 / 5 GREEN
+Tray ownership directed tests         5 / 5 GREEN
+
+cargo test --lib                      116 / 116 GREEN
+cargo test --bin neebles-backend      583 / 583 GREEN
 cargo check --lib                     GREEN
 cargo check --bin neebles-backend     GREEN
 ```
 
-The binary check currently emits **87 known non-blocking warnings**, primarily historical Lifecycle `dead_code` / naming warnings. Point 1 does not authorize an unrelated warning-cleanup refactor.
+The binary check currently emits **87 known non-blocking warnings**, primarily historical Lifecycle `dead_code` / naming warnings. Point 2 does not authorize an unrelated warning-cleanup refactor.
 
-The Point 1 closure additionally certifies the directed behavior of:
+Point 1 source closure certifies:
 
-- module material parsing/materialization;
-- MaterialBinding roundtrip, tamper/untracked-file rejection and transaction semantics;
-- RuntimeLease authenticated manifest bytes, ephemeral lifetime and concurrent independence;
+- Essential + per-module delta material composition;
+- persistent MaterialBinding;
+- authenticated ephemeral RuntimeLease;
+- concurrent independent RuntimeLeases;
 - Construction projection into generic Workspace;
-- update rollback physical states `PreviousRestored`, `NewPreserved` and `NoActiveModule`.
+- install/update/uninstall MaterialBinding transaction semantics.
 
-**Point 1 is CLOSED / GREEN. Point 2 remains pending.**
+Point 2 source closure additionally certifies:
 
-These source gates do not claim a new published Boss release and do not replace later integrated Fresh Live acceptance.
+- Tray contracts declare a generic `construction_step`;
+- Tray providers are not directly executed from the host path;
+- Tray provider birth uses module-owned Construction;
+- `modules.runtime` creates and retains the authenticated RuntimeLease;
+- the declared world remains module/CUSTOM V2 truth, never Boss technology knowledge;
+- session-local readonly resources are granted by `platform.desktop_session_interface`;
+- Workspace re-authenticates session readonly grants before boundary composition;
+- dynamic Construction environment injection is sealed to the `NEEBLES_*` namespace;
+- host execution inputs such as `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH` and `PYTHONPATH` cannot be injected through that overlay;
+- Tray runtime ownership uses PID incarnation identity: `pid + start_time_ticks`;
+- the Construction supervisor owns a dedicated process group;
+- lifecycle stop signals only the authenticated governed group;
+- loss or change of authenticated leader identity becomes UNKNOWN/UNSAFE and cannot authorize group signaling;
+- Tray registration authenticates the real provider PID through kernel `SO_PEERCRED`;
+- stale waiters cannot erase ownership for a newer Tray runtime.
+
+**Point 1 and Point 2 are CLOSED / GREEN at source level.**
+
+These source gates do not claim a published Boss release and do not replace later Fresh Live or installed-system acceptance.
 
 ---
 
 # Release policy
 
-The repository currently carries **1.0.25 preparation** surfaces in source/workflow metadata. The latest published Boss release recorded by the current repository documentation remains **1.0.22**.
+The repository now carries **1.0.26 preparation** surfaces in source/workflow metadata. The latest published Boss release recorded by the current repository documentation is **1.0.25**.
 
-This README deliberately does **not** promote the preparation version into a release claim.
+This README deliberately does **not** promote a preparation version into a release claim.
 
 Current sequencing is:
 
 ```text
-Point 1 architecture + exhaustive gates
+Point 1
     -> CLOSED / GREEN
 
-Point 1 documentation + repository cleanup/audit
+Point 2
+    -> CLOSED / GREEN at source level
+
+README / repository truth
     -> current work
 
-Point 2
-    -> PENDING
+next Boss version preparation
+    -> pending
 
-release preparation/publication
-    -> only after Point 2 closes
+release Actions + publication
+    -> pending
+
+Fresh Live acceptance
+    -> pending
+
+installed-system acceptance after Calamares
+    -> pending
 ```
 
-Before any future release is cut, the repository must again be audited for coherent versioning and release surfaces, including:
+Before the next release is cut, the repository must be audited for coherent versioning and release surfaces, including:
 
 - `Cargo.toml` / `Cargo.lock`;
+- all Boss version constants and generated metadata;
 - current release workflow and trigger;
 - release notes;
-- pinned CUSTOM/CUSTOM V2 revisions as actually required by that release;
+- release asset/tag names;
+- pinned CUSTOM/CUSTOM V2 revisions actually required by the release;
 - controlled Qt 6.8.2 build world where applicable;
 - Rust release toolchain;
 - Boss runtime materialization;
@@ -879,34 +913,73 @@ A source preparation number is not, by itself, release authority.
 
 # Fresh Live acceptance boundary
 
-Source certification is not final installed-system certification.
+Source certification is not final integrated-system certification.
 
-After Point 2 and the corresponding release/integration work, the next integrated image must prove the final installed path, including at minimum:
+The first acceptance phase uses **one Test Module only**.
 
 ```text
-OS authorities present
-    -> Boss bootstrap
-    -> module discovery
+Fresh Live
+    -> Boss install
     -> Test Module install
     -> Preinstall authenticates Essential + module delta
     -> permanent package pools are correct
     -> active MaterialBinding matches installed module truth
-    -> Open
-    -> Lifecycle open-runtime
+    -> Launcher exposes Open and declared controls
+    -> Tray exposes the module and its declared controls
+    -> Open enters Lifecycle
+    -> construction.step selects open-runtime
     -> modules.runtime creates independent RuntimeLease
     -> Essential + Test Module delta compose in the lease rootfs
     -> desktop identity/session authority
-    -> persistent runtime retains lease for child lifetime
+    -> persistent runtime retains RuntimeLease for real process lifetime
     -> Module IPC registration
-    -> UI
-    -> settings
-    -> Tray / notifications where expected
-    -> uninstall / reinstall package reuse
+    -> UI opens
+    -> Tray provider enters through tray-provider Construction
+    -> Tray provider registers through kernel peer identity
+    -> settings and switches communicate Boss <-> module
+    -> state changes are reflected through canonical surfaces
+    -> disable / enable works
+    -> uninstall cleans runtime ownership and module state
+    -> reinstall succeeds
 ```
 
-The old acceptance phrase "real 47-DEB materialization" is obsolete. The certified model is **59-DEB Essential layer + 32-DEB Test Module delta**, consumed through MaterialBinding + RuntimeLease.
+After the complete Fresh Live sequence is GREEN:
 
-Only the later integrated gate permits an installed-system production-ready claim.
+```text
+Calamares install
+    -> boot installed N.E.E.B.L.E.S. OS
+    -> repeat the complete single-module acceptance sequence
+```
+
+Only after the single-module Live + installed-system cycle is GREEN will the reference Test Module be cloned into another repository under a **different module identity**, for example `test-module-2`.
+
+The complete acceptance battery will then be repeated with both modules simultaneously to prove:
+
+```text
+two installed module identities
+    -> both project independently in Launcher and Tray
+    -> both can Open
+    -> independent MaterialBindings
+    -> independent RuntimeLeases
+    -> shared Essential material
+    -> no mutable shared rootfs
+    -> isolated settings and switches
+    -> uninstall/reinstall of one does not disturb the other
+    -> repeat after Calamares installation
+```
+
+The obsolete phrase **real 47-DEB materialization** is not current architecture.
+
+Current certified material truth:
+
+```text
+Essential layer          59 DEBs
+Test Module delta        32 DEBs
+runtime composition      Essential + module delta
+ownership                MaterialBinding + RuntimeLease
+```
+
+Only those later integrated gates permit an installed-system production-ready claim.
 
 ---
 

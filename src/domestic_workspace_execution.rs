@@ -104,15 +104,28 @@ fn load_dynamic_readonly_grants(
 
 fn load_session_readonly_grants(
     requests: &[WorkspaceSessionReadonlyGrant],
+    desktop_identity: Option<(u32, u32)>,
 ) -> Result<Vec<ExternalDataAuthorityDescriptor>, String> {
+    if requests.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let Some((desktop_uid, desktop_gid)) = desktop_identity else {
+        return Err("workspace session readonly grants require desktop identity".to_string());
+    };
+
     requests
         .iter()
         .map(|request| {
             let descriptor =
-                load_platform_authority_descriptor(&request.descriptor_path, &request.authority)?;
+                load_platform_authority_descriptor(
+                    &request.descriptor_path,
+                    &request.authority,
+                )?;
 
             if descriptor.authority()
-                != crate::domestic_desktop_session_interface::DESKTOP_SESSION_INTERFACE_AUTHORITY
+                != crate::domestic_desktop_session_interface::
+                    DESKTOP_SESSION_INTERFACE_AUTHORITY
             {
                 return Err(format!(
                     "workspace session readonly authority mismatch: {}",
@@ -121,7 +134,8 @@ fn load_session_readonly_grants(
             }
 
             if descriptor.protocol()
-                != crate::domestic_desktop_session_interface::DESKTOP_SESSION_INTERFACE_PROTOCOL_V1
+                != crate::domestic_desktop_session_interface::
+                    DESKTOP_SESSION_INTERFACE_PROTOCOL_V1
             {
                 return Err(format!(
                     "workspace session readonly protocol mismatch: {}",
@@ -129,8 +143,13 @@ fn load_session_readonly_grants(
                 ));
             }
 
-            if !request.source.is_absolute() || !request.destination.is_absolute() {
-                return Err("workspace session readonly paths must be absolute".to_string());
+            if !request.source.is_absolute()
+                || !request.destination.is_absolute()
+            {
+                return Err(
+                    "workspace session readonly paths must be absolute"
+                        .to_string(),
+                );
             }
 
             if request.source != request.destination {
@@ -141,13 +160,103 @@ fn load_session_readonly_grants(
                 ));
             }
 
-            Ok(ExternalDataAuthorityDescriptor {
-                authority: request.authority.clone(),
-                descriptor_path: request.descriptor_path.clone(),
-                source: request.source.clone(),
-                destination: request.destination.clone(),
-                access: "read_only".to_string(),
-            })
+            let interface =
+                crate::domestic_desktop_session_interface::
+                    resolve_desktop_session_interface_from_descriptor(
+                        &descriptor,
+                        desktop_uid as libc::uid_t,
+                        desktop_gid as libc::gid_t,
+                    )?;
+
+            let explicit = interface
+                .readonly_paths()
+                .iter()
+                .any(|path| {
+                    path.source == request.source
+                        && path.destination
+                            == request.destination
+                });
+
+            if !explicit {
+                let runtime_root =
+                    std::fs::canonicalize(
+                        interface.runtime_dir(),
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "could not canonicalize workspace desktop runtime directory {}: {error}",
+                            interface.runtime_dir()
+                        )
+                    })?;
+
+                let canonical_source =
+                    std::fs::canonicalize(
+                        &request.source,
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "could not canonicalize workspace session readonly source {}: {error}",
+                            request.source.display()
+                        )
+                    })?;
+
+                if canonical_source
+                    != request.source
+                {
+                    return Err(format!(
+                        "workspace session readonly source is not canonical: {}",
+                        request.source.display()
+                    ));
+                }
+
+                let relative =
+                    canonical_source
+                        .strip_prefix(
+                            &runtime_root,
+                        )
+                        .map_err(|_| {
+                            format!(
+                                "workspace session readonly source is not owned by certified desktop runtime directory: {}",
+                                canonical_source.display()
+                            )
+                        })?;
+
+                let granted =
+                    interface
+                        .grant_runtime_readonly(
+                            relative,
+                        )?;
+
+                if granted.source
+                    != request.source
+                    || granted.destination
+                        != request.destination
+                {
+                    return Err(format!(
+                        "workspace session readonly grant does not match certified desktop-session authority: {}",
+                        request.source.display()
+                    ));
+                }
+            }
+
+            Ok(
+                ExternalDataAuthorityDescriptor {
+                    authority:
+                        request.authority.clone(),
+                    descriptor_path:
+                        request
+                            .descriptor_path
+                            .clone(),
+                    source:
+                        request.source.clone(),
+                    destination:
+                        request
+                            .destination
+                            .clone(),
+                    access:
+                        "read_only".to_string(),
+                },
+            )
         })
         .collect()
 }
@@ -213,7 +322,10 @@ pub fn build_workspace_execution_command(
 
     let mut readonly = load_readonly_grants(&request.readonly)?;
     readonly.extend(load_dynamic_readonly_grants(&request.dynamic_readonly)?);
-    readonly.extend(load_session_readonly_grants(&request.session_readonly)?);
+    readonly.extend(load_session_readonly_grants(
+        &request.session_readonly,
+        request.desktop_identity,
+    )?);
 
     let writable = load_writable_grants(&request.writable)?;
 

@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::fs;
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
+use std::path::{Component, Path, PathBuf};
 
 use crate::domestic_authority_supply::build_authority_grant_set;
 use crate::domestic_capability_provider::resolve_platform_capability;
@@ -62,6 +64,96 @@ impl DesktopSessionInterface {
         self.environment
             .get(DBUS_SESSION_BUS_ADDRESS_KEY)
             .expect("validated desktop session interface must contain DBUS_SESSION_BUS_ADDRESS")
+    }
+
+    pub fn grant_runtime_readonly(
+        &self,
+        relative: &Path,
+    ) -> Result<DesktopSessionReadonlyPath, String> {
+        if relative.as_os_str().is_empty() {
+            return Err("desktop session runtime readonly path cannot be empty".to_string());
+        }
+
+        if relative.is_absolute() {
+            return Err(format!(
+                "desktop session runtime readonly path must be relative: {}",
+                relative.display()
+            ));
+        }
+
+        for component in relative.components() {
+            if !matches!(component, Component::Normal(_)) {
+                return Err(format!(
+                    "desktop session runtime readonly path must contain only normal relative components: {}",
+                    relative.display()
+                ));
+            }
+        }
+
+        let runtime_root = fs::canonicalize(self.runtime_dir()).map_err(|error| {
+            format!(
+                "could not canonicalize certified desktop runtime directory {}: {error}",
+                self.runtime_dir()
+            )
+        })?;
+
+        let declared = Path::new(self.runtime_dir()).join(relative);
+
+        let metadata = fs::symlink_metadata(&declared).map_err(|error| {
+            format!(
+                "could not inspect desktop session runtime readonly resource {}: {error}",
+                declared.display()
+            )
+        })?;
+
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "desktop session runtime readonly resource cannot be a symlink: {}",
+                declared.display()
+            ));
+        }
+
+        if metadata.is_dir() {
+            return Err(format!(
+                "desktop session runtime readonly resource cannot expose a directory: {}",
+                declared.display()
+            ));
+        }
+
+        if !metadata.is_file() && !metadata.file_type().is_socket() {
+            return Err(format!(
+                "desktop session runtime readonly resource must be a regular file or Unix socket: {}",
+                declared.display()
+            ));
+        }
+
+        if metadata.uid() != self.desktop_uid {
+            return Err(format!(
+                "desktop session runtime readonly resource owner mismatch: path={} owner={} expected={}",
+                declared.display(),
+                metadata.uid(),
+                self.desktop_uid
+            ));
+        }
+
+        let source = fs::canonicalize(&declared).map_err(|error| {
+            format!(
+                "could not canonicalize desktop session runtime readonly resource {}: {error}",
+                declared.display()
+            )
+        })?;
+
+        if source == runtime_root || !source.starts_with(&runtime_root) {
+            return Err(format!(
+                "desktop session runtime readonly resource escapes certified runtime directory: {}",
+                source.display()
+            ));
+        }
+
+        Ok(DesktopSessionReadonlyPath {
+            source: source.clone(),
+            destination: source,
+        })
     }
 }
 
@@ -476,5 +568,110 @@ mod tests {
             error.contains("absolute unix:path"),
             "unexpected error: {error}"
         );
+    }
+}
+
+#[cfg(test)]
+mod point2_session_runtime_readonly_tests {
+    use super::*;
+
+    use std::os::unix::fs::symlink;
+    use std::os::unix::net::UnixListener;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn fixture_root(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("fixture clock must work")
+            .as_nanos();
+
+        std::env::temp_dir().join(format!(
+            "neebles-session-runtime-{label}-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    fn fixture_interface(runtime_dir: &Path) -> DesktopSessionInterface {
+        DesktopSessionInterface {
+            desktop_uid: unsafe { libc::geteuid() },
+            desktop_gid: unsafe { libc::getegid() },
+            environment: BTreeMap::from([
+                (
+                    XDG_RUNTIME_DIR_KEY.to_string(),
+                    runtime_dir.display().to_string(),
+                ),
+                (
+                    DBUS_SESSION_BUS_ADDRESS_KEY.to_string(),
+                    format!("unix:path={}", runtime_dir.join("bus").display()),
+                ),
+            ]),
+            readonly_paths: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn authority_grants_owned_runtime_socket_only_by_relative_path() {
+        let base = fixture_root("socket");
+        let neebles = base.join("neebles");
+        let socket = neebles.join("tray.sock");
+
+        fs::create_dir_all(&neebles).expect("fixture runtime directory must exist");
+
+        let listener = UnixListener::bind(&socket).expect("fixture tray socket must bind");
+
+        let interface = fixture_interface(&base);
+
+        let grant = interface
+            .grant_runtime_readonly(Path::new("neebles/tray.sock"))
+            .expect("owned session socket must be granted");
+
+        assert_eq!(grant.source, fs::canonicalize(&socket).unwrap(),);
+
+        assert_eq!(grant.destination, grant.source,);
+
+        drop(listener);
+
+        fs::remove_dir_all(base).expect("fixture must clean");
+    }
+
+    #[test]
+    fn authority_rejects_escape_directory_and_symlink() {
+        let base = fixture_root("reject");
+        let neebles = base.join("neebles");
+        let socket = neebles.join("tray.sock");
+        let link = neebles.join("tray-link.sock");
+
+        fs::create_dir_all(&neebles).expect("fixture runtime directory must exist");
+
+        let listener = UnixListener::bind(&socket).expect("fixture tray socket must bind");
+
+        symlink(&socket, &link).expect("fixture symlink must exist");
+
+        let interface = fixture_interface(&base);
+
+        assert!(
+            interface
+                .grant_runtime_readonly(Path::new("../outside"),)
+                .is_err(),
+            "parent traversal must fail"
+        );
+
+        assert!(
+            interface
+                .grant_runtime_readonly(Path::new("neebles"),)
+                .is_err(),
+            "directory exposure must fail"
+        );
+
+        assert!(
+            interface
+                .grant_runtime_readonly(Path::new("neebles/tray-link.sock"),)
+                .is_err(),
+            "symlink exposure must fail"
+        );
+
+        drop(listener);
+
+        fs::remove_dir_all(base).expect("fixture must clean");
     }
 }

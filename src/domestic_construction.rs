@@ -113,6 +113,9 @@ pub struct DomesticConstructionStep {
     pub session: bool,
 
     #[serde(default)]
+    pub session_readonly: Vec<PathBuf>,
+
+    #[serde(default)]
     pub readonly: Vec<String>,
 
     #[serde(default)]
@@ -235,6 +238,23 @@ impl DomesticConstructionStep {
                 "domestic construction step {} world cannot be empty",
                 self.id
             ));
+        }
+
+        if !self.session && !self.session_readonly.is_empty() {
+            return Err(format!(
+                "domestic construction step {} cannot request session_readonly without session authority",
+                self.id
+            ));
+        }
+
+        for path in &self.session_readonly {
+            require_relative_clean_path(
+                path,
+                &format!(
+                    "domestic construction step {} session readonly path",
+                    self.id
+                ),
+            )?;
         }
 
         for authority in &self.readonly {
@@ -382,6 +402,27 @@ fn require_absolute_clean_path(path: &Path, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn require_relative_clean_path(path: &Path, label: &str) -> Result<(), String> {
+    if path.as_os_str().is_empty() {
+        return Err(format!("{label} cannot be empty"));
+    }
+
+    if path.is_absolute() {
+        return Err(format!("{label} must be relative: {}", path.display()));
+    }
+
+    for component in path.components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return Err(format!(
+                "{label} must contain only normal relative components: {}",
+                path.display()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 pub fn project_construction_step(
     declaration: &DomesticConstructionDeclaration,
     step_id: &str,
@@ -470,7 +511,7 @@ pub fn project_construction_step(
                 desktop_gid,
             )?;
 
-        let session_readonly = session_interface
+        let mut session_readonly = session_interface
             .readonly_paths()
             .iter()
             .map(
@@ -482,6 +523,19 @@ pub fn project_construction_step(
                 },
             )
             .collect::<Vec<_>>();
+
+        for relative in &step.session_readonly {
+            let granted = session_interface.grant_runtime_readonly(relative)?;
+
+            session_readonly.push(
+                crate::domestic_workspace_execution::WorkspaceSessionReadonlyGrant {
+                    authority: session_authority.to_string(),
+                    descriptor_path: session_descriptor_path.clone(),
+                    source: granted.source,
+                    destination: granted.destination,
+                },
+            );
+        }
 
         (
             session_interface.environment().clone(),
@@ -575,13 +629,71 @@ fn project_construction_step_for_execution(
     Ok((request, runtime_lease))
 }
 
-pub fn build_construction_step_command(
+fn validate_domestic_execution_environment(
+    domestic_environment: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    for (key, value) in domestic_environment {
+        if key.trim().is_empty() || key.contains('=') || key.contains('\0') {
+            return Err(format!(
+                "domestic construction execution environment contains invalid key: {:?}",
+                key
+            ));
+        }
+
+        if !key.starts_with("NEEBLES_") {
+            return Err(format!(
+                "domestic construction execution environment key is outside NEEBLES namespace: {}",
+                key
+            ));
+        }
+
+        let suffix = key
+            .strip_prefix("NEEBLES_")
+            .expect("validated NEEBLES prefix must strip");
+
+        if suffix.is_empty()
+            || !suffix.chars().all(|character| {
+                character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
+            })
+        {
+            return Err(format!(
+                "domestic construction execution environment contains invalid NEEBLES key: {}",
+                key
+            ));
+        }
+
+        if value.contains('\0') {
+            return Err(format!(
+                "domestic construction execution environment contains NUL in value for key {}",
+                key
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn build_construction_step_command_with_environment(
     declaration: &DomesticConstructionDeclaration,
     step_id: &str,
     registry: &SuppliedAuthorityRegistry,
+    domestic_environment: &BTreeMap<String, String>,
 ) -> Result<PreparedConstructionCommand, String> {
-    let (request, runtime_lease) =
+    validate_domestic_execution_environment(domestic_environment)?;
+
+    let (mut request, runtime_lease) =
         project_construction_step_for_execution(declaration, step_id, registry)?;
+
+    for (key, value) in domestic_environment {
+        if request.environment.contains_key(key) {
+            return Err(format!(
+                "domestic construction execution environment cannot override governed session key {}",
+                key
+            ));
+        }
+
+        request.environment.insert(key.clone(), value.clone());
+    }
 
     let command = build_workspace_execution_command(&request)?;
 
@@ -589,6 +701,21 @@ pub fn build_construction_step_command(
         command,
         runtime_lease,
     })
+}
+
+pub fn build_construction_step_command(
+    declaration: &DomesticConstructionDeclaration,
+    step_id: &str,
+    registry: &SuppliedAuthorityRegistry,
+) -> Result<PreparedConstructionCommand, String> {
+    let domestic_environment = BTreeMap::<String, String>::new();
+
+    build_construction_step_command_with_environment(
+        declaration,
+        step_id,
+        registry,
+        &domestic_environment,
+    )
 }
 
 pub fn execute_construction_step(
@@ -1143,5 +1270,143 @@ mod tests {
             parsed.steps[0].execution,
             DomesticConstructionExecution::Persistent
         );
+    }
+}
+
+#[cfg(test)]
+mod point2_session_readonly_tests {
+    use super::*;
+
+    #[test]
+    fn session_readonly_requires_session_authority() {
+        let raw = serde_json::json!({
+            "schema": "1",
+            "name": "neebles-domestic-construction",
+            "subject": "point2.fixture",
+            "steps": [
+                {
+                    "id": "tray",
+                    "runtime_authority": "boss.runtime",
+                    "world": "boss.git",
+                    "execution": "persistent",
+                    "session": false,
+                    "session_readonly": [
+                        "neebles/tray.sock"
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        let error = DomesticConstructionDeclaration::parse(&raw)
+            .expect_err("session_readonly without session must fail");
+
+        assert!(
+            error.contains("session_readonly") && error.contains("session"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn session_readonly_rejects_absolute_and_escape_paths() {
+        for path in [
+            "/run/user/1000/neebles/tray.sock",
+            "../tray.sock",
+            "neebles/../tray.sock",
+        ] {
+            let raw = serde_json::json!({
+                "schema": "1",
+                "name": "neebles-domestic-construction",
+                "subject": "point2.fixture",
+                "steps": [
+                    {
+                        "id": "tray",
+                        "runtime_authority": "boss.runtime",
+                        "world": "boss.git",
+                        "execution": "persistent",
+                        "session": true,
+                        "session_readonly": [
+                            path
+                        ]
+                    }
+                ]
+            })
+            .to_string();
+
+            let error = DomesticConstructionDeclaration::parse(&raw)
+                .expect_err("unsafe session path must fail");
+
+            assert!(
+                error.contains("session readonly path")
+                    || error.contains("must be relative")
+                    || error.contains("normal relative components"),
+                "unexpected error for unsafe session path {path}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn session_readonly_accepts_clean_relative_socket_path() {
+        let raw = serde_json::json!({
+            "schema": "1",
+            "name": "neebles-domestic-construction",
+            "subject": "point2.fixture",
+            "steps": [
+                {
+                    "id": "tray",
+                    "runtime_authority": "boss.runtime",
+                    "world": "boss.git",
+                    "execution": "persistent",
+                    "session": true,
+                    "session_readonly": [
+                        "neebles/tray.sock"
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        let declaration = DomesticConstructionDeclaration::parse(&raw)
+            .expect("clean relative session socket must parse");
+
+        assert_eq!(
+            declaration.steps[0].session_readonly,
+            vec![PathBuf::from("neebles/tray.sock")]
+        );
+    }
+
+    #[test]
+    fn domestic_environment_accepts_only_neebles_namespace() {
+        let valid = BTreeMap::from([
+            ("NEEBLES_MODULE".to_string(), "test-module".to_string()),
+            (
+                "NEEBLES_TRAY_SOCKET".to_string(),
+                "/run/user/1000/neebles/tray.sock".to_string(),
+            ),
+        ]);
+
+        validate_domestic_execution_environment(&valid)
+            .expect("NEEBLES domestic environment must pass");
+    }
+
+    #[test]
+    fn domestic_environment_rejects_execution_injection_names() {
+        for key in [
+            "PATH",
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "PYTHONPATH",
+            "HOME",
+        ] {
+            let environment = BTreeMap::from([(key.to_string(), "forbidden".to_string())]);
+
+            let error = validate_domestic_execution_environment(&environment)
+                .expect_err("non-NEEBLES environment must fail");
+
+            assert!(
+                error.contains("NEEBLES namespace"),
+                "unexpected error for {key}: {error}"
+            );
+        }
     }
 }

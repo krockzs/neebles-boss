@@ -12,6 +12,7 @@ use std::env;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -119,6 +120,8 @@ pub struct TrayContract {
     pub icon: String,
 
     pub provider: String,
+
+    pub construction_step: String,
 }
 
 fn default_tray_protocol() -> u32 {
@@ -333,6 +336,7 @@ pub struct ResolvedTrayContract {
     pub module_version: String,
     pub icon: String,
     pub provider: String,
+    pub construction_step: String,
 }
 
 fn resolve_module_contract_path(
@@ -677,6 +681,15 @@ fn resolve_tray_contract_from(
 
     let provider = resolve_module_contract_path(module_dir, &tray.provider, "provider")?;
 
+    let construction_step = tray.construction_step.trim();
+
+    if construction_step.is_empty() {
+        return Err(format!(
+            "module '{}' tray construction_step cannot be empty",
+            manifest.name
+        ));
+    }
+
     let metadata = fs::metadata(&provider).map_err(|error| {
         format!(
             "could not inspect module '{}' tray provider {}: {error}",
@@ -698,6 +711,7 @@ fn resolve_tray_contract_from(
         module_version: manifest.version.clone(),
         icon: icon.display().to_string(),
         provider: provider.display().to_string(),
+        construction_step: construction_step.to_string(),
     })
 }
 
@@ -1712,7 +1726,7 @@ fn module_has_active_resources(name: &str) -> Result<bool, String> {
      * Tray Manager and intentionally remains independent
      * from the normal Module IPC runtime.
      */
-    Ok(probe_tray_provider_pid(name)?.is_some())
+    Ok(probe_tray_provider_identity(name)?.is_some())
 }
 
 fn request_runtime_shutdown(name: &str, reason: &str) -> Result<(), String> {
@@ -1857,7 +1871,7 @@ fn deactivate_module(name: &str, reason: &str) -> Result<(), String> {
         ));
     }
 
-    if probe_tray_provider_pid(name)?.is_some() {
+    if probe_tray_provider_identity(name)?.is_some() {
         return Err(format!(
             "module '{}' tray provider is still active after deactivation",
             name
@@ -1909,7 +1923,7 @@ fn runtime_modules_root() -> PathBuf {
         .join("modules")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct ProcessIdentity {
     pid: u32,
     start_time_ticks: u64,
@@ -2112,20 +2126,20 @@ fn tray_runtime_marker_path(name: &str) -> PathBuf {
     runtime_modules_root().join(format!("{name}.tray.pid"))
 }
 
-fn clear_tray_runtime_marker_if_pid(name: &str, pid: u32) {
+fn clear_tray_runtime_marker_if_identity(name: &str, identity: ProcessIdentity) {
     let path = tray_runtime_marker_path(name);
 
     let matches = fs::read_to_string(&path)
         .ok()
-        .and_then(|value| value.trim().parse::<u32>().ok())
-        == Some(pid);
+        .and_then(|value| serde_json::from_str::<ProcessIdentity>(&value).ok())
+        == Some(identity);
 
     if matches {
         let _ = fs::remove_file(path);
     }
 }
 
-fn write_tray_runtime_marker(name: &str, pid: u32) -> Result<(), String> {
+fn write_tray_runtime_marker(name: &str, identity: ProcessIdentity) -> Result<(), String> {
     let root = runtime_modules_root();
 
     fs::create_dir_all(&root).map_err(|error| {
@@ -2137,15 +2151,113 @@ fn write_tray_runtime_marker(name: &str, pid: u32) -> Result<(), String> {
 
     let path = tray_runtime_marker_path(name);
 
-    fs::write(&path, format!("{pid}\n")).map_err(|error| {
+    let payload = serde_json::to_string(&identity).map_err(|error| {
+        format!(
+            "could not serialize tray runtime ownership for module '{}': {error}",
+            name
+        )
+    })?;
+
+    fs::write(&path, format!("{payload}\n")).map_err(|error| {
         format!(
             "could not write tray provider runtime marker {}: {error}",
+            path.display()
+        )
+    })?;
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|error| {
+        format!(
+            "could not seal tray provider runtime marker {}: {error}",
             path.display()
         )
     })
 }
 
-fn probe_tray_provider_pid(name: &str) -> Result<Option<u32>, String> {
+fn tray_process_group_exists(process_group: u32) -> Result<bool, String> {
+    if process_group <= 1 || process_group > libc::pid_t::MAX as u32 {
+        return Err(format!(
+            "invalid tray process group identity: {}",
+            process_group
+        ));
+    }
+
+    let result = unsafe { libc::kill(-(process_group as libc::pid_t), 0) };
+
+    if result == 0 {
+        return Ok(true);
+    }
+
+    let error = std::io::Error::last_os_error();
+
+    match error.raw_os_error() {
+        Some(libc::ESRCH) => Ok(false),
+        Some(libc::EPERM) => Ok(true),
+        _ => Err(format!(
+            "could not inspect tray process group {}: {}",
+            process_group, error
+        )),
+    }
+}
+
+fn tray_runtime_group_alive(identity: ProcessIdentity) -> Result<bool, String> {
+    let group_exists = tray_process_group_exists(identity.pid)?;
+
+    match process_start_time_ticks(identity.pid)? {
+        Some(start_time_ticks) if start_time_ticks == identity.start_time_ticks => Ok(group_exists),
+
+        Some(start_time_ticks) => {
+            if group_exists {
+                return Err(format!(
+                    "tray runtime process group {} remains live but leader identity changed: expected_start={} actual_start={}",
+                    identity.pid,
+                    identity.start_time_ticks,
+                    start_time_ticks
+                ));
+            }
+
+            Ok(false)
+        }
+
+        None => {
+            if group_exists {
+                return Err(format!(
+                    "tray runtime process group {} remains live after its authenticated leader exited; ownership is unknown",
+                    identity.pid
+                ));
+            }
+
+            Ok(false)
+        }
+    }
+}
+
+fn signal_tray_runtime_group(
+    identity: ProcessIdentity,
+    signal: libc::c_int,
+) -> Result<bool, String> {
+    if !tray_runtime_group_alive(identity)? {
+        return Ok(false);
+    }
+
+    let result = unsafe { libc::kill(-(identity.pid as libc::pid_t), signal) };
+
+    if result == 0 {
+        return Ok(true);
+    }
+
+    let error = std::io::Error::last_os_error();
+
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(false);
+    }
+
+    Err(format!(
+        "could not signal tray runtime process group {} with signal {}: {}",
+        identity.pid, signal, error
+    ))
+}
+
+fn probe_tray_provider_identity(name: &str) -> Result<Option<ProcessIdentity>, String> {
     let path = tray_runtime_marker_path(name);
 
     let raw = match fs::read_to_string(&path) {
@@ -2163,81 +2275,90 @@ fn probe_tray_provider_pid(name: &str) -> Result<Option<u32>, String> {
         }
     };
 
-    let pid = raw.trim().parse::<u32>().map_err(|error| {
-        format!(
-            "module '{}' has an invalid tray provider runtime marker {}: {error}",
+    let identity = match serde_json::from_str::<ProcessIdentity>(&raw) {
+        Ok(identity) => identity,
+
+        Err(json_error) => {
+            if let Ok(pid) = raw.trim().parse::<u32>() {
+                if process_start_time_ticks(pid)?.is_none() {
+                    let _ = fs::remove_file(&path);
+                    return Ok(None);
+                }
+
+                return Err(format!(
+                        "module '{}' has a live legacy tray PID marker {} for process {}; cleanup is required before governed tray ownership can be established",
+                        name,
+                        path.display(),
+                        pid
+                    ));
+            }
+
+            return Err(format!(
+                "module '{}' has an invalid tray runtime marker {}: {}",
+                name,
+                path.display(),
+                json_error
+            ));
+        }
+    };
+
+    if identity.pid <= 1 || identity.start_time_ticks == 0 {
+        return Err(format!(
+            "module '{}' has invalid tray runtime ownership identity in {}",
             name,
             path.display()
-        )
-    })?;
+        ));
+    }
 
-    let process_path = PathBuf::from(format!("/proc/{pid}"));
+    if !process_identity_is_alive(identity)? {
+        if tray_runtime_group_alive(identity)? {
+            return Ok(Some(identity));
+        }
 
-    if !process_path.exists() {
-        clear_tray_runtime_marker_if_pid(name, pid);
+        clear_tray_runtime_marker_if_identity(name, identity);
 
         return Ok(None);
     }
 
-    /*
-     * A live PID exists.
-     *
-     * From this point onward every inability to prove
-     * provider ownership is an UNKNOWN/UNSAFE runtime
-     * state, never "not running".
-     */
-    let contract =
-        resolved_tray_contract(name)
-            .map_err(|error| {
-                format!(
-                    "module '{}' tray provider process {} exists, but its tray contract cannot be verified: {}",
-                    name,
-                    pid,
-                    error
-                )
-            })?;
+    let contract = resolved_tray_contract(name)?;
 
-    let expected =
-        PathBuf::from(
-            &contract.provider
-        )
+    let expected = PathBuf::from(&contract.provider)
         .canonicalize()
         .map_err(|error| {
             format!(
-                "module '{}' tray provider process {} exists, but its provider path cannot be canonicalized: {error}",
+                "module '{}' tray runtime process {} exists, but its provider path cannot be canonicalized: {error}",
                 name,
-                pid
+                identity.pid
             )
         })?;
 
-    /*
-     * Native provider.
-     */
-    let proc_exe = PathBuf::from(format!("/proc/{pid}/exe"));
+    let proc_exe = PathBuf::from(format!("/proc/{}/exe", identity.pid));
 
     if let Ok(actual_exe) = fs::read_link(&proc_exe) {
         if let Ok(actual_exe) = actual_exe.canonicalize() {
             if actual_exe == expected {
-                return Ok(Some(pid));
+                if !process_identity_is_alive(identity)? {
+                    return Err(format!(
+                        "module '{}' tray runtime process {} changed identity during ownership verification",
+                        name,
+                        identity.pid
+                    ));
+                }
+
+                return Ok(Some(identity));
             }
         }
     }
 
-    /*
-     * Interpreted provider:
-     * Python/Bash/Node/etc.
-     */
     let cmdline =
-        fs::read(
-            format!("/proc/{pid}/cmdline")
-        )
-        .map_err(|error| {
-            format!(
-                "module '{}' tray provider process {} exists, but its command line cannot be inspected: {error}",
-                name,
-                pid
-            )
-        })?;
+        fs::read(format!("/proc/{}/cmdline", identity.pid))
+            .map_err(|error| {
+                format!(
+                    "module '{}' tray runtime process {} exists, but its command line cannot be inspected: {error}",
+                    name,
+                    identity.pid
+                )
+            })?;
 
     let expected_bytes = expected.as_os_str().as_bytes();
 
@@ -2246,31 +2367,29 @@ fn probe_tray_provider_pid(name: &str) -> Result<Option<u32>, String> {
         .filter(|argument| !argument.is_empty())
         .any(|argument| argument == expected_bytes);
 
-    if matches_provider {
-        return Ok(Some(pid));
+    if !matches_provider {
+        return Err(format!(
+            "module '{}' tray runtime marker points to live process {}, but Boss cannot prove that its governed command owns provider {}",
+            name,
+            identity.pid,
+            expected.display()
+        ));
     }
 
-    /*
-     * Preserve the marker. A live PID with unverified
-     * ownership requires explicit intervention.
-     */
-    Err(format!(
-        "module '{}' tray provider marker points to live process {}, but Boss cannot verify that the process still belongs to the declared provider",
-        name,
-        pid
-    ))
+    if !process_identity_is_alive(identity)? {
+        return Err(format!(
+            "module '{}' tray runtime process {} changed identity during ownership verification",
+            name, identity.pid
+        ));
+    }
+
+    Ok(Some(identity))
 }
 
 pub fn tray_provider_running(name: &str) -> bool {
-    match probe_tray_provider_pid(name) {
+    match probe_tray_provider_identity(name) {
         Ok(Some(_)) => true,
         Ok(None) => false,
-
-        /*
-         * Unknown provider state is reported as running
-         * to avoid presenting an unsafe false "stopped"
-         * state.
-         */
         Err(_) => true,
     }
 }
@@ -2343,28 +2462,11 @@ pub fn start_tray_provider(name: &str) -> Result<bool, String> {
 
     let manifest = read_manifest(&module_dir.join("manifest.json"))?;
 
-    /*
-     * No tray capability means there is no tray
-     * lifecycle to manage. This is not an error.
-     */
     if manifest.tray.is_none() {
         return Ok(false);
     }
 
     if tray_provider_running(name) {
-        return Ok(false);
-    }
-
-    let socket_path = crate::tray::protocol::socket_path();
-
-    /*
-     * The provider belongs to the Tray Manager
-     * lifecycle. If no manager socket exists yet,
-     * enabling/installing the module remains valid;
-     * the provider will be started when tray serve
-     * comes online.
-     */
-    if !socket_path.exists() {
         return Ok(false);
     }
 
@@ -2387,6 +2489,43 @@ pub fn start_tray_provider(name: &str) -> Result<bool, String> {
         ));
     }
 
+    let declaration =
+        neebles_backend::domestic_construction::load_canonical_domestic_construction_declaration(
+            name,
+        )?;
+
+    let step = declaration.step(&contract.construction_step)?;
+
+    if step.execution
+        != neebles_backend::domestic_construction::DomesticConstructionExecution::Persistent
+    {
+        return Err(format!(
+            "module '{}' tray construction step '{}' must use persistent execution",
+            name, contract.construction_step
+        ));
+    }
+
+    let provider_argument = provider.as_os_str().to_string_lossy();
+
+    if !step
+        .arguments
+        .iter()
+        .any(|argument| argument == provider_argument.as_ref())
+    {
+        return Err(format!(
+            "module '{}' tray construction step '{}' does not execute declared provider {}",
+            name,
+            contract.construction_step,
+            provider.display()
+        ));
+    }
+
+    let socket_path = crate::tray::protocol::socket_path();
+
+    if !socket_path.exists() {
+        return Ok(false);
+    }
+
     let config_path = config::config_path()?;
 
     let requested_language = config::load_or_initialize()?.language;
@@ -2407,63 +2546,51 @@ pub fn start_tray_provider(name: &str) -> Result<bool, String> {
         ),
     ]);
 
-    /*
-     * Tray providers are graphical session consumers.
-     *
-     * They remain domestically sealed, but may receive only
-     * the exact graphical bridge inputs already governed by
-     * ProcessEnvironmentClass::Session.
-     *
-     * Host execution inputs such as PATH, LD_PRELOAD,
-     * LD_LIBRARY_PATH, PYTHONPATH, etc. remain forbidden.
-     */
-    let mut session_environment = BTreeMap::<String, String>::new();
+    let registry =
+        neebles_backend::domestic_authority_supply_process::process_supplied_authority_registry()?;
 
-    let mut allowed_session_inputs = std::collections::BTreeSet::<String>::new();
+    let prepared =
+        neebles_backend::domestic_construction::build_construction_step_command_with_environment(
+            &declaration,
+            &contract.construction_step,
+            registry,
+            &domestic_environment,
+        )?;
 
-    for key in [
-        "DISPLAY",
-        "WAYLAND_DISPLAY",
-        "XAUTHORITY",
-        "XDG_RUNTIME_DIR",
-        "DBUS_SESSION_BUS_ADDRESS",
-    ] {
-        allowed_session_inputs.insert(key.to_string());
+    let (mut command, runtime_lease) = prepared.into_parts();
 
-        if let Some(value) = env::var_os(key) {
-            let value = value.to_string_lossy().into_owned();
-
-            if !value.trim().is_empty() {
-                session_environment.insert(key.to_string(), value);
-            }
-        }
-    }
-
-    let mut command = neebles_backend::domestic_environment::build_process_command(
-        &provider,
-        neebles_backend::domestic_environment::ProcessEnvironmentClass::Session,
-        &domestic_environment,
-        &session_environment,
-        &allowed_session_inputs,
-    )?;
+    command.process_group(0);
 
     command
-        .current_dir(&module_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
     let mut child = command.spawn().map_err(|error| {
         format!(
-            "could not launch tray provider for module '{}': {error}",
+            "could not launch governed tray provider for module '{}': {error}",
             name
         )
     })?;
 
     let pid = child.id();
 
-    if let Err(error) = write_tray_runtime_marker(name, pid) {
-        let _ = child.kill();
+    let identity = match capture_process_identity(pid)? {
+        Some(identity) => identity,
+
+        None => {
+            let _ = child.wait();
+
+            return Err(format!(
+                    "governed tray runtime for module '{}' exited before Boss could capture process identity",
+                    name
+                ));
+        }
+    };
+
+    if let Err(error) = write_tray_runtime_marker(name, identity) {
+        let _ = signal_tray_runtime_group(identity, libc::SIGKILL);
+
         let _ = child.wait();
 
         return Err(error);
@@ -2471,85 +2598,80 @@ pub fn start_tray_provider(name: &str) -> Result<bool, String> {
 
     let owned_name = name.to_string();
 
-    /*
-     * Reap the provider when it exits and remove
-     * only the marker belonging to this exact PID.
-     * This avoids zombies and avoids an old provider
-     * deleting a marker belonging to a newer one.
-     */
     std::thread::spawn(move || {
+        let runtime_lease_guard = runtime_lease;
+
         let _ = child.wait();
 
-        clear_tray_runtime_marker_if_pid(&owned_name, pid);
+        loop {
+            match tray_runtime_group_alive(identity) {
+                Ok(false) => break,
+
+                Ok(true) => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+
+                Err(error) => {
+                    eprintln!(
+                        "N.E.E.B.L.E.S.: retaining tray RuntimeLease for module '{}' because process-group lifetime is unknown: {}",
+                        owned_name,
+                        error
+                    );
+
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+            }
+        }
+
+        clear_tray_runtime_marker_if_identity(&owned_name, identity);
+
+        drop(runtime_lease_guard);
     });
 
     Ok(true)
 }
 
 pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
-    let Some(pid) = probe_tray_provider_pid(name)? else {
+    let Some(identity) = probe_tray_provider_identity(name)? else {
         return Ok(false);
     };
 
-    let Some(identity) = capture_process_identity(pid)? else {
-        clear_tray_runtime_marker_if_pid(name, pid);
+    if !tray_runtime_group_alive(identity)? {
+        clear_tray_runtime_marker_if_identity(name, identity);
+
         return Ok(false);
-    };
-
-    if probe_tray_provider_pid(name)? != Some(pid) || !process_identity_is_alive(identity)? {
-        return Err(format!(
-            "module '{}' tray provider process {} changed identity while lifecycle ownership was being verified",
-            name, pid
-        ));
     }
 
-    let signal_result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-
-    if signal_result != 0 {
-        return Err(format!(
-            "could not send SIGTERM to tray provider for module '{}' process {}: {}",
-            name,
-            pid,
-            std::io::Error::last_os_error()
-        ));
-    }
+    signal_tray_runtime_group(identity, libc::SIGTERM)?;
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
 
-    while process_identity_is_alive(identity)? && std::time::Instant::now() < deadline {
+    while tray_runtime_group_alive(identity)? && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if !process_identity_is_alive(identity)? {
-        clear_tray_runtime_marker_if_pid(name, pid);
+    if !tray_runtime_group_alive(identity)? {
+        clear_tray_runtime_marker_if_identity(name, identity);
+
         return Ok(true);
     }
 
-    let signal_result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-
-    if signal_result != 0 {
-        return Err(format!(
-            "could not send SIGKILL to tray provider for module '{}' process {}: {}",
-            name,
-            pid,
-            std::io::Error::last_os_error()
-        ));
-    }
+    signal_tray_runtime_group(identity, libc::SIGKILL)?;
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 
-    while process_identity_is_alive(identity)? && std::time::Instant::now() < deadline {
+    while tray_runtime_group_alive(identity)? && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    if process_identity_is_alive(identity)? {
+    if tray_runtime_group_alive(identity)? {
         return Err(format!(
-            "tray provider for module '{}' process {} did not terminate after SIGKILL",
-            name, pid
+            "tray runtime for module '{}' process group {} did not terminate after SIGKILL",
+            name, identity.pid
         ));
     }
 
-    clear_tray_runtime_marker_if_pid(name, pid);
+    clear_tray_runtime_marker_if_identity(name, identity);
 
     Ok(true)
 }
@@ -5153,5 +5275,175 @@ mod module_transaction_certification_tests {
         if missing_parent.exists() {
             fs::remove_dir_all(missing_parent).expect("could not clean failed commit fixture");
         }
+    }
+}
+
+#[cfg(test)]
+mod point2_tray_governed_runtime_tests {
+    use super::*;
+
+    fn unique_marker_name(label: &str) -> String {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock must work")
+            .as_nanos();
+
+        format!("point2-{label}-{}-{unique}", std::process::id())
+    }
+
+    #[test]
+    fn tray_runtime_identity_serialization_preserves_pid_incarnation() {
+        let identity = ProcessIdentity {
+            pid: 4242,
+            start_time_ticks: 987654321,
+        };
+
+        let encoded = serde_json::to_string(&identity).expect("identity must serialize");
+
+        let decoded: ProcessIdentity =
+            serde_json::from_str(&encoded).expect("identity must deserialize");
+
+        assert_eq!(decoded, identity);
+    }
+
+    #[test]
+    fn stale_waiter_cannot_clear_newer_tray_runtime_marker() {
+        let name = unique_marker_name("marker");
+
+        let old = ProcessIdentity {
+            pid: 10001,
+            start_time_ticks: 111,
+        };
+
+        let new = ProcessIdentity {
+            pid: 10002,
+            start_time_ticks: 222,
+        };
+
+        write_tray_runtime_marker(&name, old).expect("old marker must write");
+
+        write_tray_runtime_marker(&name, new).expect("new marker must replace old marker");
+
+        clear_tray_runtime_marker_if_identity(&name, old);
+
+        let raw = fs::read_to_string(tray_runtime_marker_path(&name))
+            .expect("new marker must survive stale waiter cleanup");
+
+        let observed: ProcessIdentity =
+            serde_json::from_str(&raw).expect("marker must remain valid");
+
+        assert_eq!(observed, new);
+
+        clear_tray_runtime_marker_if_identity(&name, new);
+
+        assert!(
+            !tray_runtime_marker_path(&name).exists(),
+            "exact current identity must clear marker"
+        );
+    }
+
+    #[test]
+    fn stale_process_incarnation_is_not_accepted_as_live_tray_group() {
+        let pid = std::process::id();
+
+        let current = capture_process_identity(pid)
+            .expect("identity inspection must work")
+            .expect("test process must exist");
+
+        let stale = ProcessIdentity {
+            pid,
+            start_time_ticks: current.start_time_ticks.saturating_add(1),
+        };
+
+        assert!(
+            !tray_runtime_group_alive(stale).expect("stale identity probe must work"),
+            "PID reuse must never inherit tray ownership"
+        );
+    }
+
+    #[test]
+    fn governed_tray_process_group_can_be_stopped_as_one_owned_tree() {
+        let mut command = std::process::Command::new("/bin/sh");
+
+        command
+            .arg("-c")
+            .arg("sleep 30 & wait")
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        let mut child = command.spawn().expect("fixture group must spawn");
+
+        let identity = capture_process_identity(child.id())
+            .expect("fixture identity must inspect")
+            .expect("fixture leader must exist");
+
+        assert!(
+            tray_runtime_group_alive(identity).expect("fixture group must probe"),
+            "fresh governed process group must be alive"
+        );
+
+        assert!(
+            signal_tray_runtime_group(identity, libc::SIGTERM,)
+                .expect("SIGTERM delivery must work"),
+            "live governed process group must accept SIGTERM"
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+
+        while tray_runtime_group_alive(identity).expect("fixture group probe must work")
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        if tray_runtime_group_alive(identity).expect("final fixture probe must work") {
+            let _ = signal_tray_runtime_group(identity, libc::SIGKILL);
+        }
+
+        let _ = child.wait();
+
+        assert!(
+            !tray_runtime_group_alive(identity).expect("dead fixture group must probe"),
+            "whole governed process group must terminate"
+        );
+    }
+
+    #[test]
+    fn stale_identity_cannot_authorize_live_process_group() {
+        let mut command = std::process::Command::new("/bin/sh");
+
+        command
+            .arg("-c")
+            .arg("sleep 30 & wait")
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        let mut child = command.spawn().expect("fixture process group must spawn");
+
+        let identity = capture_process_identity(child.id())
+            .expect("fixture identity inspection must work")
+            .expect("fixture leader must exist");
+
+        let stale = ProcessIdentity {
+            pid: identity.pid,
+            start_time_ticks: identity.start_time_ticks.saturating_add(1),
+        };
+
+        let error = tray_runtime_group_alive(stale)
+            .expect_err("live group with stale leader identity must be unsafe");
+
+        assert!(
+            error.contains("identity changed"),
+            "unexpected ownership error: {error}"
+        );
+
+        signal_tray_runtime_group(identity, libc::SIGKILL)
+            .expect("authenticated identity must still control its own group");
+
+        let _ = child.wait();
     }
 }
