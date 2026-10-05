@@ -5,6 +5,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use url::Url;
+
 use neebles_backend::module_material::{
     parse_material_layer, parse_material_recipe, valid_module_id, PackageRequirement,
 };
@@ -86,12 +88,53 @@ fn resolve_custom_revision() -> Result<String, String> {
     ))
 }
 
-fn custom_raw_url(revision: &str, path: &str) -> String {
-    format!("https://raw.githubusercontent.com/{CUSTOM_REPOSITORY}/{revision}/{path}")
+fn custom_raw_url(revision: &str, path: &str) -> Result<String, String> {
+    if revision.len() != 40 || !revision.bytes().all(|value| value.is_ascii_hexdigit()) {
+        return Err(format!("invalid CUSTOM raw revision: {revision}"));
+    }
+
+    if path.is_empty() || path.starts_with('/') || path.ends_with('/') {
+        return Err(format!("invalid CUSTOM raw path: {path}"));
+    }
+
+    for segment in path.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(format!("invalid CUSTOM raw path segment in: {path}"));
+        }
+
+        if segment.chars().any(char::is_control) {
+            return Err(format!(
+                "CUSTOM raw path contains control characters: {path:?}"
+            ));
+        }
+    }
+
+    let mut url = Url::parse("https://raw.githubusercontent.com/")
+        .map_err(|error| format!("could not construct CUSTOM raw URL base: {error}"))?;
+
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| "CUSTOM raw URL base cannot accept path segments".to_string())?;
+
+        segments.pop_if_empty();
+
+        for segment in CUSTOM_REPOSITORY.split('/') {
+            segments.push(segment);
+        }
+
+        segments.push(revision);
+
+        for segment in path.split('/') {
+            segments.push(segment);
+        }
+    }
+
+    Ok(url.to_string())
 }
 
 fn fetch_remote_bytes(revision: &str, path: &str, timeout_seconds: u32) -> Result<Vec<u8>, String> {
-    let url = custom_raw_url(revision, path);
+    let url = custom_raw_url(revision, path)?;
 
     let arguments = [
         OsString::from("-fsSL"),
@@ -198,7 +241,7 @@ fn download_package(
 
     let remote_path = format!("{remote_pool}/{}", requirement.filename);
 
-    let url = custom_raw_url(revision, &remote_path);
+    let url = custom_raw_url(revision, &remote_path)?;
 
     let arguments = [
         OsString::from("-fsSL"),
@@ -376,4 +419,359 @@ pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePa
         binding_input,
         material_root: territory.material_root,
     })
+}
+
+#[cfg(test)]
+mod custom_raw_url_tests {
+    use super::custom_raw_url;
+
+    const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn build(path: &str) -> String {
+        custom_raw_url(REVISION, path).expect("CUSTOM raw URL must build")
+    }
+
+    #[test]
+    fn normal_debian_filename_remains_semantically_unchanged() {
+        let url =
+            build("runtime/modules/packages/essentials/base-files_13.8+deb13u7~fixture_amd64.deb");
+
+        assert_eq!(
+            url,
+            "https://raw.githubusercontent.com/krockzs/neebles-custom/0123456789abcdef0123456789abcdef01234567/runtime/modules/packages/essentials/base-files_13.8+deb13u7~fixture_amd64.deb"
+        );
+    }
+
+    #[test]
+    fn literal_percent_epoch_is_not_decoded_by_the_url() {
+        let url =
+            build("runtime/modules/packages/essentials/bsdutils_1%3a2.41.5-0+deb13u1_amd64.deb");
+
+        assert_eq!(
+            url,
+            "https://raw.githubusercontent.com/krockzs/neebles-custom/0123456789abcdef0123456789abcdef01234567/runtime/modules/packages/essentials/bsdutils_1%253a2.41.5-0+deb13u1_amd64.deb"
+        );
+    }
+
+    #[test]
+    fn encoded_slash_text_cannot_become_a_path_separator() {
+        let url = build("runtime/modules/packages/fixture_%2f_payload.deb");
+
+        assert!(url.contains("fixture_%252f_payload.deb"), "{url}");
+        assert!(!url.contains("fixture_%2f_payload.deb"), "{url}");
+    }
+
+    #[test]
+    fn encoded_dot_segments_cannot_become_traversal() {
+        let url = build("runtime/modules/packages/fixture_%2e%2e_payload.deb");
+
+        assert!(url.contains("fixture_%252e%252e_payload.deb"), "{url}");
+    }
+
+    #[test]
+    fn query_fragment_and_space_are_data_inside_the_segment() {
+        let url = build("runtime/modules/packages/name #part?.deb");
+        let parsed = url::Url::parse(&url).expect("generated URL must parse");
+
+        assert!(url.contains("name%20%23part%3F.deb"), "{url}");
+        assert!(
+            parsed.query().is_none(),
+            "query must not escape package filename"
+        );
+        assert!(
+            parsed.fragment().is_none(),
+            "fragment must not escape package filename"
+        );
+    }
+
+    #[test]
+    fn unicode_is_encoded_as_segment_data() {
+        let url = build("runtime/modules/packages/módulo_ñ.deb");
+
+        assert!(url.contains("m%C3%B3dulo_%C3%B1.deb"), "{url}");
+    }
+
+    #[test]
+    fn backslash_cannot_become_url_path_structure() {
+        let url = build("runtime/modules/packages/name\\payload.deb");
+        let parsed = url::Url::parse(&url).expect("generated URL must parse");
+
+        assert!(url.contains("name%5Cpayload.deb"), "{url}");
+        assert_eq!(
+            parsed.path_segments().expect("hierarchical URL").count(),
+            7,
+            "backslash must remain inside one package path segment"
+        );
+    }
+
+    #[test]
+    fn raw_colon_ampersand_equals_semicolon_and_at_remain_path_data() {
+        let url = build("runtime/modules/packages/name:@&=;.deb");
+        let parsed = url::Url::parse(&url).expect("generated URL must parse");
+
+        assert!(parsed.query().is_none());
+        assert!(parsed.fragment().is_none());
+        assert_eq!(parsed.path_segments().expect("hierarchical URL").count(), 7);
+    }
+
+    #[test]
+    fn revision_cannot_inject_url_structure() {
+        assert!(custom_raw_url("main/../../escape", "runtime/modules/packages/a.deb").is_err());
+        assert!(custom_raw_url(
+            "0123456789abcdef0123456789abcdef0123456g",
+            "runtime/modules/packages/a.deb"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn structural_path_ambiguity_is_rejected() {
+        for path in [
+            "",
+            "/runtime/modules/packages/a.deb",
+            "runtime/modules/packages/a.deb/",
+            "runtime//modules/packages/a.deb",
+            "runtime/./packages/a.deb",
+            "runtime/../packages/a.deb",
+        ] {
+            assert!(
+                custom_raw_url(REVISION, path).is_err(),
+                "path should be rejected: {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn control_characters_are_rejected() {
+        for path in [
+            "runtime/modules/packages/a\n.deb",
+            "runtime/modules/packages/a\0.deb",
+        ] {
+            assert!(
+                custom_raw_url(REVISION, path).is_err(),
+                "control path should be rejected: {path:?}"
+            );
+        }
+    }
+    fn percent_hex_value(byte: u8) -> u8 {
+        match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => panic!("invalid percent hex byte: {byte:?}"),
+        }
+    }
+
+    fn decode_serialized_segment(value: &str) -> String {
+        let bytes = value.as_bytes();
+        let mut decoded = Vec::with_capacity(bytes.len());
+        let mut index = 0usize;
+
+        while index < bytes.len() {
+            if bytes[index] == b'%' {
+                assert!(
+                    index + 2 < bytes.len(),
+                    "truncated percent escape in serialized segment: {value:?}"
+                );
+
+                decoded.push(
+                    (percent_hex_value(bytes[index + 1]) << 4)
+                        | percent_hex_value(bytes[index + 2]),
+                );
+
+                index += 3;
+            } else {
+                decoded.push(bytes[index]);
+                index += 1;
+            }
+        }
+
+        String::from_utf8(decoded)
+            .unwrap_or_else(|error| panic!("decoded segment is not UTF-8 for {value:?}: {error}"))
+    }
+
+    fn assert_filename_round_trip(filename: &str) {
+        let path = format!("runtime/modules/packages/{filename}");
+        let generated = custom_raw_url(REVISION, &path)
+            .unwrap_or_else(|error| panic!("URL rejected filename {filename:?}: {error}"));
+
+        let parsed = url::Url::parse(&generated).unwrap_or_else(|error| {
+            panic!("generated URL does not parse for {filename:?}: {error}")
+        });
+
+        assert_eq!(parsed.scheme(), "https", "scheme changed for {filename:?}");
+        assert_eq!(
+            parsed.host_str(),
+            Some("raw.githubusercontent.com"),
+            "host changed for {filename:?}: {generated}"
+        );
+
+        assert!(
+            parsed.query().is_none(),
+            "filename escaped into query for {filename:?}: {generated}"
+        );
+
+        assert!(
+            parsed.fragment().is_none(),
+            "filename escaped into fragment for {filename:?}: {generated}"
+        );
+
+        let segments = parsed
+            .path_segments()
+            .expect("raw GitHub URL must be hierarchical")
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            segments.len(),
+            7,
+            "filename changed URL path structure for {filename:?}: {segments:?}"
+        );
+
+        assert_eq!(segments[0], "krockzs");
+        assert_eq!(segments[1], "neebles-custom");
+        assert_eq!(segments[2], REVISION);
+        assert_eq!(segments[3], "runtime");
+        assert_eq!(segments[4], "modules");
+        assert_eq!(segments[5], "packages");
+
+        let decoded = decode_serialized_segment(segments[6]);
+
+        assert_eq!(
+            decoded, filename,
+            "filename failed exact one-layer URL round-trip: original={filename:?} serialized={:?}",
+            segments[6]
+        );
+    }
+
+    #[test]
+    fn every_printable_ascii_filename_character_round_trips() {
+        let mut tested = 0usize;
+
+        for code in 0x20u32..=0x7eu32 {
+            let character = char::from_u32(code).expect("printable ASCII");
+
+            if character == '/' {
+                continue;
+            }
+
+            let filename = format!("fixture{character}payload.deb");
+            assert_filename_round_trip(&filename);
+            tested += 1;
+        }
+
+        eprintln!("printable ASCII filename cases: {tested}");
+        assert_eq!(tested, 94);
+    }
+
+    #[test]
+    fn every_percent_hex_triplet_remains_literal_filename_text() {
+        let mut tested = 0usize;
+
+        for value in 0u16..=255u16 {
+            let upper = format!("fixture%{value:02X}payload.deb");
+            let lower = format!("fixture%{value:02x}payload.deb");
+
+            assert_filename_round_trip(&upper);
+            assert_filename_round_trip(&lower);
+
+            tested += 2;
+        }
+
+        eprintln!("literal percent escape-looking cases: {tested}");
+        assert_eq!(tested, 512);
+    }
+
+    #[test]
+    fn every_ascii_control_character_is_rejected() {
+        let mut tested = 0usize;
+
+        for code in (0u32..=31u32).chain(std::iter::once(127u32)) {
+            let character = char::from_u32(code).expect("ASCII control character");
+            let path = format!("runtime/modules/packages/fixture{character}payload.deb");
+
+            assert!(
+                custom_raw_url(REVISION, &path).is_err(),
+                "ASCII control character U+{code:04X} was accepted"
+            );
+
+            tested += 1;
+        }
+
+        eprintln!("ASCII control rejection cases: {tested}");
+        assert_eq!(tested, 33);
+    }
+
+    #[test]
+    fn combinatorial_sensitive_filename_matrix_round_trips() {
+        let tokens = [
+            "%3a", "%3A", "%2f", "%2F", "%2e", "%2E", "%2e%2e", "%2E%2E", "%00", "%0a", "%0A",
+            "%0d", "%0D", "%25", "%ff", "%FF", "%", "%z", "%zz", "+", "~", "#", "?", " ", ":", "@",
+            "&", "=", ";", "\\", "[", "]", "(", ")", "'", "\"", "<", ">", "`", "{", "}", "|", "^",
+            ",", "!", "$", "*", "é", "ñ", "中", "😀", "\u{0301}", "\u{200f}",
+        ];
+
+        let mut singles = 0usize;
+        let mut pairs = 0usize;
+        let mut triples = 0usize;
+
+        for first in tokens {
+            let filename = format!("fixture{first}payload.deb");
+            assert_filename_round_trip(&filename);
+            singles += 1;
+        }
+
+        for first in tokens {
+            for second in tokens {
+                let filename = format!("fixture{first}{second}payload.deb");
+                assert_filename_round_trip(&filename);
+                pairs += 1;
+            }
+        }
+
+        for first in tokens {
+            for second in tokens {
+                for third in tokens {
+                    let filename = format!("fixture{first}{second}{third}payload.deb");
+                    assert_filename_round_trip(&filename);
+                    triples += 1;
+                }
+            }
+        }
+
+        eprintln!("sensitive token singles: {singles}");
+        eprintln!("sensitive token ordered pairs: {pairs}");
+        eprintln!("sensitive token ordered triples: {triples}");
+        eprintln!("sensitive token total: {}", singles + pairs + triples);
+
+        assert_eq!(singles, tokens.len());
+        assert_eq!(pairs, tokens.len() * tokens.len());
+        assert_eq!(triples, tokens.len() * tokens.len() * tokens.len());
+    }
+
+    #[test]
+    fn revision_validation_matrix_is_fail_closed() {
+        let lower = "0123456789abcdef0123456789abcdef01234567";
+        let upper = "0123456789ABCDEF0123456789ABCDEF01234567";
+
+        assert!(custom_raw_url(lower, "runtime/modules/packages/a.deb").is_ok());
+        assert!(custom_raw_url(upper, "runtime/modules/packages/a.deb").is_ok());
+
+        let invalid = [
+            "",
+            "0123456789abcdef0123456789abcdef0123456",
+            "0123456789abcdef0123456789abcdef012345678",
+            "0123456789abcdef0123456789abcdef0123456g",
+            "0123456789abcdef0123456789abcdef0123456/",
+            "0123456789abcdef0123456789abcdef0123456?",
+            "0123456789abcdef0123456789abcdef0123456#",
+            "0123456789abcdef0123456789abcdef0123456%",
+        ];
+
+        for revision in invalid {
+            assert!(
+                custom_raw_url(revision, "runtime/modules/packages/a.deb").is_err(),
+                "invalid revision was accepted: {revision:?}"
+            );
+        }
+    }
 }

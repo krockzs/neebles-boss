@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.26**
+**Current source line:** **1.0.27**
 **Latest published Boss release recorded by the repository:** **1.0.26**
-**Current integration status (2026-10-05):** **Point 1 CLOSED / GREEN. Point 2 CLOSED / GREEN at source level.** MaterialBinding + RuntimeLease are the productive module-material architecture. Tray providers now enter through module-owned Construction, `modules.runtime`, authenticated RuntimeLease material, desktop-session authority and governed process ownership. The legacy persistent shared module rootfs/runtime-manifest model and direct host Tray-provider spawn path are retired. **Boss 1.0.26 is published. Fresh Live and installed-system acceptance remain pending.**
+**Current integration status (2026-10-05):** **Point 1 CLOSED / GREEN. Point 2 CLOSED / GREEN at source level.** MaterialBinding + RuntimeLease are the productive module-material architecture. Tray providers now enter through module-owned Construction, `modules.runtime`, authenticated RuntimeLease material, desktop-session authority and governed process ownership. The legacy persistent shared module rootfs/runtime-manifest model and direct host Tray-provider spawn path are retired. **Boss 1.0.26 is published. Boss 1.0.27 source hardens CUSTOM V2 raw-material transport after Fresh Live exposed literal percent-encoded Debian epoch filenames such as `%3a`. The segment-aware URL fix is source, regression, real-remote and combinatorial certified. Fresh Live and installed-system acceptance remain pending re-run.**
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -534,6 +534,48 @@ module declares requirement
 ```
 
 Preinstall **does not publish a composed shared module rootfs** and does not publish a mutable shared runtime manifest.
+
+### Raw material URL transport
+
+CUSTOM V2 package filenames are opaque physical identities. Boss must never reinterpret filename text as URL structure.
+
+The canonical transport law is:
+
+```text
+authenticated physical filename
+    -> validate controlled path structure
+    -> encode each path segment independently
+    -> HTTPS transport
+    -> one URL decoding layer
+    -> exact original physical filename
+```
+
+This is especially important for Debian package filenames containing an encoded epoch. A physical filename such as:
+
+```text
+bsdutils_1%3a2.41.5-0+deb13u1_amd64.deb
+```
+
+must travel through the raw GitHub URL with the literal percent encoded as `%25`:
+
+```text
+bsdutils_1%253a2.41.5-0+deb13u1_amd64.deb
+```
+
+Boss constructs CUSTOM raw URLs with `url::Url` path-segment semantics. Revision identity is constrained to an exact 40-character hexadecimal commit and path structure rejects empty, current-directory, parent-directory and control-character segments.
+
+The 1.0.27 transport gate certifies:
+
+- 91 / 91 currently declared Essential + Test Module package URLs against the immutable CUSTOM revision;
+- SHA256 equality for all 8 current literal `%3a` package filenames;
+- old literal transport reproduces HTTP 404 while segment-aware transport returns HTTP 200;
+- all 94 permitted printable ASCII filename characters round-trip as filename data;
+- all 512 upper/lower `%00` through `%FF` escape-looking forms remain literal filename text;
+- all 33 ASCII control characters are rejected fail-closed;
+- 151,739 ordered sensitive-token single/pair/triple combinations round-trip exactly;
+- encoded slash, encoded dot traversal, query, fragment, space, backslash, Unicode and reserved delimiters cannot escape their filename segment.
+
+The fix changes transport representation only. Package identity, package membership, SHA authority, Essential/module-delta ownership and MaterialBinding semantics remain unchanged.
 
 CUSTOM V2 package membership and material integrity remain distinct contracts.
 
