@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.26 preparation**
-**Latest published Boss release recorded by the repository:** **1.0.25**
-**Current integration status (2026-10-05):** **Point 1 CLOSED / GREEN. Point 2 CLOSED / GREEN at source level.** MaterialBinding + RuntimeLease are the productive module-material architecture. Tray providers now enter through module-owned Construction, `modules.runtime`, authenticated RuntimeLease material, desktop-session authority and governed process ownership. The legacy persistent shared module rootfs/runtime-manifest model and direct host Tray-provider spawn path are retired. **Fresh Live and installed-system acceptance remain pending. No new Boss release is claimed by this document.**
+**Current source line:** **1.0.26**
+**Latest published Boss release recorded by the repository:** **1.0.26**
+**Current integration status (2026-10-05):** **Point 1 CLOSED / GREEN. Point 2 CLOSED / GREEN at source level.** MaterialBinding + RuntimeLease are the productive module-material architecture. Tray providers now enter through module-owned Construction, `modules.runtime`, authenticated RuntimeLease material, desktop-session authority and governed process ownership. The legacy persistent shared module rootfs/runtime-manifest model and direct host Tray-provider spawn path are retired. **Boss 1.0.26 is published. Fresh Live and installed-system acceptance remain pending.**
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -864,7 +864,7 @@ These source gates do not claim a published Boss release and do not replace late
 
 # Release policy
 
-The repository now carries **1.0.26 preparation** surfaces in source/workflow metadata. The latest published Boss release recorded by the current repository documentation is **1.0.25**.
+The repository carries **1.0.26** as the current published Boss release. The latest published Boss release recorded by the repository is **1.0.26**.
 
 This README deliberately does **not** promote a preparation version into a release claim.
 
@@ -880,11 +880,11 @@ Point 2
 README / repository truth
     -> current work
 
-next Boss version preparation
-    -> pending
+Boss 1.0.26 version preparation
+    -> CLOSED / GREEN
 
 release Actions + publication
-    -> pending
+    -> CLOSED / GREEN
 
 Fresh Live acceptance
     -> pending
