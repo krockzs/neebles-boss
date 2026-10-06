@@ -40,11 +40,10 @@ public:
 
     Q_INVOKABLE void refreshModules();
 
-    Q_INVOKABLE bool moduleAction(
+    Q_INVOKABLE bool surfaceAction(
         const QString &moduleName,
-        const QString &action,
-        const QString &objectId,
-        const QString &transition
+        const QString &itemId,
+        const QString &action
     );
 
 signals:

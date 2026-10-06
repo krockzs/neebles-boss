@@ -432,18 +432,10 @@ ApplicationWindow {
             : ({})
 
         if (
-            typeof data.label_key === "string"
-            && data.label_key.length > 0
-        ) {
-            var translated =
-                root.t(data.label_key)
-
-            if (
-                translated
-                && translated !== data.label_key
-            )
-                return translated
-        }
+            typeof entry.item.label === "string"
+            && entry.item.label.length > 0
+        )
+            return entry.item.label
 
         if (
             typeof data.label === "string"
@@ -451,11 +443,71 @@ ApplicationWindow {
         )
             return data.label
 
+        if (
+            typeof data.label_key === "string"
+            && data.label_key.length > 0
+        )
+            return data.label_key
+
         return entry.moduleName
             + " · "
             + entry.item.item_id
     }
 
+
+    function surfaceFeatureItems() {
+        var entries =
+            root.surfaceConfigItems("ui")
+
+        var result = []
+
+        for (
+            var index = 0;
+            index < entries.length;
+            ++index
+        ) {
+            var entry = entries[index]
+
+            if (
+                !entry
+                || !entry.item
+                || entry.item.visible !== true
+            )
+                continue
+
+            var item = entry.item
+
+            var data =
+                item.data
+                ? item.data
+                : ({})
+
+            if (
+                data.control === "button"
+                && data.action
+                && data.label_key
+            ) {
+                result.push(entry)
+                continue
+            }
+
+            if (
+                data.control === "switch"
+                && item.object_id
+                && item.active !== undefined
+                && item.active !== null
+                && data.label_key
+                && data.action_on
+                && data.action_off
+                && data.transition_on
+                && data.transition_off
+            ) {
+                result.push(entry)
+            }
+        }
+
+        return result
+    }
 
     function saveConfigValue(key, value) {
         if (
@@ -1091,87 +1143,116 @@ ApplicationWindow {
                                     )
                             }
 
-                            ColumnLayout {
+                            ListView {
+                                id: trayConfigList
+
                                 Layout.fillWidth: true
                                 Layout.leftMargin: 28
-                                Layout.rightMargin: 0
 
-                                visible: traySwitch.checked
+                                Layout.preferredHeight:
+                                    visible
+                                    ? Math.min(
+                                        144,
+                                        Math.max(
+                                            36,
+                                            contentHeight
+                                        )
+                                    )
+                                    : 0
+
+                                visible:
+                                    traySwitch.checked
+                                    && count > 0
+
+                                clip: true
                                 spacing: 6
 
-                                Repeater {
-                                    model:
-                                        typeof boss !== "undefined"
-                                        ? root.surfaceConfigItems("tray")
-                                        : []
+                                model:
+                                    typeof boss !== "undefined"
+                                    ? root.surfaceConfigItems("tray")
+                                    : []
 
-                                    delegate: RowLayout {
-                                        required property var modelData
+                                boundsBehavior:
+                                    Flickable.StopAtBounds
 
+                                delegate: RowLayout {
+                                    required property var modelData
+
+                                    width:
+                                        ListView.view.width
+
+                                    height: 34
+                                    spacing: 10
+
+                                    Image {
+                                        Layout.preferredWidth: 24
+                                        Layout.preferredHeight: 24
+
+                                        source:
+                                            modelData.moduleIcon
+                                            && modelData.moduleIcon.length > 0
+                                            ? modelData.moduleIcon
+                                            : root.asset(
+                                                "modules_icon.png"
+                                            )
+
+                                        fillMode:
+                                            Image.PreserveAspectFit
+
+                                        smooth: true
+                                        mipmap: true
+                                    }
+
+                                    Label {
                                         Layout.fillWidth: true
-                                        Layout.leftMargin: 8
-                                        spacing: 10
 
-                                        Image {
-                                            Layout.preferredWidth: 24
-                                            Layout.preferredHeight: 24
+                                        text:
+                                            root.surfaceConfigLabel(
+                                                modelData
+                                            )
 
-                                            source:
-                                                modelData.moduleIcon
-                                                && modelData.moduleIcon.length > 0
-                                                ? modelData.moduleIcon
-                                                : root.asset(
-                                                    "modules_icon.png"
-                                                )
+                                        color: "#67E8F9"
+                                        font.pixelSize: 13
 
-                                            fillMode:
-                                                Image.PreserveAspectFit
+                                        elide:
+                                            Text.ElideRight
+                                    }
 
-                                            smooth: true
-                                            mipmap: true
-                                        }
+                                    NeeblesSwitch {
+                                        checked:
+                                            !!modelData.item.visible
 
-                                        Label {
-                                            Layout.preferredWidth: 160
+                                        checkable: false
 
-                                            text:
-                                                root.surfaceConfigLabel(
-                                                    modelData
-                                                )
+                                        enabled:
+                                            typeof boss === "undefined"
+                                            || !boss.busy
 
-                                            color: "#67E8F9"
-                                            font.pixelSize: 13
-                                        }
+                                        onClicked: {
+                                            if (
+                                                typeof boss
+                                                === "undefined"
+                                            )
+                                                return
 
-                                        NeeblesSwitch {
-                                            checked:
-                                                !!modelData.item.visible
-
-                                            checkable: false
-
-                                            enabled:
-                                                typeof boss === "undefined"
-                                                || !boss.busy
-
-                                            onClicked: {
-                                                if (
-                                                    typeof boss
-                                                    === "undefined"
-                                                )
-                                                    return
-
-                                                boss.setSurfaceItemVisibility(
-                                                    "tray",
-                                                    modelData.moduleName,
-                                                    modelData.item.item_id,
-                                                    !checked
-                                                )
-                                            }
+                                            boss.setSurfaceItemVisibility(
+                                                "tray",
+                                                modelData.moduleName,
+                                                modelData.item.item_id,
+                                                !checked
+                                            )
                                         }
                                     }
                                 }
-                            }
 
+                                ScrollBar.vertical: ScrollBar {
+                                    policy:
+                                        trayConfigList.contentHeight
+                                        > trayConfigList.height
+                                        ? ScrollBar.AsNeeded
+                                        : ScrollBar.AlwaysOff
+                                }
+                            }
                             Rectangle {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 1
@@ -1196,84 +1277,337 @@ ApplicationWindow {
                                     )
                             }
 
-                            ColumnLayout {
+                            ListView {
+                                id: launcherConfigList
+
                                 Layout.fillWidth: true
                                 Layout.leftMargin: 28
-                                Layout.rightMargin: 0
 
-                                visible: launcherSwitch.checked
+                                Layout.preferredHeight:
+                                    visible
+                                    ? Math.min(
+                                        144,
+                                        Math.max(
+                                            36,
+                                            contentHeight
+                                        )
+                                    )
+                                    : 0
+
+                                visible:
+                                    launcherSwitch.checked
+                                    && count > 0
+
+                                clip: true
                                 spacing: 6
 
-                                Repeater {
-                                    model:
-                                        typeof boss !== "undefined"
-                                        ? root.surfaceConfigItems("launcher")
-                                        : []
+                                model:
+                                    typeof boss !== "undefined"
+                                    ? root.surfaceConfigItems("launcher")
+                                    : []
 
-                                    delegate: RowLayout {
-                                        required property var modelData
+                                boundsBehavior:
+                                    Flickable.StopAtBounds
 
+                                delegate: RowLayout {
+                                    required property var modelData
+
+                                    width:
+                                        ListView.view.width
+
+                                    height: 34
+                                    spacing: 10
+
+                                    Image {
+                                        Layout.preferredWidth: 24
+                                        Layout.preferredHeight: 24
+
+                                        source:
+                                            modelData.moduleIcon
+                                            && modelData.moduleIcon.length > 0
+                                            ? modelData.moduleIcon
+                                            : root.asset(
+                                                "modules_icon.png"
+                                            )
+
+                                        fillMode:
+                                            Image.PreserveAspectFit
+
+                                        smooth: true
+                                        mipmap: true
+                                    }
+
+                                    Label {
                                         Layout.fillWidth: true
-                                        Layout.leftMargin: 8
-                                        spacing: 10
 
-                                        Image {
-                                            Layout.preferredWidth: 24
-                                            Layout.preferredHeight: 24
+                                        text:
+                                            root.surfaceConfigLabel(
+                                                modelData
+                                            )
 
-                                            source:
-                                                modelData.moduleIcon
-                                                && modelData.moduleIcon.length > 0
-                                                ? modelData.moduleIcon
-                                                : root.asset(
-                                                    "modules_icon.png"
-                                                )
+                                        color: "#67E8F9"
+                                        font.pixelSize: 13
 
-                                            fillMode:
-                                                Image.PreserveAspectFit
+                                        elide:
+                                            Text.ElideRight
+                                    }
 
-                                            smooth: true
-                                            mipmap: true
-                                        }
+                                    NeeblesSwitch {
+                                        checked:
+                                            !!modelData.item.visible
 
-                                        Label {
-                                            Layout.preferredWidth: 160
+                                        checkable: false
 
-                                            text:
-                                                root.surfaceConfigLabel(
-                                                    modelData
-                                                )
+                                        enabled:
+                                            typeof boss === "undefined"
+                                            || !boss.busy
 
-                                            color: "#67E8F9"
-                                            font.pixelSize: 13
-                                        }
+                                        onClicked: {
+                                            if (
+                                                typeof boss
+                                                === "undefined"
+                                            )
+                                                return
 
-                                        NeeblesSwitch {
-                                            checked:
-                                                !!modelData.item.visible
-
-                                            checkable: false
-
-                                            enabled:
-                                                typeof boss === "undefined"
-                                                || !boss.busy
-
-                                            onClicked: {
-                                                if (
-                                                    typeof boss
-                                                    === "undefined"
-                                                )
-                                                    return
-
-                                                boss.setSurfaceItemVisibility(
-                                                    "launcher",
-                                                    modelData.moduleName,
-                                                    modelData.item.item_id,
-                                                    !checked
-                                                )
-                                            }
+                                            boss.setSurfaceItemVisibility(
+                                                "launcher",
+                                                modelData.moduleName,
+                                                modelData.item.item_id,
+                                                !checked
+                                            )
                                         }
                                     }
+                                }
+
+                                ScrollBar.vertical: ScrollBar {
+                                    policy:
+                                        launcherConfigList.contentHeight
+                                        > launcherConfigList.height
+                                        ? ScrollBar.AsNeeded
+                                        : ScrollBar.AlwaysOff
+                                }
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: "#18181B"
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+
+                                text:
+                                    root.t(
+                                        "config.features"
+                                    )
+
+                                color: "#D8B4FE"
+                                font.pixelSize: 14
+                                font.bold: true
+                            }
+
+                            ListView {
+                                id: featureConfigList
+
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 28
+
+                                Layout.preferredHeight:
+                                    visible
+                                    ? Math.min(
+                                        176,
+                                        Math.max(
+                                            44,
+                                            contentHeight
+                                        )
+                                    )
+                                    : 0
+
+                                visible:
+                                    count > 0
+
+                                clip: true
+                                spacing: 6
+
+                                model:
+                                    typeof boss !== "undefined"
+                                    ? root.surfaceFeatureItems()
+                                    : []
+
+                                boundsBehavior:
+                                    Flickable.StopAtBounds
+
+                                delegate: RowLayout {
+                                    required property var modelData
+
+                                    property var surfaceItem:
+                                        modelData.item
+
+                                    property var surfaceData:
+                                        surfaceItem
+                                        && surfaceItem.data
+                                        ? surfaceItem.data
+                                        : ({})
+
+                                    width:
+                                        ListView.view.width
+
+                                    height: 40
+                                    spacing: 10
+
+                                    opacity:
+                                        surfaceItem
+                                        && surfaceItem.requirements_met
+                                        === true
+                                        ? 1.0
+                                        : 0.55
+
+                                    Image {
+                                        Layout.preferredWidth: 26
+                                        Layout.preferredHeight: 26
+
+                                        source:
+                                            modelData.moduleIcon
+                                            && modelData.moduleIcon.length > 0
+                                            ? modelData.moduleIcon
+                                            : root.asset(
+                                                "modules_icon.png"
+                                            )
+
+                                        fillMode:
+                                            Image.PreserveAspectFit
+
+                                        smooth: true
+                                        mipmap: true
+                                    }
+
+                                    Button {
+                                        id: featureActionButton
+
+                                        visible:
+                                            surfaceData.control
+                                            === "button"
+
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 34
+
+                                        text:
+                                            root.surfaceConfigLabel(
+                                                modelData
+                                            )
+
+                                        enabled:
+                                            typeof boss
+                                            !== "undefined"
+                                            && !boss.busy
+                                            && surfaceItem.requirements_met
+                                            === true
+
+                                        hoverEnabled: true
+
+                                        background: Rectangle {
+                                            radius: 7
+
+                                            color:
+                                                featureActionButton.down
+                                                ? "#0B1220"
+                                                : featureActionButton.hovered
+                                                  ? "#172033"
+                                                  : "#10131A"
+
+                                            border.width:
+                                                featureActionButton.activeFocus
+                                                ? 3
+                                                : 2
+
+                                            border.color:
+                                                featureActionButton.enabled
+                                                ? "#22D3EE"
+                                                : "#52525B"
+                                        }
+
+                                        contentItem: Text {
+                                            text:
+                                                featureActionButton.text
+
+                                            color:
+                                                featureActionButton.enabled
+                                                ? "#67E8F9"
+                                                : "#64748B"
+
+                                            horizontalAlignment:
+                                                Text.AlignHCenter
+
+                                            verticalAlignment:
+                                                Text.AlignVCenter
+                                        }
+
+                                        onClicked: {
+                                            boss.requestSurfaceAction(
+                                                surfaceItem.owner_module,
+                                                surfaceItem.item_id,
+                                                surfaceData.action
+                                            )
+                                        }
+                                    }
+
+                                    Label {
+                                        visible:
+                                            surfaceData.control
+                                            === "switch"
+
+                                        Layout.fillWidth: true
+
+                                        text:
+                                            root.surfaceConfigLabel(
+                                                modelData
+                                            )
+
+                                        color: "#A78BFA"
+                                        font.pixelSize: 12
+
+                                        elide:
+                                            Text.ElideRight
+                                    }
+
+                                    NeeblesSwitch {
+                                        visible:
+                                            surfaceData.control
+                                            === "switch"
+
+                                        checked:
+                                            !!surfaceItem.active
+
+                                        checkable: false
+
+                                        enabled:
+                                            typeof boss
+                                            !== "undefined"
+                                            && !boss.busy
+                                            && surfaceItem.requirements_met
+                                            === true
+
+                                        onClicked: {
+                                            const turnOn =
+                                                !surfaceItem.active
+
+                                            boss.requestSurfaceAction(
+                                                surfaceItem.owner_module,
+                                                surfaceItem.item_id,
+                                                turnOn
+                                                ? surfaceData.action_on
+                                                : surfaceData.action_off
+                                            )
+                                        }
+                                    }
+                                }
+
+                                ScrollBar.vertical: ScrollBar {
+                                    policy:
+                                        featureConfigList.contentHeight
+                                        > featureConfigList.height
+                                        ? ScrollBar.AsNeeded
+                                        : ScrollBar.AlwaysOff
                                 }
                             }
 
@@ -1282,7 +1616,6 @@ ApplicationWindow {
                                 Layout.preferredHeight: 1
                                 color: "#18181B"
                             }
-
                             NeeblesSwitch {
                                 id: notificationSwitch
 
@@ -1693,322 +2026,6 @@ if (
                                                 }
                                             }
                                         }
-
-                                        ColumnLayout {
-                                            id: surfaceActionColumn
-
-                                            spacing: 6
-
-                                            property string moduleName:
-                                                modelData.name
-
-                                            property var moduleSurfaceContent:
-                                                modelData.surface_content
-                                                ? modelData.surface_content
-                                                : []
-
-                                            /*
-                                             * Boss UI presentation convention.
-                                             *
-                                             * SurfaceContent itself remains
-                                             * schema-generic.
-                                             *
-                                             * The UI consumes only declarations
-                                             * addressed to surface "ui" whose
-                                             * presentation payload declares:
-                                             *
-                                             *   control   = button
-                                             *   action    = arbitrary Governor action
-                                             *   label_key = language key
-                                             *
-                                             * Lifecycle transition identity is
-                                             * intentionally NOT executed here.
-                                             */
-                                            function uiActionButtons() {
-                                                var result = []
-
-                                                var content =
-                                                    surfaceActionColumn
-                                                        .moduleSurfaceContent
-
-                                                for (
-                                                    var index = 0;
-                                                    index < content.length;
-                                                    ++index
-                                                ) {
-                                                    var item =
-                                                        content[index]
-
-                                                    if (!item)
-                                                        continue
-
-                                                    if (
-                                                        item.surface
-                                                        !== "ui"
-                                                    )
-                                                        continue
-
-                                                    if (
-                                                        item.visible
-                                                        !== true
-                                                    )
-                                                        continue
-
-                                                    var data =
-                                                        item.data
-                                                        ? item.data
-                                                        : ({})
-
-                                                    if (
-                                                        data.control
-                                                        !== "button"
-                                                    )
-                                                        continue
-
-                                                    if (
-                                                        !data.action
-                                                        || !data.label_key
-                                                    )
-                                                        continue
-
-                                                    result.push(
-                                                        item
-                                                    )
-                                                }
-
-                                                return result
-                                            }
-
-                                            function uiStatefulSwitches() {
-                                                var result = []
-
-                                                var content =
-                                                    surfaceActionColumn
-                                                        .moduleSurfaceContent
-
-                                                for (
-                                                    var index = 0;
-                                                    index < content.length;
-                                                    ++index
-                                                ) {
-                                                    var item =
-                                                        content[index]
-
-                                                    if (
-                                                        !item
-                                                        || item.surface !== "ui"
-                                                        || !item.visible
-                                                    )
-                                                        continue
-
-                                                    var data =
-                                                        item.data
-                                                        ? item.data
-                                                        : ({})
-
-                                                    if (
-                                                        data.control !== "switch"
-                                                        || !item.object_id
-                                                        || item.active === undefined
-                                                        || item.active === null
-                                                        || !data.label_key
-                                                        || !data.action_on
-                                                        || !data.action_off
-                                                        || !data.transition_on
-                                                        || !data.transition_off
-                                                    )
-                                                        continue
-
-                                                    result.push(
-                                                        item
-                                                    )
-                                                }
-
-                                                return result
-                                            }
-
-                                            Repeater {
-                                                id: surfaceActionRepeater
-
-                                                model:
-                                                    surfaceActionColumn
-                                                        .uiActionButtons()
-
-                                                delegate: Button {
-                                                    id: surfaceActionButton
-
-                                                    required property var modelData
-
-                                                    property var surfaceItem:
-                                                        modelData
-
-                                                    property var surfaceData:
-                                                        surfaceItem
-                                                        && surfaceItem.data
-                                                        ? surfaceItem.data
-                                                        : ({})
-
-                                                    text:
-                                                        root.t(
-                                                            surfaceData
-                                                                .label_key
-                                                        )
-
-                                                    enabled:
-                                                        typeof boss
-                                                        !== "undefined"
-                                                        && !boss.busy
-                                                        && moduleCard
-                                                            .effectiveInstalled
-                                                        && moduleCard
-                                                            .effectiveEnabled
-                                                        && !modelData
-                                                            .update_available
-
-                                                    hoverEnabled: true
-
-                                                    background: Rectangle {
-                                                        radius: 7
-
-                                                        color:
-                                                            surfaceActionButton
-                                                                .down
-                                                            ? "#0B1220"
-                                                            : surfaceActionButton
-                                                                .hovered
-                                                            ? "#172033"
-                                                            : "#10131A"
-
-                                                        border.width:
-                                                            surfaceActionButton
-                                                                .activeFocus
-                                                            ? 3
-                                                            : 2
-
-                                                        border.color:
-                                                            surfaceActionButton
-                                                                .hovered
-                                                            || surfaceActionButton
-                                                                .activeFocus
-                                                            ? "#67E8F9"
-                                                            : "#22D3EE"
-                                                    }
-
-                                                    contentItem: Text {
-                                                        text:
-                                                            surfaceActionButton
-                                                                .text
-
-                                                        color:
-                                                            surfaceActionButton
-                                                                .enabled
-                                                            ? "#67E8F9"
-                                                            : "#64748B"
-
-                                                        horizontalAlignment:
-                                                            Text.AlignHCenter
-
-                                                        verticalAlignment:
-                                                            Text.AlignVCenter
-                                                    }
-
-                                                    onClicked: {
-                                                        boss
-                                                            .requestModuleAction(
-                                                                surfaceActionColumn
-                                                                    .moduleName,
-                                                                surfaceData
-                                                                    .action,
-                                                                surfaceItem
-                                                                    .object_id
-                                                                    || "",
-                                                                surfaceItem
-                                                                    .transition
-                                                                    || ""
-                                                            )
-                                                    }
-                                                }
-                                            }
-
-                                            Repeater {
-                                                id: surfaceStateRepeater
-
-                                                model:
-                                                    surfaceActionColumn
-                                                        .uiStatefulSwitches()
-
-                                                delegate: RowLayout {
-                                                    required property var modelData
-
-                                                    Layout.fillWidth: true
-                                                    spacing: 10
-
-                                                    property var surfaceItem:
-                                                        modelData
-
-                                                    property var surfaceData:
-                                                        surfaceItem
-                                                        && surfaceItem.data
-                                                        ? surfaceItem.data
-                                                        : ({})
-
-                                                    Label {
-                                                        Layout.fillWidth: true
-
-                                                        text:
-                                                            root.t(
-                                                                surfaceData
-                                                                    .label_key
-                                                            )
-
-                                                        color:
-                                                            "#A78BFA"
-
-                                                        font.pixelSize: 12
-                                                    }
-
-                                                    NeeblesSwitch {
-                                                        checked:
-                                                            !!surfaceItem
-                                                                .active
-
-                                                        checkable: false
-
-                                                        enabled:
-                                                            typeof boss
-                                                            !== "undefined"
-                                                            && !boss.busy
-                                                            && moduleCard
-                                                                .effectiveInstalled
-                                                            && moduleCard
-                                                                .effectiveEnabled
-
-                                                        onClicked: {
-                                                            const turnOn =
-                                                                !surfaceItem
-                                                                    .active
-
-                                                            boss
-                                                                .requestModuleAction(
-                                                                    surfaceActionColumn
-                                                                        .moduleName,
-                                                                    turnOn
-                                                                    ? surfaceData
-                                                                        .action_on
-                                                                    : surfaceData
-                                                                        .action_off,
-                                                                    surfaceItem
-                                                                        .object_id,
-                                                                    turnOn
-                                                                    ? surfaceData
-                                                                        .transition_on
-                                                                    : surfaceData
-                                                                        .transition_off
-                                                                )
-                                                        }
-                                                    }
-                                                }
-                                            }
 
                                             Button {
                                                 id: moduleUpdateButton

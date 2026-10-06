@@ -227,6 +227,9 @@ pub struct ModuleManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModuleLanguageEntry {
     pub code: String,
+
+    #[serde(default)]
+    pub file: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -542,6 +545,409 @@ pub fn installed_module_all_surface_content(
     Ok(crate::surface_content::resolve_all(&projection))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SurfaceActionTarget {
+    action: String,
+    object_id: Option<String>,
+    transition_id: Option<String>,
+}
+
+fn declared_surface_action_target(
+    item: &crate::surface_content::SurfaceContentItem,
+    requested_action: &str,
+) -> Result<SurfaceActionTarget, String> {
+    let requested_action = requested_action.trim();
+
+    if requested_action.is_empty() {
+        return Err("surface action cannot be empty".to_string());
+    }
+
+    let data = item.data();
+    let mut matches = Vec::<Option<String>>::new();
+
+    if data
+        .get("action")
+        .map(String::as_str)
+        .map(str::trim)
+        == Some(requested_action)
+    {
+        matches.push(item.transition().map(str::to_string));
+    }
+
+    if data
+        .get("action_on")
+        .map(String::as_str)
+        .map(str::trim)
+        == Some(requested_action)
+    {
+        let transition = data
+            .get("transition_on")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "surface item {} declares action_on {} without transition_on",
+                    item.identity().item_id(),
+                    requested_action
+                )
+            })?;
+
+        matches.push(Some(transition.to_string()));
+    }
+
+    if data
+        .get("action_off")
+        .map(String::as_str)
+        .map(str::trim)
+        == Some(requested_action)
+    {
+        let transition = data
+            .get("transition_off")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "surface item {} declares action_off {} without transition_off",
+                    item.identity().item_id(),
+                    requested_action
+                )
+            })?;
+
+        matches.push(Some(transition.to_string()));
+    }
+
+    match matches.len() {
+        0 => {
+            return Err(format!(
+                "surface item {} does not declare action {}",
+                item.identity().item_id(),
+                requested_action
+            ));
+        }
+
+        1 => {}
+
+        _ => {
+            return Err(format!(
+                "surface item {} declares ambiguous action {}",
+                item.identity().item_id(),
+                requested_action
+            ));
+        }
+    }
+
+    Ok(SurfaceActionTarget {
+        action: requested_action.to_string(),
+        object_id: item.object_id().map(str::to_string),
+        transition_id: matches.pop().unwrap(),
+    })
+}
+
+fn execute_resolved_surface_action_with<Requirements, Execute>(
+    owner: &str,
+    item: &crate::surface_content::SurfaceContentItem,
+    requested_action: &str,
+    requirements_satisfied: Requirements,
+    execute: Execute,
+) -> Result<(), String>
+where
+    Requirements: FnOnce(
+        &str,
+        &crate::surface_projection::SurfaceRequirements,
+    ) -> bool,
+    Execute: FnOnce(&str, &SurfaceActionTarget) -> Result<(), String>,
+{
+    if item.identity().owner_module() != owner {
+        return Err(format!(
+            "surface item {} belongs to {}, not {}",
+            item.identity().item_id(),
+            item.identity().owner_module(),
+            owner
+        ));
+    }
+
+    let target =
+        declared_surface_action_target(item, requested_action)?;
+
+    if !requirements_satisfied(owner, item.requirements()) {
+        return Err(format!(
+            "surface requirements are not satisfied for {}:{}",
+            owner,
+            item.identity().item_id()
+        ));
+    }
+
+    execute(owner, &target)
+}
+
+pub fn execute_surface_action(
+    owner: &str,
+    item_id: &str,
+    requested_action: &str,
+) -> Result<(), String> {
+    let owner = owner.trim();
+    let item_id = item_id.trim();
+
+    if !valid_module_id(owner) {
+        return Err(format!("invalid module id: {owner}"));
+    }
+
+    if item_id.is_empty() {
+        return Err("surface item id cannot be empty".to_string());
+    }
+
+    /*
+     * Always re-resolve from the currently installed Surface
+     * declaration. Boss Settings is only a materialized projection
+     * and caller-supplied object/transition identity is never trusted.
+     */
+    let content = installed_module_all_surface_content(owner)?;
+
+    let item = content
+        .iter()
+        .find(|item| {
+            item.identity().owner_module() == owner
+                && item.identity().item_id() == item_id
+        })
+        .ok_or_else(|| {
+            format!(
+                "installed module {} does not declare surface item {}",
+                owner, item_id
+            )
+        })?;
+
+    execute_resolved_surface_action_with(
+        owner,
+        item,
+        requested_action,
+        crate::surface_requirement_resolver::requirements_satisfied,
+        |module, target| {
+            execute_governor_target(
+                module,
+                &target.action,
+                target.object_id.as_deref(),
+                target.transition_id.as_deref(),
+            )
+        },
+    )
+}
+
+#[cfg(test)]
+mod surface_action_execution_tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::collections::BTreeMap;
+
+    fn content_item(
+        object_id: Option<&str>,
+        data: BTreeMap<String, String>,
+        requirements: crate::surface_projection::SurfaceRequirements,
+    ) -> crate::surface_content::SurfaceContentItem {
+        let mut lifecycle = crate::lifecycle::LifecycleContract::default();
+
+        if let Some(object_id) = object_id {
+            let mut object = crate::lifecycle::ObjectContract::default();
+
+            object.transitions.insert(
+                "feature-on".to_string(),
+                crate::lifecycle::Battleplan::default(),
+            );
+
+            object.transitions.insert(
+                "feature-off".to_string(),
+                crate::lifecycle::Battleplan::default(),
+            );
+
+            lifecycle.objects.insert(object_id.to_string(), object);
+        }
+
+        let mut projection =
+            crate::surface_projection::SurfaceProjection::new();
+
+        projection
+            .register_for_lifecycle(
+                &lifecycle,
+                crate::surface_projection::SurfaceProjectionItem
+                    ::with_data_and_requirements(
+                        "config.feature",
+                        "module.alpha",
+                        "ui",
+                        object_id.map(str::to_string),
+                        None,
+                        true,
+                        data,
+                        requirements,
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+
+        crate::surface_content::resolve_all(&projection)
+            .into_iter()
+            .next()
+            .unwrap()
+    }
+
+    #[test]
+    fn button_action_is_derived_from_fresh_surface_item() {
+        let item = content_item(
+            None,
+            BTreeMap::from([(
+                "action".to_string(),
+                "notify-demo".to_string(),
+            )]),
+            crate::surface_projection::SurfaceRequirements::default(),
+        );
+
+        let target =
+            declared_surface_action_target(&item, "notify-demo")
+                .unwrap();
+
+        assert_eq!(target.action, "notify-demo");
+        assert_eq!(target.object_id, None);
+        assert_eq!(target.transition_id, None);
+    }
+
+    #[test]
+    fn switch_action_derives_declared_object_and_transition() {
+        let item = content_item(
+            Some("notify-switch"),
+            BTreeMap::from([
+                ("action_on".to_string(), "feature-on".to_string()),
+                ("action_off".to_string(), "feature-off".to_string()),
+                ("transition_on".to_string(), "feature-on".to_string()),
+                ("transition_off".to_string(), "feature-off".to_string()),
+            ]),
+            crate::surface_projection::SurfaceRequirements::default(),
+        );
+
+        let target =
+            declared_surface_action_target(&item, "feature-on")
+                .unwrap();
+
+        assert_eq!(
+            target.object_id.as_deref(),
+            Some("notify-switch")
+        );
+
+        assert_eq!(
+            target.transition_id.as_deref(),
+            Some("feature-on")
+        );
+    }
+
+    #[test]
+    fn caller_cannot_invent_surface_action() {
+        let item = content_item(
+            None,
+            BTreeMap::from([(
+                "action".to_string(),
+                "notify-demo".to_string(),
+            )]),
+            crate::surface_projection::SurfaceRequirements::default(),
+        );
+
+        let error =
+            declared_surface_action_target(&item, "invented")
+                .unwrap_err();
+
+        assert!(error.contains("does not declare action"));
+    }
+
+    #[test]
+    fn ambiguous_surface_action_fails_closed() {
+        let item = content_item(
+            Some("notify-switch"),
+            BTreeMap::from([
+                ("action".to_string(), "same".to_string()),
+                ("action_on".to_string(), "same".to_string()),
+                ("transition_on".to_string(), "feature-on".to_string()),
+            ]),
+            crate::surface_projection::SurfaceRequirements::default(),
+        );
+
+        let error =
+            declared_surface_action_target(&item, "same")
+                .unwrap_err();
+
+        assert!(error.contains("ambiguous action"));
+    }
+
+    #[test]
+    fn unmet_requirements_block_lifecycle_execution() {
+        let requirements = serde_json::from_value(
+            serde_json::json!({"self": "open"}),
+        )
+        .unwrap();
+
+        let item = content_item(
+            None,
+            BTreeMap::from([(
+                "action".to_string(),
+                "notify-demo".to_string(),
+            )]),
+            requirements,
+        );
+
+        let executed = Cell::new(false);
+
+        let result = execute_resolved_surface_action_with(
+            "module.alpha",
+            &item,
+            "notify-demo",
+            |_, _| false,
+            |_, _| {
+                executed.set(true);
+                Ok(())
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(!executed.get());
+    }
+
+    #[test]
+    fn satisfied_requirements_execute_only_derived_target() {
+        let item = content_item(
+            Some("notify-switch"),
+            BTreeMap::from([
+                ("action_on".to_string(), "feature-on".to_string()),
+                ("transition_on".to_string(), "feature-on".to_string()),
+            ]),
+            crate::surface_projection::SurfaceRequirements::default(),
+        );
+
+        let executed = Cell::new(false);
+
+        execute_resolved_surface_action_with(
+            "module.alpha",
+            &item,
+            "feature-on",
+            |_, _| true,
+            |owner, target| {
+                assert_eq!(owner, "module.alpha");
+                assert_eq!(target.action, "feature-on");
+                assert_eq!(
+                    target.object_id.as_deref(),
+                    Some("notify-switch")
+                );
+                assert_eq!(
+                    target.transition_id.as_deref(),
+                    Some("feature-on")
+                );
+
+                executed.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(executed.get());
+    }
+}
+
 fn installed_module_object_state_store(
     name: &str,
     lifecycle: &crate::lifecycle::LifecycleContract,
@@ -557,15 +963,64 @@ fn installed_module_object_state_store(
     Ok(states)
 }
 
+fn surface_presentation_label(
+    item: &crate::surface_content::SurfaceContentItem,
+    module_strings: &BTreeMap<String, String>,
+) -> Result<Option<String>, String> {
+    if let Some(label_key) = item
+        .data()
+        .get("label_key")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let label = module_strings
+            .get(label_key)
+            .ok_or_else(|| {
+                format!(
+                    "module {} Surface item {} declares missing translation key {}",
+                    item.identity().owner_module(),
+                    item.identity().item_id(),
+                    label_key
+                )
+            })?;
+
+        if label.trim().is_empty() {
+            return Err(format!(
+                "module {} Surface item {} resolves translation key {} to an empty label",
+                item.identity().owner_module(),
+                item.identity().item_id(),
+                label_key
+            ));
+        }
+
+        return Ok(Some(label.clone()));
+    }
+
+    Ok(
+        item.data()
+            .get("label")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    )
+}
+
 fn surface_content_item_json(
     item: &crate::surface_content::SurfaceContentItem,
     states: &crate::lifecycle_objects::ObjectStateStore,
+    module_strings: &BTreeMap<String, String>,
 ) -> Result<Value, String> {
     let active = match item.object_id() {
-        Some(object_id) if states.contains(object_id) => item.canonical_active(states)?,
+        Some(object_id) if states.contains(object_id) =>
+            item.canonical_active(states)?,
 
         _ => None,
     };
+
+    let label =
+        surface_presentation_label(item, module_strings)?;
 
     Ok(json!({
         "owner_module":
@@ -583,17 +1038,240 @@ fn surface_content_item_json(
         "transition":
             item.transition(),
 
+        "require":
+            item.requirements(),
+
         "visible":
             item.visible(),
 
         "active":
             active,
 
+        "label":
+            label,
+
         "data":
             item.data(),
     }))
 }
+#[cfg(test)]
+mod surface_content_json_contract_tests {
+    use super::*;
 
+    #[test]
+    fn productive_surface_json_preserves_typed_requirements() {
+        let requirements:
+            crate::surface_projection::SurfaceRequirements =
+            serde_json::from_value(
+                serde_json::json!({
+                    "self": "open",
+                    "modules": {
+                        "module.beta": "active"
+                    }
+                })
+            )
+            .unwrap();
+
+        let lifecycle =
+            crate::lifecycle::LifecycleContract::default();
+
+        let mut projection =
+            crate::surface_projection::SurfaceProjection::new();
+
+        projection
+            .register_for_lifecycle(
+                &lifecycle,
+                crate::surface_projection::SurfaceProjectionItem
+                    ::with_data_and_requirements(
+                        "notify.ui",
+                        "module.alpha",
+                        "ui",
+                        None,
+                        None,
+                        true,
+                        std::collections::BTreeMap::from([(
+                            "control".to_string(),
+                            "button".to_string(),
+                        )]),
+                        requirements,
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let content =
+            crate::surface_content::resolve_all(&projection);
+
+        let states =
+            crate::lifecycle_objects::ObjectStateStore::new();
+
+        let value =
+            surface_content_item_json(&content[0], &states, &std::collections::BTreeMap::new())
+                .unwrap();
+
+        assert_eq!(
+            value["require"]["self"],
+            serde_json::json!("open")
+        );
+
+        assert_eq!(
+            value["require"]["modules"]["module.beta"],
+            serde_json::json!("active")
+        );
+    }
+
+    #[test]
+    fn productive_surface_json_preserves_empty_requirements() {
+        let lifecycle =
+            crate::lifecycle::LifecycleContract::default();
+
+        let mut projection =
+            crate::surface_projection::SurfaceProjection::new();
+
+        projection
+            .register_for_lifecycle(
+                &lifecycle,
+                crate::surface_projection::SurfaceProjectionItem::with_data(
+                    "open.launcher",
+                    "module.alpha",
+                    "launcher",
+                    None,
+                    None,
+                    true,
+                    std::collections::BTreeMap::from([(
+                        "control".to_string(),
+                        "button".to_string(),
+                    )]),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let content =
+            crate::surface_content::resolve_all(&projection);
+
+        let states =
+            crate::lifecycle_objects::ObjectStateStore::new();
+
+        let value =
+            surface_content_item_json(&content[0], &states, &std::collections::BTreeMap::new())
+                .unwrap();
+
+        assert_eq!(
+            value["require"],
+            serde_json::json!({})
+        );
+    }
+    #[test]
+    fn productive_surface_json_materializes_owner_scoped_label() {
+        let lifecycle =
+            crate::lifecycle::LifecycleContract::default();
+
+        let mut projection =
+            crate::surface_projection::SurfaceProjection::new();
+
+        projection
+            .register_for_lifecycle(
+                &lifecycle,
+                crate::surface_projection::SurfaceProjectionItem::with_data(
+                    "open.launcher",
+                    "module.alpha",
+                    "launcher",
+                    None,
+                    None,
+                    true,
+                    std::collections::BTreeMap::from([
+                        (
+                            "control".to_string(),
+                            "button".to_string(),
+                        ),
+                        (
+                            "label_key".to_string(),
+                            "surface.open".to_string(),
+                        ),
+                    ]),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let content =
+            crate::surface_content::resolve_all(&projection);
+
+        let states =
+            crate::lifecycle_objects::ObjectStateStore::new();
+
+        let strings =
+            std::collections::BTreeMap::from([(
+                "surface.open".to_string(),
+                "Abrir".to_string(),
+            )]);
+
+        let value =
+            surface_content_item_json(
+                &content[0],
+                &states,
+                &strings,
+            )
+            .unwrap();
+
+        assert_eq!(
+            value["label"],
+            serde_json::json!("Abrir")
+        );
+
+        assert_eq!(
+            value["data"]["label_key"],
+            serde_json::json!("surface.open")
+        );
+    }
+
+    #[test]
+    fn productive_surface_json_rejects_missing_owner_translation() {
+        let lifecycle =
+            crate::lifecycle::LifecycleContract::default();
+
+        let mut projection =
+            crate::surface_projection::SurfaceProjection::new();
+
+        projection
+            .register_for_lifecycle(
+                &lifecycle,
+                crate::surface_projection::SurfaceProjectionItem::with_data(
+                    "open.launcher",
+                    "module.alpha",
+                    "launcher",
+                    None,
+                    None,
+                    true,
+                    std::collections::BTreeMap::from([
+                        (
+                            "label_key".to_string(),
+                            "surface.missing".to_string(),
+                        ),
+                    ]),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let content =
+            crate::surface_content::resolve_all(&projection);
+
+        let states =
+            crate::lifecycle_objects::ObjectStateStore::new();
+
+        let error =
+            surface_content_item_json(
+                &content[0],
+                &states,
+                &std::collections::BTreeMap::new(),
+            )
+            .unwrap_err();
+
+        assert!(error.contains("missing translation key"));
+    }
+}
 /*
  * Load every dynamic contract declared by an installed module.
  *
@@ -1395,6 +2073,23 @@ fn install_require_tree(
             module_id,
             active_binding_path.display()
         );
+
+        let feature_reconciliation =
+            installed_module_all_surface_content(&module_id)
+                .and_then(|content| {
+                    config::reconcile_module_features(&module_id, &content)
+                        .map(|_| ())
+                });
+
+        if let Err(error) = feature_reconciliation {
+            return Err(require_install_failure(
+                format!(
+                    "module {} feature materialization failed: {}",
+                    module_id, error
+                ),
+                &mut transaction,
+            ));
+        }
 
         if let Err(error) = execute_module_governor_lifecycle(
             lifecycle_runtime,
@@ -2826,8 +3521,361 @@ pub fn fetch_registry() -> Result<Registry, String> {
     Ok(registry)
 }
 
+fn feature_startup_transaction_directory(name: &str) -> bool {
+    name.starts_with(".neebles-update-")
+        || name.starts_with(".neebles-backup-")
+        || name.starts_with(".neebles-failed-")
+}
+
+fn installed_feature_inventory(
+) -> Result<config::FeatureInventory, String> {
+    let root = modules_root();
+    let mut inventory = config::FeatureInventory::new();
+    let mut owners = BTreeMap::<String, PathBuf>::new();
+
+    if !root.exists() {
+        return Ok(inventory);
+    }
+
+    for entry in fs::read_dir(&root)
+        .map_err(|error| format!(
+            "could not read {} while rebuilding Boss Features: {error}",
+            root.display()
+        ))?
+    {
+        let entry = entry.map_err(|error| format!(
+            "could not read module directory entry while rebuilding Boss Features: {error}"
+        ))?;
+
+        let path = entry.path();
+
+        if !path.is_dir() {
+            continue;
+        }
+
+        let directory_name = entry.file_name();
+        let directory_name = directory_name.to_string_lossy();
+
+        if feature_startup_transaction_directory(&directory_name) {
+            continue;
+        }
+
+        let manifest_path = path.join("manifest.json");
+
+        if !manifest_path.is_file() {
+            continue;
+        }
+
+        let manifest = read_manifest(&manifest_path).map_err(|error| {
+            format!(
+                "invalid installed module contract {} during Feature startup reconciliation: {}",
+                manifest_path.display(),
+                error
+            )
+        })?;
+
+        if let Some(previous) = owners.insert(
+            manifest.name.clone(),
+            path.clone(),
+        ) {
+            return Err(format!(
+                "duplicate installed module identity {} while rebuilding Boss Features: {} and {}",
+                manifest.name,
+                previous.display(),
+                path.display()
+            ));
+        }
+
+        let lifecycle =
+            lifecycle_contract_from_module(&path, &manifest)?;
+
+        let projection =
+            surface_projection_from_module(
+                &path,
+                &manifest,
+                &lifecycle,
+            )?;
+
+        let content =
+            crate::surface_content::resolve_all(&projection);
+
+        let canonical =
+            config::canonical_module_features(
+                &manifest.name,
+                &content,
+            )?;
+
+        if !canonical.is_empty() {
+            inventory.insert(
+                manifest.name.clone(),
+                canonical,
+            );
+        }
+    }
+
+    Ok(inventory)
+}
+
+pub fn reconcile_installed_module_features(
+) -> Result<config::FeatureInventory, String> {
+    let canonical = installed_feature_inventory()?;
+
+    config::replace_feature_inventory(&canonical)?;
+
+    Ok(canonical)
+}
+
+#[cfg(test)]
+mod startup_feature_inventory_tests {
+    use super::*;
+
+    #[test]
+    fn update_transaction_directories_are_not_active_installations() {
+        assert!(feature_startup_transaction_directory(
+            ".neebles-update-test-module-1"
+        ));
+
+        assert!(feature_startup_transaction_directory(
+            ".neebles-backup-test-module-1"
+        ));
+
+        assert!(feature_startup_transaction_directory(
+            ".neebles-failed-features-update-test-module-1"
+        ));
+
+        assert!(!feature_startup_transaction_directory(
+            "test-module"
+        ));
+    }
+}
+fn materialize_surface_requirements_with<Satisfied>(
+    value: &mut Value,
+    mut satisfied: Satisfied,
+) -> Result<(), String>
+where
+    Satisfied: FnMut(
+        &str,
+        &crate::surface_projection::SurfaceRequirements,
+    ) -> bool,
+{
+    let modules = value
+        .as_array_mut()
+        .ok_or_else(|| {
+            "installed module presentation model must be an array"
+                .to_string()
+        })?;
+
+    for module in modules.iter_mut() {
+        let module_object = module
+            .as_object_mut()
+            .ok_or_else(|| {
+                "installed module presentation entry must be an object"
+                    .to_string()
+            })?;
+
+        let module_name = module_object
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "installed module presentation entry has no module name"
+                    .to_string()
+            })?
+            .to_string();
+
+        let content = module_object
+            .get_mut("surface_content")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| {
+                format!(
+                    "installed module {} has no SurfaceContent array",
+                    module_name
+                )
+            })?;
+
+        for item in content.iter_mut() {
+            let item_object = item
+                .as_object_mut()
+                .ok_or_else(|| {
+                    format!(
+                        "installed module {} contains a non-object SurfaceContent item",
+                        module_name
+                    )
+                })?;
+
+            let item_id = item_object
+                .get("item_id")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>")
+                .to_string();
+
+            let owner = item_object
+                .get("owner_module")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "SurfaceContent item {} has no owner module",
+                        item_id
+                    )
+                })?
+                .to_string();
+
+            if owner != module_name {
+                return Err(format!(
+                    "SurfaceContent owner mismatch: module={} item={} owner={}",
+                    module_name,
+                    item_id,
+                    owner
+                ));
+            }
+
+            let require_value = item_object
+                .get("require")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+
+            let requirements:
+                crate::surface_projection::SurfaceRequirements =
+                serde_json::from_value(require_value)
+                    .map_err(|error| {
+                        format!(
+                            "invalid Surface requirements for {}:{}: {error}",
+                            owner,
+                            item_id
+                        )
+                    })?;
+
+            let requirements_met =
+                satisfied(&owner, &requirements);
+
+            item_object.insert(
+                "requirements_met".to_string(),
+                Value::Bool(requirements_met),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod surface_presentation_model_tests {
+    use super::*;
+
+    #[test]
+    fn presentation_model_materializes_requirements_without_replacing_contract() {
+        let mut value = json!([
+            {
+                "name": "module.alpha",
+                "surface_content": [
+                    {
+                        "owner_module": "module.alpha",
+                        "item_id": "feature.active",
+                        "require": {
+                            "self": "active"
+                        }
+                    },
+                    {
+                        "owner_module": "module.alpha",
+                        "item_id": "feature.cross",
+                        "require": {
+                            "modules": {
+                                "module.beta": "open"
+                            }
+                        }
+                    }
+                ]
+            }
+        ]);
+
+        let mut queried = Vec::<String>::new();
+
+        materialize_surface_requirements_with(
+            &mut value,
+            |owner, requirements| {
+                queried.push(owner.to_string());
+
+                requirements.self_state()
+                    == Some(
+                        crate::surface_projection::SurfaceRequirementState::Active
+                    )
+            },
+        )
+        .unwrap();
+
+        let content = value[0]["surface_content"]
+            .as_array()
+            .unwrap();
+
+        assert_eq!(
+            content[0]["requirements_met"],
+            json!(true)
+        );
+
+        assert_eq!(
+            content[1]["requirements_met"],
+            json!(false)
+        );
+
+        assert_eq!(
+            content[0]["require"]["self"],
+            json!("active")
+        );
+
+        assert_eq!(
+            content[1]["require"]["modules"]["module.beta"],
+            json!("open")
+        );
+
+        assert_eq!(
+            queried,
+            vec![
+                "module.alpha".to_string(),
+                "module.alpha".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn presentation_model_rejects_surface_owner_mismatch() {
+        let mut value = json!([
+            {
+                "name": "module.alpha",
+                "surface_content": [
+                    {
+                        "owner_module": "module.beta",
+                        "item_id": "foreign.feature",
+                        "require": {}
+                    }
+                ]
+            }
+        ]);
+
+        let mut queried = false;
+
+        let error =
+            materialize_surface_requirements_with(
+                &mut value,
+                |_, _| {
+                    queried = true;
+                    true
+                },
+            )
+            .unwrap_err();
+
+        assert!(!queried);
+        assert!(error.contains("owner mismatch"));
+    }
+}
 pub fn installed_modules_json() -> Result<Value, String> {
     let mut result = Vec::new();
+
+    let requested_language =
+        config::load_or_initialize()?.language;
+
     let root = modules_root();
     if !root.exists() {
         return Ok(json!([]));
@@ -2847,6 +3895,12 @@ pub fn installed_modules_json() -> Result<Value, String> {
         }
         let manifest = read_manifest(&manifest_path)?;
 
+        let module_strings =
+            load_module_strings(
+                &entry.path(),
+                &requested_language,
+            )?;
+
         let lifecycle = installed_module_lifecycle_contract(&manifest.name)?;
 
         let object_states = installed_module_object_state_store(&manifest.name, &lifecycle)?;
@@ -2864,7 +3918,13 @@ pub fn installed_modules_json() -> Result<Value, String> {
          */
         let surface_content = installed_module_all_surface_content(&manifest.name)?
             .iter()
-            .map(|item| surface_content_item_json(item, &object_states))
+            .map(|item| {
+                surface_content_item_json(
+                    item,
+                    &object_states,
+                    &module_strings,
+                )
+            })
             .collect::<Result<Vec<_>, String>>()?;
 
         let mut item = json!({
@@ -2908,6 +3968,21 @@ pub fn installed_modules_json() -> Result<Value, String> {
     Ok(Value::Array(result))
 }
 
+pub fn installed_modules_presentation_json() -> Result<Value, String> {
+    let mut value = installed_modules_json()?;
+
+    materialize_surface_requirements_with(
+        &mut value,
+        |owner, requirements| {
+            crate::surface_requirement_resolver::requirements_satisfied(
+                owner,
+                requirements,
+            )
+        },
+    )?;
+
+    Ok(value)
+}
 pub fn available_modules_json() -> Result<Value, String> {
     let registry = fetch_registry()?;
     let installed = installed_names()?;
@@ -3589,6 +4664,24 @@ fn synchronize_activated_material_binding_after_update_rollback(
     }
 }
 
+fn synchronize_feature_inventory_after_update_rollback(
+    name: &str,
+    state: LiveUpdateRollbackState,
+) -> Result<(), String> {
+    match state {
+        LiveUpdateRollbackState::PreviousRestored
+        | LiveUpdateRollbackState::NewPreserved => {
+            let content = installed_module_all_surface_content(name)?;
+
+            config::reconcile_module_features(name, &content)
+                .map(|_| ())
+        }
+
+        LiveUpdateRollbackState::NoActiveModule =>
+            config::remove_module_features(name).map(|_| ()),
+    }
+}
+
 fn format_live_update_failure_with_binding(
     name: &str,
     phase: &str,
@@ -3598,12 +4691,23 @@ fn format_live_update_failure_with_binding(
 ) -> String {
     let base = format_live_update_failure(name, phase, cause, rollback);
 
-    match binding_sync {
+    let base = match binding_sync {
         Ok(()) => base,
 
         Err(error) => {
             format!("{base}; CRITICAL: material binding synchronization also failed: {error}")
         }
+    };
+
+    match synchronize_feature_inventory_after_update_rollback(
+        name,
+        rollback.state,
+    ) {
+        Ok(()) => base,
+
+        Err(error) => format!(
+            "{base}; CRITICAL: feature inventory synchronization also failed: {error}"
+        ),
     }
 }
 
@@ -3989,8 +5093,45 @@ fn update_with_observer(
         ));
     }
 
+    let feature_reconciliation =
+        installed_module_all_surface_content(name)
+            .and_then(|content| {
+                config::reconcile_module_features(name, &content)
+                    .map(|_| ())
+            });
+
+    if let Err(feature_error) = feature_reconciliation {
+        let failed_update_path = root.join(format!(
+            ".neebles-failed-features-update-{name}-{transaction}"
+        ));
+
+        let rollback =
+            rollback_live_update_paths(
+                &current_path,
+                &backup_path,
+                &failed_update_path,
+            );
+
+        let binding_sync =
+            synchronize_activated_material_binding_after_update_rollback(
+                material_binding_update,
+                &material_root,
+                name,
+                rollback.state,
+            );
+
+        return Err(format_live_update_failure_with_binding(
+            name,
+            "feature reconciliation",
+            &feature_error,
+            &rollback,
+            binding_sync,
+        ));
+    }
+
     /*
      * All fallible update phases that require rollback have completed.
+     * Module, settings and Boss-owned Feature projection now agree.
      * The new material binding is now the persistent active truth.
      */
     material_binding_update.finalize();
@@ -4158,14 +5299,11 @@ pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn resolve_module_language(module_dir: &Path, requested: &str) -> Result<String, String> {
-    let manifest_path = module_dir.join("languages").join("manifest.json");
-
-    /*
-     * Schema 4 modules always have a validated language
-     * contract. No implicit legacy behavior exists here.
-     */
-    validate_module_language_contract(module_dir)?;
+fn read_module_language_manifest(
+    module_dir: &Path,
+) -> Result<ModuleLanguageManifest, String> {
+    let manifest_path =
+        module_dir.join("languages").join("manifest.json");
 
     let raw = fs::read_to_string(&manifest_path).map_err(|error| {
         format!(
@@ -4174,38 +5312,284 @@ fn resolve_module_language(module_dir: &Path, requested: &str) -> Result<String,
         )
     })?;
 
-    let manifest: ModuleLanguageManifest = serde_json::from_str(&raw).map_err(|error| {
+    serde_json::from_str(&raw).map_err(|error| {
         format!(
             "invalid module language manifest {}: {error}",
             manifest_path.display()
         )
-    })?;
+    })
+}
 
+fn selected_module_language_entry(
+    manifest: &ModuleLanguageManifest,
+    requested: &str,
+) -> Result<ModuleLanguageEntry, String> {
     let requested = languages::normalize_locale(requested);
 
     if let Some(language) = manifest
         .languages
         .iter()
-        .find(|language| languages::normalize_locale(&language.code) == requested)
+        .find(|language| {
+            languages::normalize_locale(&language.code)
+                == requested
+        })
     {
-        return Ok(language.code.clone());
+        return Ok(language.clone());
     }
 
-    let normalized_default = languages::normalize_locale(manifest.default.trim());
+    let normalized_default =
+        languages::normalize_locale(manifest.default.trim());
 
-    let language = manifest
+    manifest
         .languages
         .iter()
-        .find(|language| languages::normalize_locale(&language.code) == normalized_default)
+        .find(|language| {
+            languages::normalize_locale(&language.code)
+                == normalized_default
+        })
+        .cloned()
         .ok_or_else(|| {
             format!(
-                "module language manifest {} defines invalid default '{}'",
-                manifest_path.display(),
+                "module language manifest defines invalid default {}",
                 manifest.default
             )
-        })?;
+        })
+}
 
-    Ok(language.code.clone())
+fn module_language_file_path(
+    module_dir: &Path,
+    language: &ModuleLanguageEntry,
+) -> Result<PathBuf, String> {
+    let file = language.file.trim();
+
+    if file.is_empty() {
+        return Err(format!(
+            "module language {} does not declare a file",
+            language.code
+        ));
+    }
+
+    let relative = Path::new(file);
+
+    if relative.is_absolute() {
+        return Err(format!(
+            "module language {} declares an absolute file path",
+            language.code
+        ));
+    }
+
+    let relative =
+        Path::new("languages").join(relative);
+
+    let relative_text =
+        relative.to_string_lossy();
+
+    let resolved = resolve_module_file(
+        module_dir,
+        relative_text.as_ref(),
+        "language file",
+    )?;
+
+    let language_root =
+        module_dir
+            .join("languages")
+            .canonicalize()
+            .map_err(|error| {
+                format!(
+                    "could not resolve module languages directory {}: {error}",
+                    module_dir.join("languages").display()
+                )
+            })?;
+
+    if !resolved.starts_with(&language_root) {
+        return Err(format!(
+            "module language {} escapes languages directory",
+            language.code
+        ));
+    }
+
+    Ok(resolved)
+}
+fn load_module_strings(
+    module_dir: &Path,
+    requested: &str,
+) -> Result<BTreeMap<String, String>, String> {
+    validate_module_language_contract(module_dir)?;
+
+    let manifest =
+        read_module_language_manifest(module_dir)?;
+
+    let language =
+        selected_module_language_entry(&manifest, requested)?;
+
+    let path =
+        module_language_file_path(module_dir, &language)?;
+
+    let raw = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "could not read module language file {}: {error}",
+            path.display()
+        )
+    })?;
+
+    serde_json::from_str(&raw).map_err(|error| {
+        format!(
+            "invalid module language file {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn resolve_module_language(
+    module_dir: &Path,
+    requested: &str,
+) -> Result<String, String> {
+    validate_module_language_contract(module_dir)?;
+
+    let manifest =
+        read_module_language_manifest(module_dir)?;
+
+    Ok(
+        selected_module_language_entry(
+            &manifest,
+            requested,
+        )?
+        .code
+    )
+}
+#[cfg(test)]
+mod module_language_presentation_tests {
+    use super::*;
+
+    fn temporary_language_module(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "neebles-module-language-{}-{}-{}",
+            std::process::id(),
+            transaction_id(),
+            label
+        ));
+
+        fs::create_dir_all(path.join("languages")).unwrap();
+
+        path
+    }
+
+    fn write_valid_language_contract(path: &Path) {
+        fs::write(
+            path.join("languages/manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": MODULE_LANGUAGE_SCHEMA_VERSION,
+                "default": "es_CL",
+                "languages": [
+                    {
+                        "code": "es_CL",
+                        "file": "es_CL.json"
+                    },
+                    {
+                        "code": "en_US",
+                        "file": "en_US.json"
+                    }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        fs::write(
+            path.join("languages/es_CL.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "surface.open": "Abrir"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        fs::write(
+            path.join("languages/en_US.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "surface.open": "Open"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn module_strings_use_requested_language_and_default_fallback() {
+        let path =
+            temporary_language_module("selection");
+
+        write_valid_language_contract(&path);
+
+        let english =
+            load_module_strings(&path, "en-US").unwrap();
+
+        assert_eq!(
+            english.get("surface.open").map(String::as_str),
+            Some("Open")
+        );
+
+        let fallback =
+            load_module_strings(&path, "fr_FR").unwrap();
+
+        assert_eq!(
+            fallback.get("surface.open").map(String::as_str),
+            Some("Abrir")
+        );
+
+        assert_eq!(
+            resolve_module_language(&path, "en-US").unwrap(),
+            "en_US"
+        );
+
+        assert_eq!(
+            resolve_module_language(&path, "fr_FR").unwrap(),
+            "es_CL"
+        );
+
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn module_language_file_cannot_escape_languages_directory() {
+        let path =
+            temporary_language_module("escape");
+
+        fs::write(
+            path.join("languages/manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": MODULE_LANGUAGE_SCHEMA_VERSION,
+                "default": "es_CL",
+                "languages": [
+                    {
+                        "code": "es_CL",
+                        "file": "../escape.json"
+                    }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        fs::write(
+            path.join("escape.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "surface.open": "escape"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let error =
+            validate_module_language_contract(&path).unwrap_err();
+
+        assert!(
+            error.contains("invalid path")
+                || error.contains("escapes languages directory")
+        );
+
+        fs::remove_dir_all(path).unwrap();
+    }
 }
 
 pub fn find_module_dir(name: &str) -> Result<PathBuf, String> {
@@ -4376,6 +5760,25 @@ fn validate_module_language_contract(module_dir: &Path) -> Result<(), String> {
                 normalized
             ));
         }
+
+        let language_path =
+            module_language_file_path(module_dir, language)?;
+
+        let language_raw =
+            fs::read_to_string(&language_path).map_err(|error| {
+                format!(
+                    "could not read module language file {}: {error}",
+                    language_path.display()
+                )
+            })?;
+
+        let _: BTreeMap<String, String> =
+            serde_json::from_str(&language_raw).map_err(|error| {
+                format!(
+                    "invalid module language file {}: {error}",
+                    language_path.display()
+                )
+            })?;
     }
 
     let default = manifest.default.trim();

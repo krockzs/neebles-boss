@@ -1,4 +1,6 @@
 use crate::{languages, modules, settings};
+use crate::surface_content::SurfaceContentItem;
+use crate::surface_projection::SurfaceRequirements;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -7,6 +9,9 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+pub type FeatureInventory =
+    BTreeMap<String, BTreeMap<String, SurfaceRequirements>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BossConfig {
@@ -18,6 +23,9 @@ pub struct BossConfig {
 
     #[serde(default)]
     pub modules: BTreeMap<String, BTreeMap<String, bool>>,
+
+    #[serde(default)]
+    pub features: FeatureInventory,
 
     #[serde(default)]
     pub disabled_modules: Vec<String>,
@@ -75,6 +83,8 @@ fn schema_json() -> Result<Value, String> {
         },
 
         "modules": "{}",
+
+        "features": "{}",
 
         "ui": {
             "language": "es_CL",
@@ -259,6 +269,27 @@ fn module_states(local: &Value) -> Result<BTreeMap<String, BTreeMap<String, bool
         .map_err(|error| format!("Boss setting modules contains invalid String data: {error}"))
 }
 
+fn feature_inventory(local: &Value) -> Result<FeatureInventory, String> {
+    let Some(value) = local_string(local, "features")? else {
+        return Ok(BTreeMap::new());
+    };
+
+    serde_json::from_str(&value).map_err(|error| {
+        format!(
+            "Boss setting features contains invalid String data: {error}"
+        )
+    })
+}
+
+fn string_feature_inventory(
+    value: &FeatureInventory,
+) -> Result<String, String> {
+    serde_json::to_string(value)
+        .map_err(|error| format!(
+            "could not serialize Boss feature inventory: {error}"
+        ))
+}
+
 fn write_setting(path: &str, value: String) -> Result<String, String> {
     let file = config_path()?;
 
@@ -333,6 +364,107 @@ pub fn update_module_object_state(
     write_module_states(&modules)
 }
 
+pub(crate) fn canonical_module_features(
+    name: &str,
+    content: &[SurfaceContentItem],
+) -> Result<BTreeMap<String, SurfaceRequirements>, String> {
+    let mut canonical = BTreeMap::new();
+
+    for item in content.iter().filter(|item| item.surface() == "ui") {
+        if item.identity().owner_module() != name {
+            return Err(format!(
+                "feature SurfaceContent owner '{}' does not match module '{}'",
+                item.identity().owner_module(),
+                name
+            ));
+        }
+
+        if canonical
+            .insert(
+                item.identity().item_id().to_string(),
+                item.requirements().clone(),
+            )
+            .is_some()
+        {
+            return Err(format!(
+                "duplicate feature SurfaceContent item '{}' for module '{}'",
+                item.identity().item_id(),
+                name
+            ));
+        }
+    }
+
+    Ok(canonical)
+}
+
+fn write_feature_inventory(
+    features: &FeatureInventory,
+) -> Result<BossConfig, String> {
+    write_setting(
+        "features",
+        string_feature_inventory(features)?,
+    )?;
+
+    load_or_initialize()
+}
+
+fn feature_inventory_replacement(
+    current: &FeatureInventory,
+    canonical: &FeatureInventory,
+) -> Option<FeatureInventory> {
+    if current == canonical {
+        None
+    } else {
+        Some(canonical.clone())
+    }
+}
+
+pub(crate) fn replace_feature_inventory(
+    canonical: &FeatureInventory,
+) -> Result<BossConfig, String> {
+    let config = load_or_initialize()?;
+
+    let Some(replacement) =
+        feature_inventory_replacement(&config.features, canonical)
+    else {
+        return Ok(config);
+    };
+
+    write_feature_inventory(&replacement)
+}
+
+pub fn reconcile_module_features(
+    name: &str,
+    content: &[SurfaceContentItem],
+) -> Result<BTreeMap<String, SurfaceRequirements>, String> {
+    let config = load_or_initialize()?;
+    let canonical = canonical_module_features(name, content)?;
+    let mut features = config.features.clone();
+
+    features.remove(name);
+
+    if !canonical.is_empty() {
+        features.insert(name.to_string(), canonical.clone());
+    }
+
+    if features != config.features {
+        write_feature_inventory(&features)?;
+    }
+
+    Ok(canonical)
+}
+
+pub fn remove_module_features(name: &str) -> Result<BossConfig, String> {
+    let config = load_or_initialize()?;
+    let mut features = config.features.clone();
+
+    if features.remove(name).is_none() {
+        return Ok(config);
+    }
+
+    write_feature_inventory(&features)
+}
+
 pub fn load_or_initialize() -> Result<BossConfig, String> {
     let local = local_settings()?;
 
@@ -348,6 +480,8 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
         telemetry_enabled: boss_bool(&local, "telemetry.enabled")?,
 
         modules: module_states(&local)?,
+
+        features: feature_inventory(&local)?,
 
         disabled_modules: boss_list(&local, "ui.disabled_modules")?,
 
@@ -516,8 +650,11 @@ pub fn remove_module_transient_state(name: &str) -> Result<BossConfig, String> {
 
     let mut object_states = module_states(&local)?;
 
+    let mut features = feature_inventory(&local)?;
+
     notifications.remove(name);
     object_states.remove(name);
+    features.remove(name);
 
     write_setting(
         "ui.module_update_notifications",
@@ -528,6 +665,11 @@ pub fn remove_module_transient_state(name: &str) -> Result<BossConfig, String> {
         "modules",
         serde_json::to_string(&object_states)
             .map_err(|error| format!("could not serialize Boss module object states: {error}"))?,
+    )?;
+
+    write_setting(
+        "features",
+        string_feature_inventory(&features)?,
     )?;
 
     load_or_initialize()
@@ -546,12 +688,15 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
 
     let mut object_states = module_states(&local)?;
 
+    let mut features = feature_inventory(&local)?;
+
     disabled.retain(|item| item != name);
 
     tray_visibility.remove(name);
     launcher_visibility.remove(name);
     notifications.remove(name);
     object_states.remove(name);
+    features.remove(name);
 
     write_setting("ui.disabled_modules", string_list(&disabled)?)?;
 
@@ -574,6 +719,11 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
         "modules",
         serde_json::to_string(&object_states)
             .map_err(|error| format!("could not serialize Boss module object states: {error}"))?,
+    )?;
+
+    write_setting(
+        "features",
+        string_feature_inventory(&features)?,
     )?;
 
     load_or_initialize()
@@ -807,5 +957,187 @@ mod module_state_tests {
             serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded, modules);
+    }
+}
+
+#[cfg(test)]
+mod feature_materialization_tests {
+    use super::*;
+
+    use crate::lifecycle::LifecycleContract;
+    use crate::surface_projection::{
+        SurfaceProjection,
+        SurfaceProjectionItem,
+        SurfaceRequirementState,
+    };
+
+    #[test]
+    fn features_schema_is_one_string_leaf() {
+        let schema = schema_json().unwrap();
+
+        assert_eq!(
+            schema.get("features"),
+            Some(&Value::String("{}".to_string()))
+        );
+    }
+
+    #[test]
+    fn feature_inventory_string_round_trip_preserves_requirements() {
+        let expected: FeatureInventory = serde_json::from_value(
+            serde_json::json!({
+                "module.alpha": {
+                    "notify.button": {
+                        "self": "active",
+                        "modules": {
+                            "module.beta": "open"
+                        }
+                    }
+                }
+            })
+        )
+        .unwrap();
+
+        let encoded = string_feature_inventory(&expected).unwrap();
+        let local = serde_json::json!({
+            "features": encoded
+        });
+
+        assert_eq!(
+            feature_inventory(&local).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn feature_materialization_keeps_only_ui_surface_items() {
+        let lifecycle = LifecycleContract::default();
+        let requirements: SurfaceRequirements = serde_json::from_value(
+            serde_json::json!({
+                "self": "open",
+                "modules": {
+                    "module.beta": "active"
+                }
+            })
+        )
+        .unwrap();
+
+        let mut projection = SurfaceProjection::new();
+
+        projection
+            .register_for_lifecycle(
+                &lifecycle,
+                SurfaceProjectionItem::with_data_and_requirements(
+                    "notify.button",
+                    "module.alpha",
+                    "ui",
+                    None,
+                    None,
+                    true,
+                    BTreeMap::from([(
+                        "control".to_string(),
+                        "button".to_string(),
+                    )]),
+                    requirements,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        projection
+            .register_for_lifecycle(
+                &lifecycle,
+                SurfaceProjectionItem::with_data(
+                    "open.launcher",
+                    "module.alpha",
+                    "launcher",
+                    None,
+                    None,
+                    true,
+                    BTreeMap::from([(
+                        "control".to_string(),
+                        "button".to_string(),
+                    )]),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let content = crate::surface_content::resolve_all(&projection);
+        let canonical =
+            canonical_module_features("module.alpha", &content).unwrap();
+
+        assert_eq!(canonical.len(), 1);
+        assert!(!canonical.contains_key("open.launcher"));
+
+        let require = canonical.get("notify.button").unwrap();
+
+        assert_eq!(
+            require.self_state(),
+            Some(SurfaceRequirementState::Open)
+        );
+
+        assert_eq!(
+            require.modules().get("module.beta"),
+            Some(&SurfaceRequirementState::Active)
+        );
+    }
+
+    #[test]
+    fn feature_materialization_rejects_wrong_owner() {
+        let lifecycle = LifecycleContract::default();
+        let mut projection = SurfaceProjection::new();
+
+        projection
+            .register_for_lifecycle(
+                &lifecycle,
+                SurfaceProjectionItem::with_data(
+                    "notify.button",
+                    "module.beta",
+                    "ui",
+                    None,
+                    None,
+                    true,
+                    BTreeMap::from([(
+                        "control".to_string(),
+                        "button".to_string(),
+                    )]),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let content = crate::surface_content::resolve_all(&projection);
+
+        let error =
+            canonical_module_features("module.alpha", &content)
+                .unwrap_err();
+
+        assert!(error.contains("does not match module"));
+    }
+
+    #[test]
+    fn exact_feature_inventory_replacement_drops_ghost_owner() {
+        let current: FeatureInventory = BTreeMap::from([
+            (
+                "module.alpha".to_string(),
+                BTreeMap::new(),
+            ),
+            (
+                "ghost.module".to_string(),
+                BTreeMap::new(),
+            ),
+        ]);
+
+        let canonical: FeatureInventory = BTreeMap::from([(
+            "module.alpha".to_string(),
+            BTreeMap::new(),
+        )]);
+
+        let replacement =
+            feature_inventory_replacement(&current, &canonical)
+                .expect("different inventories must replace exactly");
+
+        assert_eq!(replacement, canonical);
+        assert!(!replacement.contains_key("ghost.module"));
     }
 }

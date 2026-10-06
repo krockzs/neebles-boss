@@ -35,7 +35,7 @@ BossCommandClient::BossCommandClient(
                 setError(
                     stderrText.isEmpty()
                     ? QStringLiteral(
-                        "Module action failed"
+                        "Surface action failed"
                     )
                     : stderrText
                 );
@@ -143,8 +143,8 @@ BossCommandClient::refreshModules()
     process.start(
         commandPath(),
         QStringList{
-            QStringLiteral("modules"),
-            QStringLiteral("installed")
+            QStringLiteral("boss"),
+            QStringLiteral("surface-model")
         }
     );
 
@@ -230,11 +230,10 @@ BossCommandClient::refreshModules()
 }
 
 bool
-BossCommandClient::moduleAction(
+BossCommandClient::surfaceAction(
     const QString &moduleName,
-    const QString &action,
-    const QString &objectId,
-    const QString &transition
+    const QString &itemId,
+    const QString &action
 )
 {
     if (m_busy) {
@@ -244,44 +243,27 @@ BossCommandClient::moduleAction(
     const QString module =
         moduleName.trimmed();
 
+    const QString item =
+        itemId.trimmed();
+
     const QString governorAction =
         action.trimmed();
 
     if (
         module.isEmpty()
+        || item.isEmpty()
         || governorAction.isEmpty()
     ) {
         return false;
     }
 
     QStringList arguments{
-        QStringLiteral("modules"),
-        QStringLiteral("action"),
+        QStringLiteral("boss"),
+        QStringLiteral("surface-action"),
         module,
+        item,
         governorAction
     };
-
-    const QString object =
-        objectId.trimmed();
-
-    const QString lifecycleTransition =
-        transition.trimmed();
-
-    if (!object.isEmpty()) {
-        arguments.append(
-            QStringLiteral("--object-id")
-        );
-        arguments.append(object);
-    }
-
-    if (!lifecycleTransition.isEmpty()) {
-        arguments.append(
-            QStringLiteral("--transition")
-        );
-        arguments.append(
-            lifecycleTransition
-        );
-    }
 
     setError(QString());
     setBusy(true);
@@ -296,7 +278,7 @@ BossCommandClient::moduleAction(
 
         setError(
             QStringLiteral(
-                "Could not start module action"
+                "Could not start surface action"
             )
         );
 

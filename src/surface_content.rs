@@ -1,7 +1,11 @@
 use std::collections::BTreeMap;
 
 use crate::lifecycle_objects::ObjectStateStore;
-use crate::surface_projection::{SurfaceProjection, SurfaceProjectionItem};
+use crate::surface_projection::{
+    SurfaceProjection,
+    SurfaceProjectionItem,
+    SurfaceRequirements,
+};
 
 /*
  * Generic Boss Surface Content Resolver.
@@ -14,6 +18,7 @@ use crate::surface_projection::{SurfaceProjection, SurfaceProjectionItem};
  * - arbitrary Boss surface name
  * - optional Lifecycle object identity
  * - optional Lifecycle transition identity
+ * - declarative execution preconditions
  * - presentation visibility
  * - arbitrary presentation data
  *
@@ -50,6 +55,7 @@ pub struct SurfaceContentItem {
     surface: String,
     object_id: Option<String>,
     transition: Option<String>,
+    requirements: SurfaceRequirements,
     visible: bool,
     data: BTreeMap<String, String>,
 }
@@ -68,6 +74,8 @@ impl SurfaceContentItem {
             object_id: item.object_id().map(str::to_string),
 
             transition: item.transition().map(str::to_string),
+
+            requirements: item.requirements().clone(),
 
             visible: item.visible(),
 
@@ -89,6 +97,10 @@ impl SurfaceContentItem {
 
     pub fn transition(&self) -> Option<&str> {
         self.transition.as_deref()
+    }
+
+    pub fn requirements(&self) -> &SurfaceRequirements {
+        &self.requirements
     }
 
     pub fn visible(&self) -> bool {
@@ -294,6 +306,65 @@ mod tests {
         );
     }
 
+    #[test]
+    fn requirements_survive_projection_into_surface_content() {
+        let lifecycle = lifecycle();
+
+        let requirements: SurfaceRequirements =
+            serde_json::from_value(
+                serde_json::json!({
+                    "self": "open",
+                    "modules": {
+                        "module.beta": "active"
+                    }
+                })
+            )
+            .unwrap();
+
+        let mut projection = SurfaceProjection::new();
+
+        projection
+            .register_for_lifecycle(
+                &lifecycle,
+                SurfaceProjectionItem::with_data_and_requirements(
+                    "notify.ui",
+                    "module.alpha",
+                    "ui",
+                    None,
+                    None,
+                    true,
+                    BTreeMap::from([(
+                        "control".to_string(),
+                        "button".to_string(),
+                    )]),
+                    requirements,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let content = resolve_for_surface(&projection, "ui");
+
+        assert_eq!(content.len(), 1);
+
+        let requirements = content[0].requirements();
+
+        assert!(!requirements.is_empty());
+
+        assert_eq!(
+            requirements.self_state(),
+            Some(
+                crate::surface_projection::SurfaceRequirementState::Open
+            )
+        );
+
+        assert_eq!(
+            requirements.modules().get("module.beta"),
+            Some(
+                &crate::surface_projection::SurfaceRequirementState::Active
+            )
+        );
+    }
     #[test]
     fn all_surface_controls_read_same_canonical_object_state() {
         let lifecycle = lifecycle();

@@ -487,6 +487,112 @@ fn dispatch_module(module: &str, request: ExecutionRequest) -> ExecutionResponse
     }
 }
 
+fn dispatch_surface_action(request: &ExecutionRequest) -> ExecutionResponse {
+    if request.args.len() != 3 {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_surface_action_arguments",
+            "Boss surface-action requires exactly: <owner> <item_id> <action>",
+        );
+    }
+
+    let owner = &request.args[0];
+    let item_id = &request.args[1];
+    let action = &request.args[2];
+
+    match modules::execute_surface_action(owner, item_id, action) {
+        Ok(()) => ExecutionResponse::ok(Some(json!({
+            "owner_module": owner,
+            "item_id": item_id,
+            "action": action
+        }))),
+
+        Err(error) =>
+            ExecutionResponse::fail(1, "surface_action", error),
+    }
+}
+
+fn dispatch_surface_model(
+    request: &ExecutionRequest,
+) -> ExecutionResponse {
+    if !request.args.is_empty() {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_surface_model_arguments",
+            "Boss surface-model does not accept arguments",
+        );
+    }
+
+    match modules::installed_modules_presentation_json() {
+        Ok(value) =>
+            ExecutionResponse::ok(Some(value)),
+
+        Err(error) =>
+            ExecutionResponse::fail(
+                1,
+                "surface_model",
+                error,
+            ),
+    }
+}
+#[cfg(test)]
+mod surface_action_dispatch_tests {
+    use super::*;
+    use crate::request::ExecutionContext;
+
+    fn request(args: Vec<&str>) -> ExecutionRequest {
+        ExecutionRequest {
+            target: "boss".to_string(),
+            action: Some("surface-action".to_string()),
+            args: args.into_iter().map(str::to_string).collect(),
+            context: ExecutionContext::default(),
+        }
+    }
+
+    #[test]
+    fn persistent_surface_model_rejects_arguments_before_materialization() {
+        let response =
+            dispatch_surface_model(
+                &request(vec!["unexpected"]),
+            );
+
+        assert!(!response.ok);
+        assert_eq!(response.code, 2);
+
+        assert_eq!(
+            response
+                .error
+                .expect("contract error expected")
+                .kind,
+            "invalid_surface_model_arguments"
+        );
+    }
+    #[test]
+    fn persistent_surface_action_requires_exact_identity_triplet() {
+        for args in [
+            Vec::<&str>::new(),
+            vec!["module.alpha"],
+            vec!["module.alpha", "config.notify"],
+            vec![
+                "module.alpha",
+                "config.notify",
+                "notify-demo",
+                "caller-transition-must-not-be-accepted",
+            ],
+        ] {
+            let response = dispatch_surface_action(&request(args));
+
+            assert!(!response.ok);
+            assert_eq!(response.code, 2);
+
+            let error = response.error.unwrap();
+            assert_eq!(
+                error.kind,
+                "invalid_surface_action_arguments"
+            );
+        }
+    }
+}
 fn dispatch_domestic_construction(request: &ExecutionRequest) -> ExecutionResponse {
     if request.args.len() != 2 {
         return ExecutionResponse::fail(
@@ -569,6 +675,12 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
 
             Err(error) => ExecutionResponse::fail(1, "boss_update_execute", error),
         },
+
+        Some("surface-model") =>
+            dispatch_surface_model(&request),
+
+        Some("surface-action") =>
+            dispatch_surface_action(&request),
 
         Some("domestic-construction-execute") => dispatch_domestic_construction(&request),
 

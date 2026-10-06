@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 use crate::lifecycle_capabilities::{CapabilityFuture, CapabilityHandler};
 use crate::lifecycle_execution::ExecutionPayload;
 use crate::lifecycle_operation::PreparedOperation;
+use crate::module_ipc::protocol::ModuleMessage;
 
 #[derive(Clone)]
 pub struct AvailableCapability {
@@ -86,6 +87,182 @@ impl AvailableCapabilityCatalog {
     pub fn contains(&self, artillery: &str) -> bool {
         self.capabilities.contains_key(artillery)
     }
+}
+
+const MODULE_IPC_ARTILLERY: &str = "boss.module_ipc";
+
+const MODULE_IPC_IMPLEMENTATION: &str = "rust.boss.module_ipc";
+
+fn module_ipc_operation_identity(
+    operation: &PreparedOperation,
+) -> Result<(String, String, String), String> {
+    for key in operation.munition.keys() {
+        if key != "endpoint" {
+            return Err(format!("module IPC munition contains unknown key {}", key));
+        }
+    }
+
+    if operation.munition.len() != 1 {
+        return Err("module IPC invocation requires exactly munition.endpoint".to_string());
+    }
+
+    let module = operation.module_id.clone().ok_or_else(|| {
+        "module IPC invocation requires Governor-owned module identity".to_string()
+    })?;
+
+    let contract = operation.objective.clone();
+
+    let endpoint = operation
+        .munition
+        .get("endpoint")
+        .ok_or_else(|| "module IPC munition.endpoint is missing".to_string())?
+        .clone();
+
+    for (label, value) in [
+        ("module", module.as_str()),
+        ("contract", contract.as_str()),
+        ("endpoint", endpoint.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return Err(format!("module IPC {} cannot be empty", label));
+        }
+
+        if value.trim() != value {
+            return Err(format!(
+                "module IPC {} cannot contain surrounding whitespace",
+                label
+            ));
+        }
+    }
+
+    Ok((module, contract, endpoint))
+}
+
+async fn invoke_declared_without_blocking_executor(
+    module: String,
+    contract: String,
+    endpoint: String,
+) -> Result<ModuleMessage, String> {
+    let (sender, receiver) = async_channel::bounded(1);
+
+    std::thread::Builder::new()
+        .name("neebles-lifecycle-module-ipc".to_string())
+        .spawn(move || {
+            let result = crate::module_ipc::invoke_declared(
+                &module,
+                &contract,
+                &endpoint,
+                Vec::new(),
+                None,
+                BTreeMap::new(),
+                None,
+            );
+
+            let _ = sender.send_blocking(result);
+        })
+        .map_err(|error| format!("could not spawn module IPC Lifecycle worker: {}", error))?;
+
+    receiver.recv().await.map_err(|error| {
+        format!(
+            "module IPC Lifecycle worker disappeared before delivering a result: {}",
+            error
+        )
+    })?
+}
+
+fn module_ipc_response_payload(
+    module: &str,
+    contract: &str,
+    endpoint: &str,
+    message: ModuleMessage,
+) -> Result<ExecutionPayload, String> {
+    match message {
+        ModuleMessage::Response {
+            ok,
+            code,
+            result,
+            error,
+            ..
+        } => {
+            if !ok {
+                let message = error
+                    .map(|error| error.message)
+                    .filter(|message| !message.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "module runtime returned failure code {}",
+                            code
+                        )
+                    });
+
+                return Err(format!(
+                    "module IPC invocation failed: module={} contract={} endpoint={} code={} error={}",
+                    module,
+                    contract,
+                    endpoint,
+                    code,
+                    message,
+                ));
+            }
+
+            let mut payload = ExecutionPayload::from([
+                ("module".to_string(), module.to_string()),
+                ("contract".to_string(), contract.to_string()),
+                ("endpoint".to_string(), endpoint.to_string()),
+                ("code".to_string(), code.to_string()),
+            ]);
+
+            if let Some(result) = result {
+                payload.insert(
+                    "result".to_string(),
+                    serde_json::to_string(&result).map_err(|error| {
+                        format!(
+                            "could not serialize module IPC result payload: {}",
+                            error
+                        )
+                    })?,
+                );
+            }
+
+            Ok(payload)
+        }
+
+        ModuleMessage::Error { error, .. } => Err(format!(
+            "module IPC invocation failed: module={} contract={} endpoint={} kind={} error={}",
+            module,
+            contract,
+            endpoint,
+            error.kind,
+            error.message,
+        )),
+
+        other => Err(format!(
+            "module IPC invocation returned unexpected message: module={} contract={} endpoint={} message={:?}",
+            module,
+            contract,
+            endpoint,
+            other,
+        )),
+    }
+}
+
+async fn execute_module_ipc_operation(
+    operation: PreparedOperation,
+) -> Result<ExecutionPayload, String> {
+    let (module, contract, endpoint) = module_ipc_operation_identity(&operation)?;
+
+    let message = invoke_declared_without_blocking_executor(
+        module.clone(),
+        contract.clone(),
+        endpoint.clone(),
+    )
+    .await?;
+
+    module_ipc_response_payload(&module, &contract, &endpoint, message)
+}
+
+fn module_ipc_handler(operation: PreparedOperation) -> CapabilityFuture {
+    Box::pin(execute_module_ipc_operation(operation))
 }
 
 const WORKSPACE_ARTILLERY: &str = "boss.workspace_execution";
@@ -287,6 +464,11 @@ fn build_productive_catalog() -> Result<AvailableCapabilityCatalog, String> {
         )?,
     )?;
 
+    catalog.register(
+        MODULE_IPC_ARTILLERY,
+        AvailableCapability::new(MODULE_IPC_IMPLEMENTATION, Arc::new(module_ipc_handler))?,
+    )?;
+
     Ok(catalog)
 }
 
@@ -368,6 +550,129 @@ mod tests {
         };
 
         assert!(error.contains("no available Rust capability"));
+    }
+
+    #[test]
+    fn productive_catalog_exposes_generic_module_ipc() {
+        let catalog = build_productive_catalog().expect("productive catalog must build");
+
+        let available = catalog
+            .resolve(MODULE_IPC_ARTILLERY)
+            .expect("module IPC artillery must be AVAILABLE");
+
+        assert_eq!(available.implementation_id(), MODULE_IPC_IMPLEMENTATION,);
+    }
+
+    #[test]
+    fn module_ipc_identity_uses_governor_module_and_objective_as_contract() {
+        for contract in ["commands", "connect", "llm"] {
+            let operation = PreparedOperation {
+                module_id: Some("module.alpha".to_string()),
+                artillery: MODULE_IPC_ARTILLERY.to_string(),
+                objective: contract.to_string(),
+                munition: BTreeMap::from([("endpoint".to_string(), "logical.action".to_string())]),
+                tactics: BTreeMap::new(),
+                intelligence: BTreeMap::new(),
+            };
+
+            let (module, resolved_contract, endpoint) =
+                module_ipc_operation_identity(&operation).unwrap();
+
+            assert_eq!(module, "module.alpha");
+            assert_eq!(resolved_contract, contract);
+            assert_eq!(endpoint, "logical.action");
+        }
+    }
+
+    #[test]
+    fn module_ipc_identity_rejects_missing_identity_and_extra_munition() {
+        let missing_identity = PreparedOperation {
+            module_id: None,
+            artillery: MODULE_IPC_ARTILLERY.to_string(),
+            objective: "commands".to_string(),
+            munition: BTreeMap::from([("endpoint".to_string(), "notify".to_string())]),
+            tactics: BTreeMap::new(),
+            intelligence: BTreeMap::new(),
+        };
+
+        let error = module_ipc_operation_identity(&missing_identity).unwrap_err();
+
+        assert!(error.contains("Governor-owned module identity"));
+
+        let extra = PreparedOperation {
+            module_id: Some("module.alpha".to_string()),
+            artillery: MODULE_IPC_ARTILLERY.to_string(),
+            objective: "commands".to_string(),
+            munition: BTreeMap::from([
+                ("endpoint".to_string(), "notify".to_string()),
+                ("technology".to_string(), "forbidden".to_string()),
+            ]),
+            tactics: BTreeMap::new(),
+            intelligence: BTreeMap::new(),
+        };
+
+        let error = module_ipc_operation_identity(&extra).unwrap_err();
+
+        assert!(error.contains("unknown key"));
+    }
+
+    #[test]
+    fn module_ipc_response_mapping_preserves_success_and_failure() {
+        let success = module_ipc_response_payload(
+            "module.alpha",
+            "commands",
+            "notify",
+            ModuleMessage::Response {
+                id: "request-success".to_string(),
+                module: "module.alpha".to_string(),
+                session_id: "session-a".to_string(),
+                contract: "commands".to_string(),
+                endpoint: "test.notify".to_string(),
+                ok: true,
+                code: 0,
+                result: Some(serde_json::json!({
+                    "notified": true
+                })),
+                error: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(success.get("module"), Some(&"module.alpha".to_string()),);
+
+        assert_eq!(success.get("contract"), Some(&"commands".to_string()),);
+
+        assert_eq!(success.get("endpoint"), Some(&"notify".to_string()),);
+
+        assert_eq!(
+            success.get("result"),
+            Some(&"{\"notified\":true}".to_string()),
+        );
+
+        let failure = module_ipc_response_payload(
+            "module.alpha",
+            "commands",
+            "notify",
+            ModuleMessage::Response {
+                id: "request-failure".to_string(),
+                module: "module.alpha".to_string(),
+                session_id: "session-a".to_string(),
+                contract: "commands".to_string(),
+                endpoint: "test.notify".to_string(),
+                ok: false,
+                code: 7,
+                result: None,
+                error: Some(crate::module_ipc::protocol::ModuleError {
+                    kind: "runtime_failure".to_string(),
+                    message: "synthetic runtime failure".to_string(),
+                    details: None,
+                }),
+            },
+        )
+        .unwrap_err();
+
+        assert!(failure.contains("synthetic runtime failure"));
+        assert!(failure.contains("code=7"));
     }
 
     #[test]

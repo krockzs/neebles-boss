@@ -4,7 +4,7 @@
 
 **Current source line:** **1.0.27**
 **Latest published Boss release recorded by the repository:** **1.0.26**
-**Current integration status (2026-10-06):** **Point 1 corrective source closure and Point 2 source closure are locally verified.** Fresh Live exposed that module Construction truth was still expected from a static image territory. Boss now carries authenticated Construction inside MaterialBinding schema 2, fetched from the exact pinned CUSTOM V2 revision during Preinstall. Productive Construction consumers resolve the declaration from the active module MaterialBinding. Lifecycle workspace execution receives module identity only from Governor-owned execution context and accepts only `munition.step`. MaterialBinding + RuntimeLease remain the productive module-material architecture; the legacy persistent shared module rootfs/runtime-manifest model and static Construction territory are retired. Boss 1.0.27 also retains the segment-aware CUSTOM V2 raw-material transport fix. Fresh Live and installed-system acceptance remain pending re-run.
+**Current integration status (2026-10-06):** **Point 1 corrective source closure, Point 2 source closure and the Config/Features source closure are locally verified.** Boss carries authenticated Construction inside MaterialBinding schema 2, fetched from the exact pinned CUSTOM V2 revision during Preinstall, while module source is selected independently through the immutable Registry commit. Productive Construction consumers resolve the declaration from the active module MaterialBinding. Lifecycle workspace execution receives module identity only from Governor-owned execution context and accepts only `munition.step`. MaterialBinding + RuntimeLease remain the productive module-material architecture. Boss 1.0.27 additionally implements Surface schema 2 typed requirements, strict `active` / `open` resolution, persistent Surface model/action routing, module-scoped Surface translations, dynamic Config -> Features materialization, Lifecycle -> Module IPC execution and bounded Launcher/Tray presentation. Fresh Live and installed-system acceptance remain pending re-run.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -691,6 +691,17 @@ Runtime advertisement is availability, not declarative authority.
 
 Installed contracts remain the source of endpoint and privilege truth.
 
+Lifecycle may invoke an installed module Commands contract through the generic capability:
+
+```text
+artillery: boss.module_ipc
+objective: commands
+munition:
+    endpoint: <logical-command>
+```
+
+The module identity comes only from Governor-owned execution context. The capability accepts the exact `endpoint` munition and resolves the installed Commands contract before invoking the authenticated runtime. A module cannot supply another subject identity through munition.
+
 ---
 
 ## Runtime birth
@@ -746,25 +757,95 @@ one functional object
 
 Surface state is projection.
 
+Boss Config now also carries a dynamic `features` inventory. The physical Settings leaf remains a string and contains serialized JSON keyed by module identity and Surface item identity.
+
+The productive feature source is the installed module Surface contract:
+
+```text
+installed module
+    -> surface: ui
+    -> item_id
+    -> typed require declaration
+    -> Boss Config features inventory
+```
+
+This inventory is presentation/configuration metadata. It does not become a second owner of Lifecycle object state.
+
+Install materializes the module inventory. Update and rollback reconcile it against the surviving installed contract. Uninstall removes that module inventory. Startup rebuild removes ghosts and reconstructs Features only from valid installed modules.
+
 ---
 
 # Surface projection
 
 Boss UI, Launcher and Tray are presentation consumers over the same governed state/action path.
 
+Surface schema **2** adds typed presentation requirements:
+
 ```text
-UI
-Launcher
-Tray
-    -> Boss control path
+require:
+    self: active | open
+    modules:
+        <module-id>: active | open
+```
+
+`active` means installed + enabled.
+
+`open` means active + an exact authenticated runtime registration in the shared RuntimeRegistry.
+
+The `open` requirement is fail-closed. Backend authorization queries RuntimeRegistry strictly; display helpers such as process-running observations are not authorization authority.
+
+Requirements are gates only. They never auto-install, auto-enable or auto-open another module.
+
+Presentation materialization preserves the raw requirement declaration and adds the evaluated `requirements_met` result. An unmet item may remain visible but disabled.
+
+The backend revalidates requirements again when an action is invoked. QML therefore does not become requirement-policy authority.
+
+The persistent Boss owns both routes:
+
+```text
+surface-model
+    -> current Surface projection
+    -> strict requirement evaluation
+
+surface-action <owner> <item_id> <action>
+    -> reload installed Surface declaration
+    -> derive the declared target
+    -> revalidate requirements
+    -> execute governed Lifecycle target
+```
+
+The caller cannot invent an object, transition or undeclared action.
+
+Module-owned `label_key` values are resolved from that module language dictionary. Boss global translations do not replace module translation authority.
+
+Presentation ownership is:
+
+```text
+surface: ui
+    -> Boss Config -> Features
+
+surface: launcher
+    -> Launcher
+
+surface: tray
+    -> Tray Host
+```
+
+The Modules tab remains administrative: install, uninstall, activate, deactivate and Open. It is not the module personalization surface.
+
+Launcher and Tray inventories use bounded list presentation rather than unbounded dynamic Repeaters.
+
+The canonical execution path remains:
+
+```text
+UI / Config / Launcher / Tray
+    -> persistent Boss control path
     -> Governor / Lifecycle
     -> canonical state
-    -> surface invalidation
-    -> refreshed projections
+    -> refreshed Surface projection
 ```
 
 Presentation visibility and functional state remain distinct.
-
 ---
 
 # Notifications
@@ -785,6 +866,21 @@ Boss owns:
 Module notification product design remains module-owned.
 
 The global Module IPC protocol and Notifications capability protocol remain separate contracts.
+
+A module Feature may therefore reach Notifications without creating a second notification authority:
+
+```text
+Surface action
+    -> Lifecycle
+    -> boss.module_ipc
+    -> installed Commands endpoint
+    -> authenticated module runtime
+    -> Module IPC notification request
+    -> Boss notification policy / ownership
+    -> desktop presentation
+```
+
+For stateful Feature transitions, canonical object state is committed only after the governed Lifecycle execution succeeds.
 
 ---
 
@@ -891,14 +987,11 @@ Point 1 corrective work and the existing Point 2 source architecture were checke
 
 These are **local source verification gates**, not Esbirro certification, not a published Boss release and not Fresh Live / installed-system acceptance.
 
-Current local closure evidence:
+Current local closure evidence for this source line:
 
 ```text
 git diff --check                       GREEN
-
-cargo test --lib                      115 / 115 GREEN
-cargo test --bin neebles-backend      602 / 602 GREEN
-cargo check --lib                     GREEN
+cargo test --bin neebles-backend      647 / 647 GREEN
 cargo check --bin neebles-backend     GREEN
 ```
 
@@ -936,6 +1029,26 @@ Point 2 source closure additionally verifies:
 
 **Point 1 corrective source closure and Point 2 source closure are locally GREEN.**
 
+The Config/Features source closure additionally verifies:
+
+- Surface schema 2 typed `require` declarations;
+- strict `active` and RuntimeRegistry-backed `open` resolution;
+- requirement preservation through Projection -> SurfaceContent -> JSON;
+- persistent `surface-model` requirement evaluation;
+- persistent `surface-action` execution keyed by owner + item_id + action;
+- backend requirement revalidation before Lifecycle execution;
+- module-scoped Surface translations;
+- dynamic Config -> Features inventory materialization;
+- install/update/rollback/uninstall/startup Feature reconciliation;
+- Modules remaining administrative-only;
+- bounded Launcher and Tray presentation lists;
+- generic Lifecycle `boss.module_ipc` Commands execution;
+- Test Module Notify button and Notify switch tutorial behavior;
+- canonical switch state committed only after successful governed transition;
+- Test Module Launcher and Tray Open projections.
+
+**Config/Features source closure is locally GREEN.**
+
 Release certification, Fresh Live acceptance and installed-system acceptance remain separate later gates.
 
 # Release policy
@@ -944,7 +1057,7 @@ The repository carries **1.0.26** as the current published Boss release. The lat
 
 This README deliberately does **not** promote a preparation version into a release claim.
 
-Current sequencing is:
+Current sequencing for the next Boss release is:
 
 ```text
 Point 1
@@ -953,14 +1066,14 @@ Point 1
 Point 2
     -> CLOSED / GREEN at source level
 
+Config / Features
+    -> CLOSED / GREEN at source level
+
 README / repository truth
-    -> current work
+    -> CLOSED / GREEN locally
 
-Boss 1.0.26 version preparation
-    -> CLOSED / GREEN
-
-release Actions + publication
-    -> CLOSED / GREEN
+next release preparation + publication
+    -> pending
 
 Fresh Live acceptance
     -> pending
@@ -1000,8 +1113,12 @@ Fresh Live
     -> Preinstall authenticates Essential + module delta
     -> permanent package pools are correct
     -> active MaterialBinding matches installed module truth
-    -> Launcher exposes Open and declared controls
-    -> Tray exposes the module and its declared controls
+    -> Modules remains administrative-only
+    -> Config -> Features materializes Notify button + Notify switch
+    -> Launcher exposes Open
+    -> Tray exposes Open Surface
+    -> Notify button `active` requirement resolves correctly
+    -> Notify switch is disabled before runtime registration
     -> Open enters Lifecycle
     -> construction.step selects open-runtime
     -> modules.runtime creates independent RuntimeLease
@@ -1009,13 +1126,20 @@ Fresh Live
     -> desktop identity/session authority
     -> persistent runtime retains RuntimeLease for real process lifetime
     -> Module IPC registration
+    -> Notify switch becomes enabled only while `open` is satisfied
     -> UI opens
+    -> Notify button reaches Boss-governed desktop notification
+    -> Notify switch notification transition succeeds
+    -> canonical switch state changes only after successful transition
+    -> runtime close makes `open` requirement fail closed
+    -> reopen restores `open` requirement
     -> Tray provider enters through tray-provider Construction
     -> Tray provider registers through kernel peer identity
     -> settings and switches communicate Boss <-> module
     -> state changes are reflected through canonical surfaces
     -> disable / enable works
-    -> uninstall cleans runtime ownership and module state
+    -> uninstall removes Feature inventory and runtime/module state
+    -> reinstall rematerializes valid Feature inventory
     -> reinstall succeeds
 ```
 

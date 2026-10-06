@@ -7,6 +7,7 @@
   "config.language": "Language",
   "config.tray": "Show system tray icon",
   "config.launcher": "Show N.E.E.B.L.E.S. quick access",
+  "config.features": "Features",
   "config.normal_notifications": "Show normal notifications",
   "modules.title": "Modules",
   "modules.empty": "No modules are installed.",

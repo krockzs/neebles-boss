@@ -590,21 +590,18 @@ Window {
                             Layout.fillWidth: true
 
                             text:
-                                root.t(
-                                    surfaceData.label_key
-                                )
+                                surfaceItem.label
 
                             enabled:
                                 !bossCommands.busy
+                                && surfaceItem.requirements_met
+                                === true
 
                             onClicked: {
-                                bossCommands.moduleAction(
+                                bossCommands.surfaceAction(
                                     surfaceItem.owner_module,
-                                    surfaceData.action,
-                                    surfaceItem.object_id
-                                        || "",
-                                    surfaceItem.transition
-                                        || ""
+                                    surfaceItem.item_id,
+                                    surfaceData.action
                                 )
                             }
                         }
@@ -631,9 +628,7 @@ Window {
                                 Layout.fillWidth: true
 
                                 text:
-                                    root.t(
-                                        surfaceData.label_key
-                                    )
+                                    surfaceItem.label
 
                                 color: "#A78BFA"
 
@@ -651,20 +646,19 @@ Window {
 
                                 enabled:
                                     !bossCommands.busy
+                                    && surfaceItem.requirements_met
+                                    === true
 
                                 onClicked: {
                                     const turnOn =
                                         !surfaceItem.active
 
-                                    bossCommands.moduleAction(
+                                    bossCommands.surfaceAction(
                                         surfaceItem.owner_module,
+                                        surfaceItem.item_id,
                                         turnOn
                                         ? surfaceData.action_on
-                                        : surfaceData.action_off,
-                                        surfaceItem.object_id,
-                                        turnOn
-                                        ? surfaceData.transition_on
-                                        : surfaceData.transition_off
+                                        : surfaceData.action_off
                                     )
                                 }
                             }

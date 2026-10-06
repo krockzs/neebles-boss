@@ -892,8 +892,8 @@ void BossController::loadModules()
     const QVariant installedValue = parseJson(
         run(
             {
-                QStringLiteral("modules"),
-                QStringLiteral("installed")
+                QStringLiteral("boss"),
+                QStringLiteral("surface-model")
             },
             false,
             5000,
@@ -1124,8 +1124,8 @@ void BossController::pollModuleRuntime()
     const QVariant value = parseJson(
         run(
             {
-                QStringLiteral("modules"),
-                QStringLiteral("installed")
+                QStringLiteral("boss"),
+                QStringLiteral("surface-model")
             },
             false,
             5000,
@@ -1139,7 +1139,7 @@ void BossController::pollModuleRuntime()
     )
         return;
 
-    QVariantMap runningByName;
+    QVariantMap presentationByName;
 
     for (
         const QVariant &item :
@@ -1148,15 +1148,17 @@ void BossController::pollModuleRuntime()
         const QVariantMap module =
             item.toMap();
 
-        runningByName.insert(
+        const QString name =
             module.value(
                 QStringLiteral("name")
-            ).toString(),
-            module.value(
-                QStringLiteral("running"),
-                false
-            ).toBool()
-        );
+            ).toString();
+
+        if (!name.isEmpty()) {
+            presentationByName.insert(
+                name,
+                module
+            );
+        }
     }
 
     QVariantList updated = m_modules;
@@ -1178,9 +1180,19 @@ void BossController::pollModuleRuntime()
                 QStringLiteral("name")
             ).toString();
 
+        const QVariantMap presentation =
+            presentationByName
+                .value(name)
+                .toMap();
+
+        if (presentation.isEmpty())
+            continue;
+
+        bool moduleChanged = false;
+
         const bool running =
-            runningByName.value(
-                name,
+            presentation.value(
+                QStringLiteral("running"),
                 false
             ).toBool();
 
@@ -1196,6 +1208,50 @@ void BossController::pollModuleRuntime()
                 running
             );
 
+            moduleChanged = true;
+        }
+
+        const bool enabled =
+            presentation.value(
+                QStringLiteral("enabled"),
+                false
+            ).toBool();
+
+        if (
+            module.value(
+                QStringLiteral("enabled"),
+                false
+            ).toBool()
+            != enabled
+        ) {
+            module.insert(
+                QStringLiteral("enabled"),
+                enabled
+            );
+
+            moduleChanged = true;
+        }
+
+        const QVariant surfaceContent =
+            presentation.value(
+                QStringLiteral("surface_content")
+            );
+
+        if (
+            module.value(
+                QStringLiteral("surface_content")
+            )
+            != surfaceContent
+        ) {
+            module.insert(
+                QStringLiteral("surface_content"),
+                surfaceContent
+            );
+
+            moduleChanged = true;
+        }
+
+        if (moduleChanged) {
             updated[i] = module;
             changed = true;
         }
@@ -1208,7 +1264,6 @@ void BossController::pollModuleRuntime()
 
     applyModuleLifecycle();
 }
-
 void BossController::pollUpdates()
 {
     if (m_busy)
@@ -1908,14 +1963,27 @@ void BossController::startModuleProcess(
         )
     );
 
-    QStringList commandArguments = {
-        QStringLiteral("modules"),
-        operation,
-        name,
-        QStringLiteral(
-            "--lifecycle-events"
-        )
-    };
+    QStringList commandArguments;
+
+    if (
+        operation
+            == QStringLiteral("surface-action")
+    ) {
+        commandArguments = {
+            QStringLiteral("boss"),
+            QStringLiteral("surface-action"),
+            name
+        };
+    } else {
+        commandArguments = {
+            QStringLiteral("modules"),
+            operation,
+            name,
+            QStringLiteral(
+                "--lifecycle-events"
+            )
+        };
+    }
 
     commandArguments.append(
         extraArguments
@@ -2688,27 +2756,24 @@ void BossController::uninstallModule(
 }
 
 
-void BossController::requestModuleAction(
+void BossController::requestSurfaceAction(
     const QString &name,
-    const QString &action,
-    const QString &objectId,
-    const QString &transition
+    const QString &itemId,
+    const QString &action
 )
 {
     const QString normalizedName =
         name.trimmed();
 
+    const QString normalizedItemId =
+        itemId.trimmed();
+
     const QString normalizedAction =
         action.trimmed();
 
-    const QString normalizedObjectId =
-        objectId.trimmed();
-
-    const QString normalizedTransition =
-        transition.trimmed();
-
     if (
         normalizedName.isEmpty()
+        || normalizedItemId.isEmpty()
         || normalizedAction.isEmpty()
         || m_busy
     ) {
@@ -2716,50 +2781,21 @@ void BossController::requestModuleAction(
     }
 
     /*
-     * Generic Governor target transport.
+     * Surface execution transports declarative identity only.
      *
-     * Boss transports, but does not interpret:
-     * - action
-     * - object identity
-     * - transition identity
-     *
-     * Empty object/transition preserves the existing
-     * action-only governor.<action> route.
+     * The persistent Boss re-resolves object/transition and
+     * validates require immediately before Lifecycle execution.
      */
-    QStringList extraArguments = {
-        normalizedAction
-    };
-
-    if (
-        !normalizedObjectId.isEmpty()
-    ) {
-        extraArguments
-            << QStringLiteral(
-                "--object-id"
-            )
-            << normalizedObjectId;
-    }
-
-    if (
-        !normalizedTransition.isEmpty()
-    ) {
-        extraArguments
-            << QStringLiteral(
-                "--transition"
-            )
-            << normalizedTransition;
-    }
-
     startModuleProcess(
-        QStringLiteral(
-            "action"
-        ),
+        QStringLiteral("surface-action"),
         normalizedName,
         false,
-        extraArguments
+        {
+            normalizedItemId,
+            normalizedAction
+        }
     );
 }
-
 
 QVariantMap BossController::dependencyPreflight(
     const QString &action,

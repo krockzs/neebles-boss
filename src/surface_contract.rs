@@ -1,5 +1,9 @@
 use crate::lifecycle::LifecycleContract;
-use crate::surface_projection::{SurfaceProjection, SurfaceProjectionItem};
+use crate::surface_projection::{
+    SurfaceProjection,
+    SurfaceProjectionItem,
+    SurfaceRequirements,
+};
 
 use serde::Deserialize;
 
@@ -29,7 +33,7 @@ use std::path::Path;
  * Future Boss surfaces require no schema change.
  */
 
-pub const SURFACE_CONTRACT_SCHEMA_VERSION: u32 = 1;
+pub const SURFACE_CONTRACT_SCHEMA_VERSION: u32 = 2;
 
 fn default_schema() -> u32 {
     SURFACE_CONTRACT_SCHEMA_VERSION
@@ -49,6 +53,9 @@ pub struct SurfaceDeclaration {
 
     #[serde(default)]
     pub transition: Option<String>,
+
+    #[serde(default)]
+    pub require: SurfaceRequirements,
 
     #[serde(default = "default_visible")]
     pub visible: bool,
@@ -106,7 +113,7 @@ pub fn load(
             return Err("surface contract item id cannot be empty".to_string());
         }
 
-        let item = SurfaceProjectionItem::with_data(
+        let item = SurfaceProjectionItem::with_data_and_requirements(
             id,
             module_id,
             declaration.surface,
@@ -114,6 +121,7 @@ pub fn load(
             declaration.transition,
             declaration.visible,
             declaration.data,
+            declaration.require,
         )?;
 
         projection.register_for_lifecycle(lifecycle, item)?;
@@ -173,7 +181,7 @@ mod tests {
         let path = temporary_file(
             "empty",
             r#"{
-                "schema": 1,
+                "schema": 2,
                 "items": {}
             }"#,
         );
@@ -190,7 +198,7 @@ mod tests {
         let path = temporary_file(
             "future-surface",
             r#"{
-                "schema": 1,
+                "schema": 2,
                 "items": {
                     "server.future": {
                         "surface": "whatever.future.surface",
@@ -216,7 +224,7 @@ mod tests {
         let path = temporary_file(
             "shared-object",
             r#"{
-                "schema": 1,
+                "schema": 2,
                 "items": {
                     "server.ui": {
                         "surface": "ui",
@@ -259,7 +267,7 @@ mod tests {
         let path = temporary_file(
             "many-items",
             r#"{
-                "schema": 1,
+                "schema": 2,
                 "items": {
                     "server.ui": {
                         "surface": "ui",
@@ -285,7 +293,7 @@ mod tests {
         let path = temporary_file(
             "ghost-object",
             r#"{
-                "schema": 1,
+                "schema": 2,
                 "items": {
                     "ghost.ui": {
                         "surface": "ui",
@@ -307,7 +315,7 @@ mod tests {
         let path = temporary_file(
             "ghost-transition",
             r#"{
-                "schema": 1,
+                "schema": 2,
                 "items": {
                     "server.ui": {
                         "surface": "ui",
@@ -330,7 +338,7 @@ mod tests {
         let path = temporary_file(
             "module-transition",
             r#"{
-                "schema": 1,
+                "schema": 2,
                 "items": {
                     "repair.launcher": {
                         "surface": "launcher",
@@ -355,7 +363,7 @@ mod tests {
         let path = temporary_file(
             "empty-content",
             r#"{
-                "schema": 1,
+                "schema": 2,
                 "items": {
                     "nothing": {
                         "surface": "ui"
@@ -376,7 +384,7 @@ mod tests {
         let path = temporary_file(
             "presentation-only",
             r#"{
-                "schema": 1,
+                "schema": 2,
                 "items": {
                     "information.ui": {
                         "surface": "ui",
@@ -405,11 +413,181 @@ mod tests {
     }
 
     #[test]
+    fn typed_requirements_are_projected() {
+        let path = temporary_file(
+            "typed-requirements",
+            r#"{
+                "schema": 2,
+                "items": {
+                    "notify.ui": {
+                        "surface": "ui",
+                        "require": {
+                            "self": "open",
+                            "modules": {
+                                "network-core": "active",
+                                "remote-core": "open"
+                            }
+                        },
+                        "data": {
+                            "control": "button",
+                            "action": "notify-demo",
+                            "label_key": "features.notify"
+                        }
+                    }
+                }
+            }"#,
+        );
+
+        let projection =
+            load("module.alpha", &path, &lifecycle()).unwrap();
+
+        let requirements = projection
+            .get("notify.ui")
+            .unwrap()
+            .requirements();
+
+        assert_eq!(
+            requirements.self_state(),
+            Some(
+                crate::surface_projection::SurfaceRequirementState::Open
+            )
+        );
+
+        assert_eq!(
+            requirements.modules().get("network-core"),
+            Some(
+                &crate::surface_projection::SurfaceRequirementState::Active
+            )
+        );
+
+        assert_eq!(
+            requirements.modules().get("remote-core"),
+            Some(
+                &crate::surface_projection::SurfaceRequirementState::Open
+            )
+        );
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn invalid_requirement_state_is_rejected() {
+        let path = temporary_file(
+            "invalid-requirement-state",
+            r#"{
+                "schema": 2,
+                "items": {
+                    "notify.ui": {
+                        "surface": "ui",
+                        "require": {
+                            "self": "automatic"
+                        },
+                        "data": {
+                            "control": "button"
+                        }
+                    }
+                }
+            }"#,
+        );
+
+        let error =
+            load("module.alpha", &path, &lifecycle()).unwrap_err();
+
+        assert!(error.contains("unknown variant"));
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn invalid_requirement_module_id_is_rejected() {
+        let path = temporary_file(
+            "invalid-requirement-module",
+            r#"{
+                "schema": 2,
+                "items": {
+                    "notify.ui": {
+                        "surface": "ui",
+                        "require": {
+                            "modules": {
+                                "bad/module": "active"
+                            }
+                        },
+                        "data": {
+                            "control": "button"
+                        }
+                    }
+                }
+            }"#,
+        );
+
+        let error =
+            load("module.alpha", &path, &lifecycle()).unwrap_err();
+
+        assert!(
+            error.contains(
+                "invalid surface requirement module id 'bad/module'"
+            )
+        );
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn unknown_requirement_fields_are_rejected() {
+        let path = temporary_file(
+            "unknown-requirement-field",
+            r#"{
+                "schema": 2,
+                "items": {
+                    "notify.ui": {
+                        "surface": "ui",
+                        "require": {
+                            "self": "active",
+                            "automatic": true
+                        },
+                        "data": {
+                            "control": "button"
+                        }
+                    }
+                }
+            }"#,
+        );
+
+        let error =
+            load("module.alpha", &path, &lifecycle()).unwrap_err();
+
+        assert!(error.contains("unknown field"));
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn schema_one_is_rejected_after_v2_cutover() {
+        let path = temporary_file(
+            "schema-one-cutover",
+            r#"{
+                "schema": 1,
+                "items": {}
+            }"#,
+        );
+
+        let error =
+            load("module.alpha", &path, &lifecycle()).unwrap_err();
+
+        assert!(
+            error.contains(
+                "unsupported surface contract schema 1"
+            )
+        );
+
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
     fn unknown_fields_are_rejected() {
         let path = temporary_file(
             "unknown-field",
             r#"{
-                "schema": 1,
+                "schema": 2,
                 "items": {
                     "server.ui": {
                         "surface": "ui",

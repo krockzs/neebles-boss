@@ -74,11 +74,10 @@ public:
         const QString &name,
         bool removeSettings
     );
-    Q_INVOKABLE void requestModuleAction(
+    Q_INVOKABLE void requestSurfaceAction(
         const QString &name,
-        const QString &action,
-        const QString &objectId,
-        const QString &transition
+        const QString &itemId,
+        const QString &action
     );
     Q_INVOKABLE QVariantMap dependencyPreflight(
         const QString &action,

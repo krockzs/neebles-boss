@@ -55,6 +55,7 @@ mod settings;
 mod surface_content;
 mod surface_contract;
 mod surface_projection;
+mod surface_requirement_resolver;
 mod surface_state;
 mod tray;
 

@@ -185,6 +185,19 @@ pub fn serve() -> Result<(), String> {
     let _ = config::load_or_initialize()?;
 
     /*
+     * Rebuild Boss-owned Feature projection from the
+     * currently installed module contracts before either
+     * IPC surface becomes available.
+     *
+     * Exact replacement removes stale owners and stale
+     * feature items left by crashes or older installations.
+     */
+    crate::modules::reconcile_installed_module_features()
+        .map_err(|error| format!(
+            "could not reconcile Boss Feature inventory at startup: {error}"
+        ))?;
+
+    /*
      * The Boss owns both IPC surfaces.
      *
      * neebles.sock:

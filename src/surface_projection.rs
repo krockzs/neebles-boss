@@ -1,7 +1,64 @@
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::lifecycle::LifecycleContract;
 use crate::lifecycle_objects::ObjectStateStore;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SurfaceRequirementState {
+    Active,
+    Open,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceRequirements {
+    #[serde(
+        rename = "self",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    self_state: Option<SurfaceRequirementState>,
+
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    modules: BTreeMap<String, SurfaceRequirementState>,
+}
+
+impl SurfaceRequirements {
+    pub fn self_state(&self) -> Option<SurfaceRequirementState> {
+        self.self_state
+    }
+
+    pub fn modules(&self) -> &BTreeMap<String, SurfaceRequirementState> {
+        &self.modules
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.self_state.is_none() && self.modules.is_empty()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for module_id in self.modules.keys() {
+            if !valid_requirement_module_id(module_id) {
+                return Err(format!(
+                    "invalid surface requirement module id '{}'",
+                    module_id
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn valid_requirement_module_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '-' | '_' | '.')
+        })
+}
 
 /*
  * Generic Boss surface projection model.
@@ -33,6 +90,7 @@ pub struct SurfaceProjectionItem {
     surface: String,
     object_id: Option<String>,
     transition: Option<String>,
+    requirements: SurfaceRequirements,
     visible: bool,
     data: BTreeMap<String, String>,
 }
@@ -66,6 +124,28 @@ impl SurfaceProjectionItem {
         visible: bool,
         data: BTreeMap<String, String>,
     ) -> Result<Self, String> {
+        Self::with_data_and_requirements(
+            id,
+            owner_module,
+            surface,
+            object_id,
+            transition,
+            visible,
+            data,
+            SurfaceRequirements::default(),
+        )
+    }
+
+    pub fn with_data_and_requirements(
+        id: impl Into<String>,
+        owner_module: impl Into<String>,
+        surface: impl Into<String>,
+        object_id: Option<String>,
+        transition: Option<String>,
+        visible: bool,
+        data: BTreeMap<String, String>,
+        requirements: SurfaceRequirements,
+    ) -> Result<Self, String> {
         let id = normalized("surface item id", id.into())?;
 
         let owner_module = normalized("surface owner module", owner_module.into())?;
@@ -75,6 +155,8 @@ impl SurfaceProjectionItem {
         let object_id = normalize_optional("surface object id", object_id)?;
 
         let transition = normalize_optional("surface transition", transition)?;
+
+        requirements.validate()?;
 
         let mut normalized_data = BTreeMap::new();
 
@@ -102,6 +184,7 @@ impl SurfaceProjectionItem {
             surface,
             object_id,
             transition,
+            requirements,
             visible,
             data: normalized_data,
         })
@@ -125,6 +208,10 @@ impl SurfaceProjectionItem {
 
     pub fn transition(&self) -> Option<&str> {
         self.transition.as_deref()
+    }
+
+    pub fn requirements(&self) -> &SurfaceRequirements {
+        &self.requirements
     }
 
     pub fn visible(&self) -> bool {

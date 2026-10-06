@@ -7,6 +7,7 @@
   "config.language": "Idioma",
   "config.tray": "Mostrar icono en la bandeja",
   "config.launcher": "Mostrar acceso rápido N.E.E.B.L.E.S.",
+  "config.features": "Funciones",
   "config.normal_notifications": "Mostrar notificaciones normales",
   "modules.title": "Módulos",
   "modules.empty": "No hay módulos instalados.",

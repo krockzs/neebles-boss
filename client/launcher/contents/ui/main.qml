@@ -187,33 +187,19 @@ PlasmoidItem {
             + "'"
     }
 
-    function moduleActionCommand(
+    function surfaceActionCommand(
         moduleName,
-        action,
-        objectId,
-        transition
+        itemId,
+        action
     ) {
-        var command =
-            "/opt/neebles/client/bin/neebles modules action "
+        return
+            "/opt/neebles/client/bin/neebles boss surface-action "
             + shellArg(moduleName)
             + " "
+            + shellArg(itemId)
+            + " "
             + shellArg(action)
-
-        if (objectId) {
-            command +=
-                " --object-id "
-                + shellArg(objectId)
-        }
-
-        if (transition) {
-            command +=
-                " --transition "
-                + shellArg(transition)
-        }
-
-        return command
     }
-
     function refresh() {
         exec("/opt/neebles/client/bin/neebles --version", function(output) {
             const value = output.trim()
@@ -231,7 +217,7 @@ PlasmoidItem {
             }
         })
 
-        exec("/opt/neebles/client/bin/neebles modules installed", function(output) {
+        exec("/opt/neebles/client/bin/neebles boss surface-model", function(output) {
             try {
                 const installed = JSON.parse(output)
 
@@ -576,13 +562,11 @@ PlasmoidItem {
                                     Layout.preferredHeight: 30
 
                                     text:
-                                        root.t(
-                                            surfaceData.label_key
-                                        )
+                                        surfaceItem.label
 
                                     enabled:
-                                        moduleList.currentItem === null
-                                        || true
+                                        surfaceItem.requirements_met
+                                        === true
 
                                     hoverEnabled: true
 
@@ -624,11 +608,10 @@ PlasmoidItem {
 
                                     onClicked: {
                                         root.exec(
-                                            root.moduleActionCommand(
-                                                modelData.owner_module,
-                                                surfaceData.action,
-                                                surfaceItem.object_id || "",
-                                                surfaceItem.transition || ""
+                                            root.surfaceActionCommand(
+                                                surfaceItem.owner_module,
+                                                surfaceItem.item_id,
+                                                surfaceData.action
                                             ),
                                             function() {
                                                 root.refresh()
@@ -660,9 +643,7 @@ PlasmoidItem {
                                         Layout.fillWidth: true
 
                                         text:
-                                            root.t(
-                                                surfaceData.label_key
-                                            )
+                                            surfaceItem.label
 
                                         color: "#A78BFA"
                                         font.pixelSize: 11
@@ -678,23 +659,20 @@ PlasmoidItem {
                                         checkable: false
 
                                         enabled:
-                                            modelData.enabled
-                                            !== false
+                                            surfaceItem.requirements_met
+                                            === true
 
                                         onClicked: {
                                             const turnOn =
                                                 !surfaceItem.active
 
                                             root.exec(
-                                                root.moduleActionCommand(
+                                                root.surfaceActionCommand(
                                                     surfaceItem.owner_module,
+                                                    surfaceItem.item_id,
                                                     turnOn
                                                     ? surfaceData.action_on
-                                                    : surfaceData.action_off,
-                                                    surfaceItem.object_id,
-                                                    turnOn
-                                                    ? surfaceData.transition_on
-                                                    : surfaceData.transition_off
+                                                    : surfaceData.action_off
                                                 ),
                                                 function() {
                                                     root.refresh()
