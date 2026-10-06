@@ -13,7 +13,7 @@ PlasmoidItem {
     property var installedModules: []
     property var strings: ({})
     property var callbacks: ({})
-    property string bossVersion: "1.0.26"
+    property string bossVersion: "1.0.27"
 
     component NeeblesSwitch: QQC2.Switch {
         id: control
