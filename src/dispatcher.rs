@@ -500,17 +500,13 @@ fn dispatch_domestic_construction(request: &ExecutionRequest) -> ExecutionRespon
     let step = &request.args[1];
 
     let declaration =
-        match neebles_backend::domestic_construction::
-            load_canonical_domestic_construction_declaration(subject)
-        {
+        match neebles_backend::domestic_construction::load_module_domestic_construction_declaration(
+            subject,
+        ) {
             Ok(declaration) => declaration,
 
             Err(error) => {
-                return ExecutionResponse::fail(
-                    1,
-                    "domestic_construction_declaration",
-                    error,
-                );
+                return ExecutionResponse::fail(1, "domestic_construction_declaration", error);
             }
         };
 

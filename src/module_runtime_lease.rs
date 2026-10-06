@@ -235,6 +235,21 @@ mod tests {
             },
 
             runtime_manifest_payload: payload,
+            construction_payload: serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "1",
+                "name": "neebles-domestic-construction",
+                "subject": "fixture",
+                "steps": [
+                    {
+                        "id": "runtime",
+                        "runtime_authority": "modules.runtime",
+                        "world": "modules.fixture",
+                        "execution": "foreground",
+                        "session": false
+                    }
+                ]
+            }))
+            .expect("Construction fixture must serialize"),
 
             path: PathBuf::from("/fixture/material/fixture"),
         }

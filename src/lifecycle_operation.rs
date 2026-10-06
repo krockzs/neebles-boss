@@ -24,6 +24,7 @@ use crate::lifecycle_resolver;
  */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedOperation {
+    pub module_id: Option<String>,
     pub artillery: String,
     pub objective: String,
     pub munition: BTreeMap<String, String>,
@@ -48,6 +49,9 @@ pub fn prepare(
     battlefield: &Battlefield,
 ) -> Result<PreparedOperation, String> {
     Ok(PreparedOperation {
+        module_id: battlefield
+            .get("module", "id")
+            .map(|value| value.to_string()),
         artillery: lifecycle_resolver::resolve(&operation.artillery, battlefield)?,
         objective: lifecycle_resolver::resolve(&operation.objective, battlefield)?,
         munition: resolve_map_values(&operation.munition, battlefield)?,
@@ -254,5 +258,16 @@ mod tests {
         assert_eq!(prepared.artillery, "module.future.capability");
 
         assert_eq!(prepared.objective, "module.future.objective");
+    }
+
+    #[test]
+    fn preparation_captures_governor_module_identity() {
+        let mut battlefield = battlefield();
+
+        battlefield.insert("module", "id", "module.alpha");
+
+        let prepared = prepare(&operation(), &battlefield).unwrap();
+
+        assert_eq!(prepared.module_id.as_deref(), Some("module.alpha"));
     }
 }

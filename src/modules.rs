@@ -2490,7 +2490,7 @@ pub fn start_tray_provider(name: &str) -> Result<bool, String> {
     }
 
     let declaration =
-        neebles_backend::domestic_construction::load_canonical_domestic_construction_declaration(
+        neebles_backend::domestic_construction::load_module_domestic_construction_declaration(
             name,
         )?;
 

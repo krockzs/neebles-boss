@@ -1,12 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 use crate::domestic_authority_supply::{build_authority_grant_set, SuppliedAuthorityRegistry};
-use crate::domestic_platform_control::authenticate_platform_controlled_file;
 use crate::domestic_workspace_execution::{
     build_workspace_execution_command, WorkspaceDynamicReadonlyGrant, WorkspaceExecutionRequest,
     WorkspaceReadonlyGrant, WorkspaceWritableGrant,
@@ -14,8 +12,6 @@ use crate::domestic_workspace_execution::{
 
 pub const DOMESTIC_CONSTRUCTION_SCHEMA: &str = "1";
 pub const DOMESTIC_CONSTRUCTION_NAME: &str = "neebles-domestic-construction";
-
-pub const DOMESTIC_CONSTRUCTION_ROOT: &str = "/usr/lib/neebles/domestic/construction";
 
 pub fn validate_domestic_construction_subject(subject: &str) -> Result<(), String> {
     if subject.is_empty() {
@@ -48,34 +44,21 @@ pub fn validate_domestic_construction_subject(subject: &str) -> Result<(), Strin
     Ok(())
 }
 
-pub fn canonical_domestic_construction_declaration_path(subject: &str) -> Result<PathBuf, String> {
-    validate_domestic_construction_subject(subject)?;
-
-    Ok(Path::new(DOMESTIC_CONSTRUCTION_ROOT).join(format!("{subject}.json")))
-}
-
-pub fn load_canonical_domestic_construction_declaration(
+pub fn load_module_domestic_construction_declaration(
     subject: &str,
 ) -> Result<DomesticConstructionDeclaration, String> {
-    let path = canonical_domestic_construction_declaration_path(subject)?;
+    validate_domestic_construction_subject(subject)?;
 
-    let controlled = authenticate_platform_controlled_file(&path)
-        .map_err(|error| {
-            format!(
-                "domestic construction declaration is not platform-controlled: subject={subject} path={} error={error}",
-                path.display()
-            )
-        })?;
+    let territory = crate::module_material_territory::resolve_module_material_territory()?;
 
-    let raw = fs::read_to_string(controlled.as_path())
-        .map_err(|error| {
-            format!(
-                "could not read domestic construction declaration: subject={subject} path={} error={error}",
-                controlled.as_path().display()
-            )
-        })?;
+    let binding =
+        crate::module_material_binding::load_material_binding(&territory.material_root, subject)?;
 
-    let declaration = DomesticConstructionDeclaration::parse(&raw)?;
+    let raw = std::str::from_utf8(&binding.construction_payload).map_err(|error| {
+        format!("material binding Construction is not UTF-8: subject={subject} error={error}")
+    })?;
+
+    let declaration = DomesticConstructionDeclaration::parse(raw)?;
 
     if declaration.subject != subject {
         return Err(format!(
@@ -760,6 +743,7 @@ pub fn execute_construction_step(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::domestic_authority_supply::{load_authority_supply, register_supplied_authorities};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1162,18 +1146,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_subject_maps_deterministically_to_json() {
-        let path = canonical_domestic_construction_declaration_path("fixture.subject")
-            .expect("safe subject must resolve");
-
-        assert_eq!(
-            path,
-            PathBuf::from("/usr/lib/neebles/domestic/construction/fixture.subject.json")
-        );
-    }
-
-    #[test]
-    fn canonical_subject_rejects_path_escape_characters() {
+    fn construction_subject_rejects_unsafe_identities() {
         for subject in [
             "../escape",
             "folder/name",
@@ -1182,7 +1155,7 @@ mod tests {
             "/absolute",
         ] {
             assert!(
-                canonical_domestic_construction_declaration_path(subject).is_err(),
+                validate_domestic_construction_subject(subject).is_err(),
                 "unsafe subject must be rejected: {subject}"
             );
         }
@@ -1212,25 +1185,6 @@ mod tests {
         .to_string();
 
         assert!(DomesticConstructionDeclaration::parse(&raw).is_err());
-    }
-
-    #[test]
-    fn canonical_loader_rejects_untrusted_non_platform_file() {
-        let base = fixture_root("canonical-provenance");
-        let declaration_path = base.join("fixture.subject.json");
-
-        fs::write(&declaration_path, valid_json()).expect("fixture declaration must exist");
-
-        let error = authenticate_platform_controlled_file(&declaration_path)
-            .expect_err("ordinary user-owned fixture must not be platform-controlled");
-
-        assert!(
-            error.contains("root-owned")
-                || error.contains("group-writable")
-                || error.contains("other-writable")
-        );
-
-        fs::remove_dir_all(base).expect("fixture must clean");
     }
 
     #[test]

@@ -103,7 +103,7 @@ fn workspace_operation_identity(operation: &PreparedOperation) -> Result<(String
     }
 
     for key in operation.munition.keys() {
-        if key != "subject" && key != "step" {
+        if key != "step" {
             return Err(format!(
                 "workspace execution munition contains unknown key '{}'",
                 key
@@ -111,34 +111,22 @@ fn workspace_operation_identity(operation: &PreparedOperation) -> Result<(String
         }
     }
 
-    if operation.munition.len() != 2 {
-        return Err(
-            "workspace execution requires exactly munition.subject and munition.step".to_string(),
-        );
+    if operation.munition.len() != 1 {
+        return Err("workspace execution requires exactly munition.step".to_string());
     }
 
     let subject = operation
-        .munition
-        .get("subject")
-        .ok_or_else(|| "workspace execution munition.subject is missing".to_string())?
-        .clone();
+        .module_id
+        .clone()
+        .ok_or_else(|| "workspace execution requires Governor-owned module identity".to_string())?;
+
+    neebles_backend::domestic_construction::validate_domestic_construction_subject(&subject)?;
 
     let step = operation
         .munition
         .get("step")
         .ok_or_else(|| "workspace execution munition.step is missing".to_string())?
         .clone();
-
-    if subject.trim().is_empty() {
-        return Err("workspace execution munition.subject cannot be empty".to_string());
-    }
-
-    if subject.trim() != subject {
-        return Err(
-            "workspace execution munition.subject cannot contain surrounding whitespace"
-                .to_string(),
-        );
-    }
 
     if step.trim().is_empty() {
         return Err("workspace execution munition.step cannot be empty".to_string());
@@ -192,7 +180,7 @@ async fn execute_workspace_operation(
     let (subject, step) = workspace_operation_identity(&operation)?;
 
     let declaration =
-        neebles_backend::domestic_construction::load_canonical_domestic_construction_declaration(
+        neebles_backend::domestic_construction::load_module_domestic_construction_declaration(
             &subject,
         )?;
 
@@ -282,7 +270,8 @@ fn build_productive_catalog() -> Result<AvailableCapabilityCatalog, String> {
      *
      * The stable generic execution boundary is Boss domestic
      * workspace execution. Modules provide only declarative
-     * subject + step identities through Lifecycle.
+     * step identities through Lifecycle; module identity is injected
+     * by Governor-owned execution context.
      *
      * Construction, AuthoritySupply, world resolution and
      * filesystem boundaries remain owned by their existing
@@ -395,14 +384,12 @@ mod tests {
     #[test]
     fn workspace_execution_rejects_unknown_objective_before_authority_use() {
         let operation = PreparedOperation {
+            module_id: Some("fixture".to_string()),
             artillery: WORKSPACE_ARTILLERY.to_string(),
 
             objective: "future.unknown".to_string(),
 
-            munition: BTreeMap::from([
-                ("subject".to_string(), "fixture".to_string()),
-                ("step".to_string(), "run".to_string()),
-            ]),
+            munition: BTreeMap::from([("step".to_string(), "run".to_string())]),
 
             tactics: BTreeMap::new(),
 
@@ -416,13 +403,14 @@ mod tests {
     }
 
     #[test]
-    fn workspace_execution_requires_exact_subject_and_step_munition() {
+    fn workspace_execution_requires_exact_step_munition() {
         let missing = PreparedOperation {
+            module_id: Some("fixture".to_string()),
             artillery: WORKSPACE_ARTILLERY.to_string(),
 
             objective: WORKSPACE_OBJECTIVE.to_string(),
 
-            munition: BTreeMap::from([("subject".to_string(), "fixture".to_string())]),
+            munition: BTreeMap::new(),
 
             tactics: BTreeMap::new(),
 
@@ -432,15 +420,15 @@ mod tests {
         let error = futures_lite::future::block_on(execute_workspace_operation(missing))
             .expect_err("missing step must fail before execution");
 
-        assert!(error.contains("exactly munition.subject and munition.step"));
+        assert!(error.contains("exactly munition.step"));
 
         let extra = PreparedOperation {
+            module_id: Some("fixture".to_string()),
             artillery: WORKSPACE_ARTILLERY.to_string(),
 
             objective: WORKSPACE_OBJECTIVE.to_string(),
 
             munition: BTreeMap::from([
-                ("subject".to_string(), "fixture".to_string()),
                 ("step".to_string(), "run".to_string()),
                 ("technology".to_string(), "forbidden".to_string()),
             ]),
@@ -454,5 +442,38 @@ mod tests {
             .expect_err("unknown munition must fail before execution");
 
         assert!(error.contains("unknown key"));
+    }
+
+    #[test]
+    fn workspace_execution_uses_governor_owned_module_identity() {
+        let operation = PreparedOperation {
+            module_id: Some("fixture".to_string()),
+            artillery: WORKSPACE_ARTILLERY.to_string(),
+            objective: WORKSPACE_OBJECTIVE.to_string(),
+            munition: BTreeMap::from([("step".to_string(), "run".to_string())]),
+            tactics: BTreeMap::new(),
+            intelligence: BTreeMap::new(),
+        };
+
+        let (subject, step) = workspace_operation_identity(&operation).unwrap();
+
+        assert_eq!(subject, "fixture");
+        assert_eq!(step, "run");
+    }
+
+    #[test]
+    fn workspace_execution_rejects_missing_governor_owned_module_identity() {
+        let operation = PreparedOperation {
+            module_id: None,
+            artillery: WORKSPACE_ARTILLERY.to_string(),
+            objective: WORKSPACE_OBJECTIVE.to_string(),
+            munition: BTreeMap::from([("step".to_string(), "run".to_string())]),
+            tactics: BTreeMap::new(),
+            intelligence: BTreeMap::new(),
+        };
+
+        let error = workspace_operation_identity(&operation).unwrap_err();
+
+        assert!(error.contains("Governor-owned module identity"));
     }
 }

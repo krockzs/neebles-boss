@@ -7,6 +7,7 @@ use std::process::Stdio;
 
 use url::Url;
 
+use neebles_backend::domestic_construction::DomesticConstructionDeclaration;
 use neebles_backend::module_material::{
     parse_material_layer, parse_material_recipe, valid_module_id, PackageRequirement,
 };
@@ -380,6 +381,21 @@ pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePa
     let runtime_manifest_payload =
         fetch_remote_bytes(&revision, "runtime/modules/domestic-runtime.json", 30)?;
 
+    let construction_path = format!("runtime/construction/{module_id}.json");
+    let construction_payload = fetch_remote_bytes(&revision, &construction_path, 30)?;
+
+    let construction_text = std::str::from_utf8(&construction_payload)
+        .map_err(|error| format!("module Construction declaration is not UTF-8: {error}"))?;
+
+    let construction = DomesticConstructionDeclaration::parse(construction_text)?;
+
+    if construction.subject != module_id {
+        return Err(format!(
+            "module Construction subject mismatch: expected={module_id} actual={}",
+            construction.subject
+        ));
+    }
+
     let territory =
         neebles_backend::module_material_territory::resolve_module_material_territory()?;
 
@@ -406,6 +422,7 @@ pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePa
         module_packages_payload: packages_payload,
         module_manifest_payload: manifest_payload,
         runtime_manifest_payload: runtime_manifest_payload.clone(),
+        construction_payload: construction_payload.clone(),
     };
 
     Ok(PreparedModulePackages {

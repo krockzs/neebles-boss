@@ -4,7 +4,7 @@
 
 **Current source line:** **1.0.27**
 **Latest published Boss release recorded by the repository:** **1.0.26**
-**Current integration status (2026-10-05):** **Point 1 CLOSED / GREEN. Point 2 CLOSED / GREEN at source level.** MaterialBinding + RuntimeLease are the productive module-material architecture. Tray providers now enter through module-owned Construction, `modules.runtime`, authenticated RuntimeLease material, desktop-session authority and governed process ownership. The legacy persistent shared module rootfs/runtime-manifest model and direct host Tray-provider spawn path are retired. **Boss 1.0.26 is published. Boss 1.0.27 source hardens CUSTOM V2 raw-material transport after Fresh Live exposed literal percent-encoded Debian epoch filenames such as `%3a`. The segment-aware URL fix is source, regression, real-remote and combinatorial certified. Fresh Live and installed-system acceptance remain pending re-run.**
+**Current integration status (2026-10-06):** **Point 1 corrective source closure and Point 2 source closure are locally verified.** Fresh Live exposed that module Construction truth was still expected from a static image territory. Boss now carries authenticated Construction inside MaterialBinding schema 2, fetched from the exact pinned CUSTOM V2 revision during Preinstall. Productive Construction consumers resolve the declaration from the active module MaterialBinding. Lifecycle workspace execution receives module identity only from Governor-owned execution context and accepts only `munition.step`. MaterialBinding + RuntimeLease remain the productive module-material architecture; the legacy persistent shared module rootfs/runtime-manifest model and static Construction territory are retired. Boss 1.0.27 also retains the segment-aware CUSTOM V2 raw-material transport fix. Fresh Live and installed-system acceptance remain pending re-run.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -232,35 +232,49 @@ Lifecycle does not understand Python, Git, Qt, Tk, apt or module-specific techno
 
 # Domestic Construction
 
-CUSTOM owns construction declarations.
+CUSTOM V2 owns module Construction declaration truth.
 
-Installed declarations live under:
-
-```text
-/usr/lib/neebles/domestic/construction/
-```
-
-A declaration is selected by:
+For an installed module, the productive authority chain is:
 
 ```text
-subject + step
+exact pinned CUSTOM V2 revision
+    -> runtime/construction/<module-id>.json
+    -> Boss Preinstall fetch
+    -> UTF-8 + schema parse
+    -> declaration.subject == module identity
+    -> MaterialBinding schema 2
+    -> construction.json + authenticated SHA256
+    -> productive Construction resolver
 ```
 
-Lifecycle reaches construction through the generic capability:
+There is no productive static image-side Construction declaration territory.
+
+Construction selection is based on two identities:
+
+```text
+Governor-owned module identity
+    +
+module-declared step identity
+```
+
+Lifecycle reaches Construction through the generic capability:
 
 ```text
 artillery: boss.workspace_execution
 objective: construction.step
 munition:
-    subject: <module>
     step: <step>
 ```
 
-Boss resolves the declaration, authorities, runtime world, mounts, environment, identity and execution mode generically.
+The module does **not** provide its own Construction subject through munition.
+
+Governor injects `module.id` into the execution Battlefield. `PreparedOperation` carries that identity as `module_id`, and workspace execution fails closed if the Governor-owned identity is absent.
+
+The workspace capability accepts exactly one munition key: `step`. Unknown keys are rejected before authority use.
+
+Boss then resolves the authenticated Construction declaration from the active MaterialBinding, selects the requested step, resolves AuthoritySupply, runtime world, mounts, environment, identity and execution mode generically.
 
 No Test Module-specific branch is allowed in productive Boss code.
-
----
 
 ## Construction execution modes
 
@@ -399,19 +413,33 @@ The delta must not duplicate material already owned by Essential merely because 
 
 ### Persistent MaterialBinding
 
-After Preinstall, Boss persists a module-specific authenticated MaterialBinding containing the exact material authority needed to recreate the runtime later.
+After Preinstall, Boss persists a module-specific authenticated MaterialBinding containing the exact material authority required to recreate that installed module runtime later.
 
-Its identity binds at least:
+The current binding schema is:
+
+```text
+schema 2
+```
+
+Its identity binds:
 
 ```text
 module identity
 installed module version
 CUSTOM V2 revision
+Essential package selector + manifest
+module-delta package selector + manifest
+domestic-runtime.json
+construction.json
 ```
 
-The binding preserves authenticated authority blobs for Essential membership/integrity, module membership/integrity and the runtime manifest payload. It does **not** duplicate the `.deb` files themselves; those remain in permanent package pools.
+Every stored authority blob has a SHA256 recorded in `binding.json`, including the Construction declaration.
 
-This prevents a future execution from accidentally combining an installed old module with unrelated "latest" module-runtime metadata.
+The binding directory has exact membership validation. Missing, foreign or tampered authority files fail closed.
+
+The binding does **not** duplicate the `.deb` files themselves; those remain in permanent package pools.
+
+Persisting both runtime-manifest and Construction truth prevents a future execution from combining an installed old module with unrelated later CUSTOM V2 metadata.
 
 ### Ephemeral RuntimeLease
 
@@ -521,15 +549,18 @@ The productive flow after Point 1 is:
 
 ```text
 module declares requirement
-    -> CUSTOM V2 owns exact module material truth
+    -> CUSTOM V2 owns exact Essential + module-delta material truth
+    -> CUSTOM V2 owns exact module Construction truth
     -> Boss Preinstall authenticates the selected CUSTOM V2 revision
     -> Boss validates Essential package membership + integrity
     -> Boss validates module-delta package membership + integrity
-    -> Boss validates the module runtime manifest payload
+    -> Boss validates domestic-runtime.json
+    -> Boss validates Construction subject against module identity
     -> Boss reuses/downloads exact certified DEBs into permanent pools
-    -> Boss produces MaterialBindingInput
-    -> install/update transaction activates the MaterialBinding
+    -> Boss produces MaterialBindingInput including runtime + Construction payloads
+    -> install/update transaction activates MaterialBinding schema 2
     -> Lifecycle may execute
+    -> Construction is loaded from that active MaterialBinding
     -> modules.runtime creates a RuntimeLease only when runtime is actually needed
 ```
 
@@ -668,8 +699,12 @@ The canonical runtime birth model for a module is now:
 
 ```text
 Governor action
+    -> Governor injects module.id
     -> Lifecycle transition
-    -> construction.step
+    -> boss.workspace_execution / construction.step
+    -> munition.step only
+    -> load authenticated Construction from active MaterialBinding
+    -> select declared Construction step
     -> runtime authority selection
     -> if modules.runtime: load active MaterialBinding
     -> create independent RuntimeLease
@@ -850,37 +885,38 @@ Boss startup does not depend on running recovery.
 
 ---
 
-# Current source certification
+# Current local source closure evidence
 
-Point 1 and Point 2 closure were followed by directed security gates and full regression on the exact working tree.
+Point 1 corrective work and the existing Point 2 source architecture were checked on the exact working tree before this commit.
 
-Current Point 2 closure evidence:
+These are **local source verification gates**, not Esbirro certification, not a published Boss release and not Fresh Live / installed-system acceptance.
+
+Current local closure evidence:
 
 ```text
 git diff --check                       GREEN
 
-desktop-session runtime grants        2 / 2 GREEN
-Construction Point 2 directed tests   5 / 5 GREEN
-Tray ownership directed tests         5 / 5 GREEN
-
-cargo test --lib                      116 / 116 GREEN
-cargo test --bin neebles-backend      583 / 583 GREEN
+cargo test --lib                      115 / 115 GREEN
+cargo test --bin neebles-backend      602 / 602 GREEN
 cargo check --lib                     GREEN
 cargo check --bin neebles-backend     GREEN
 ```
 
-The binary check currently emits **87 known non-blocking warnings**, primarily historical Lifecycle `dead_code` / naming warnings. Point 2 does not authorize an unrelated warning-cleanup refactor.
-
-Point 1 source closure certifies:
+Point 1 source closure now verifies:
 
 - Essential + per-module delta material composition;
-- persistent MaterialBinding;
+- MaterialBinding schema 2;
+- authenticated `construction.json` stored inside the binding with SHA256;
+- Preinstall Construction fetch from the exact pinned CUSTOM V2 revision;
+- Construction subject validation before binding publication;
+- productive Construction resolution from active MaterialBinding;
 - authenticated ephemeral RuntimeLease;
 - concurrent independent RuntimeLeases;
-- Construction projection into generic Workspace;
-- install/update/uninstall MaterialBinding transaction semantics.
+- install/update/uninstall MaterialBinding transaction semantics;
+- Governor-owned module identity propagation into prepared Lifecycle operations;
+- workspace execution accepting exactly `munition.step` and rejecting module-supplied subject identity.
 
-Point 2 source closure additionally certifies:
+Point 2 source closure additionally verifies:
 
 - Tray contracts declare a generic `construction_step`;
 - Tray providers are not directly executed from the host path;
@@ -898,11 +934,9 @@ Point 2 source closure additionally certifies:
 - Tray registration authenticates the real provider PID through kernel `SO_PEERCRED`;
 - stale waiters cannot erase ownership for a newer Tray runtime.
 
-**Point 1 and Point 2 are CLOSED / GREEN at source level.**
+**Point 1 corrective source closure and Point 2 source closure are locally GREEN.**
 
-These source gates do not claim a published Boss release and do not replace later Fresh Live or installed-system acceptance.
-
----
+Release certification, Fresh Live acceptance and installed-system acceptance remain separate later gates.
 
 # Release policy
 

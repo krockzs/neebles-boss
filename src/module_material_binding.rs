@@ -8,13 +8,14 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-const BINDING_SCHEMA: u32 = 1;
+const BINDING_SCHEMA: u32 = 2;
 const BINDING_INDEX: &str = "binding.json";
 const ESSENTIAL_PACKAGES: &str = "essentials.packages.tsv";
 const ESSENTIAL_MANIFEST: &str = "essentials.manifest.json";
 const MODULE_PACKAGES: &str = "module.packages.tsv";
 const MODULE_MANIFEST: &str = "module.manifest.json";
 const RUNTIME_MANIFEST: &str = "domestic-runtime.json";
+const CONSTRUCTION: &str = "construction.json";
 
 #[derive(Debug, Clone)]
 pub struct MaterialBindingInput {
@@ -26,6 +27,7 @@ pub struct MaterialBindingInput {
     pub module_packages_payload: Vec<u8>,
     pub module_manifest_payload: Vec<u8>,
     pub runtime_manifest_payload: Vec<u8>,
+    pub construction_payload: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +38,7 @@ pub struct MaterialBinding {
     pub essential_layer: MaterialLayer,
     pub module_recipe: MaterialRecipe,
     pub runtime_manifest_payload: Vec<u8>,
+    pub construction_payload: Vec<u8>,
     pub path: PathBuf,
 }
 
@@ -47,6 +50,7 @@ struct MaterialBindingHashes {
     module_packages: String,
     module_manifest: String,
     runtime_manifest: String,
+    construction: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,6 +171,7 @@ fn expected_binding_entries() -> BTreeSet<String> {
         MODULE_PACKAGES,
         MODULE_MANIFEST,
         RUNTIME_MANIFEST,
+        CONSTRUCTION,
     ]
     .into_iter()
     .map(str::to_string)
@@ -320,6 +325,8 @@ pub fn prepare_material_binding(
         &input.runtime_manifest_payload,
     )?;
 
+    write_binding_file(&staged_path.join(CONSTRUCTION), &input.construction_payload)?;
+
     let index = MaterialBindingIndex {
         schema: BINDING_SCHEMA,
         module: input.module,
@@ -331,6 +338,7 @@ pub fn prepare_material_binding(
             module_packages: sha256_bytes(&input.module_packages_payload),
             module_manifest: sha256_bytes(&input.module_manifest_payload),
             runtime_manifest: sha256_bytes(&input.runtime_manifest_payload),
+            construction: sha256_bytes(&input.construction_payload),
         },
     };
 
@@ -451,6 +459,7 @@ pub fn load_material_binding(
     let module_packages = read_regular_file(&path.join(MODULE_PACKAGES))?;
     let module_manifest = read_regular_file(&path.join(MODULE_MANIFEST))?;
     let runtime_manifest = read_regular_file(&path.join(RUNTIME_MANIFEST))?;
+    let construction = read_regular_file(&path.join(CONSTRUCTION))?;
 
     verify_hash(
         ESSENTIAL_PACKAGES,
@@ -482,6 +491,8 @@ pub fn load_material_binding(
         &index.sha256.runtime_manifest,
     )?;
 
+    verify_hash(CONSTRUCTION, &construction, &index.sha256.construction)?;
+
     let essential_packages_text = std::str::from_utf8(&essential_packages)
         .map_err(|error| format!("stored Essential package selector is not UTF-8: {error}"))?;
 
@@ -507,6 +518,7 @@ pub fn load_material_binding(
         essential_layer,
         module_recipe,
         runtime_manifest_payload: runtime_manifest,
+        construction_payload: construction,
         path,
     })
 }
@@ -942,6 +954,21 @@ mod tests {
                 .expect("module manifest fixture must serialize"),
             runtime_manifest_payload: serde_json::to_vec_pretty(&runtime_manifest)
                 .expect("runtime manifest fixture must serialize"),
+            construction_payload: serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "1",
+                "name": "neebles-domestic-construction",
+                "subject": "fixture",
+                "steps": [
+                    {
+                        "id": "runtime",
+                        "runtime_authority": "modules.runtime",
+                        "world": "modules.fixture",
+                        "execution": "foreground",
+                        "session": false
+                    }
+                ]
+            }))
+            .expect("Construction fixture must serialize"),
         }
     }
 
@@ -987,6 +1014,26 @@ mod tests {
             .expect_err("tampered binding must fail");
 
         assert!(error.contains("sha256 mismatch"));
+    }
+
+    #[test]
+    fn binding_load_rejects_tampered_construction() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let material_root = temporary.path().join("material");
+
+        let active = prepare_material_binding(&material_root, fixture())
+            .expect("binding must prepare")
+            .activate_install()
+            .expect("binding must activate");
+
+        fs::write(active.join(CONSTRUCTION), br#"{"tampered":true}"#)
+            .expect("Construction tamper fixture must write");
+
+        let error = load_material_binding(&material_root, "fixture")
+            .expect_err("tampered Construction must fail");
+
+        assert!(error.contains("sha256 mismatch"));
+        assert!(error.contains(CONSTRUCTION));
     }
 
     #[test]
