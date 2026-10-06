@@ -2070,7 +2070,6 @@ boss.updateModule(
                                                     )
                                                 }
                                             }
-                                        }
                                     }
 
 
