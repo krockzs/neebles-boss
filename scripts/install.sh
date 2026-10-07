@@ -753,6 +753,8 @@ install -d -m 0755 "$(dirname "$RUNTIME_ENV")"
 cat > "$RUNTIME_ENV" <<EOF
 NEEBLES_DESKTOP_UID=$DESKTOP_UID
 NEEBLES_DESKTOP_GID=$DESKTOP_GID
+NEEBLES_RUNTIME_IDENTITY=$DESKTOP_UID
+NEEBLES_TRAY_SOCKET=/run/user/$DESKTOP_UID/neebles/tray.sock
 EOF
 
 chmod 0644 "$RUNTIME_ENV"
@@ -760,6 +762,16 @@ chmod 0644 "$RUNTIME_ENV"
 if [[ -z "$DESTDIR" ]]; then
     chown root:root "$RUNTIME_ENV"
 fi
+
+grep -Fxq "NEEBLES_RUNTIME_IDENTITY=$DESKTOP_UID" "$RUNTIME_ENV" || {
+    echo "Persistent Boss runtime identity is missing from runtime.env." >&2
+    exit 1
+}
+
+grep -Fxq "NEEBLES_TRAY_SOCKET=/run/user/$DESKTOP_UID/neebles/tray.sock" "$RUNTIME_ENV" || {
+    echo "Persistent Boss tray socket identity is missing from runtime.env." >&2
+    exit 1
+}
 
 install -d -m 0755 "$EXTERNAL_SOCKET_DROPIN_DIR"
 

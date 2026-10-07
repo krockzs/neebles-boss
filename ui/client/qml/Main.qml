@@ -373,7 +373,8 @@ ApplicationWindow {
 
         if (
             typeof boss === "undefined"
-            || !Array.isArray(boss.modules)
+            || !boss.modules
+            || boss.modules.length === undefined
         )
             return result
 
@@ -387,7 +388,8 @@ ApplicationWindow {
             if (
                 !module
                 || !module.installed
-                || !Array.isArray(module.surface_content)
+                || !module.surface_content
+                || module.surface_content.length === undefined
             )
                 continue
 

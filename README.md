@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.28**
-**Latest published Boss release recorded by the repository:** **1.0.27**
-**Current integration status (2026-10-07):** **Boss 1.0.28 source closure is locally GREEN.** The Point 1 / Point 2, Config/Features, Surface, Lifecycle, Module IPC, Construction, MaterialBinding and RuntimeLease architecture remains intact. Boss 1.0.28 closes the RuntimeLease materialization defect discovered during Fresh Live: controlled Debian TAR materialization now supports confined hardlinks generically, resolves link targets inside the archive root, preserves hardlink inode identity through staging and layer merge, rejects destination-parent symlink traversal, and fails closed on unsupported special TAR entry types. The exact certified `perl-base_5.40.1-6+deb13u1_amd64.deb` package that failed Fresh Live now extracts and merges with `usr/bin/perl` and `usr/bin/perl5.40.1` retaining shared inode identity. Fresh Live and installed-system acceptance remain pending re-run.
+**Current source line:** **1.0.29**
+**Latest published Boss release recorded by the repository:** **1.0.28**
+**Current integration status (2026-10-07):** **Boss 1.0.29 CAST29 source closure is locally GREEN.** Fresh Live with published Boss 1.0.28 passed Preinstall, the complete 59 Essential + 32 module-delta material world, native hardlink-aware RuntimeLease materialization and MaterialBinding activation, then exposed post-install runtime-ownership and Surface-consumer defects. CAST29 moves governed Tray provider start/stop/reconcile and runtime deactivation behind the persistent Boss runtime authority, exports the desktop runtime identity and Tray socket to that persistent runtime, fixes Boss UI QVariantList Surface consumption, fixes Launcher dynamic height and Surface action command construction, extends the post-install enable execution window, and confines the new persistent runtime IPC actions to validated installed module identity. Fresh Live and installed-system acceptance remain pending re-run with published Boss 1.0.29.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -1106,9 +1106,45 @@ The Config/Features source closure additionally verifies:
 
 Release certification, Fresh Live acceptance and installed-system acceptance remain separate later gates.
 
+## Boss 1.0.29 CAST29 local closure
+
+Fresh Live acceptance of published Boss 1.0.28 proved that package transport, the 91-package material world, MaterialBinding schema 2 and native RuntimeLease hardlink materialization were no longer the blocking frontier.
+
+The next integration frontier exposed four independent defects:
+
+- governed Tray provider birth was attempted from the desktop Tray Manager instead of the persistent Boss runtime authority;
+- Boss Config Surface projection rejected C++ `QVariantList` values through JavaScript `Array.isArray()` checks;
+- Launcher dynamic module content could be clipped below the fixed module-list viewport;
+- Launcher `surfaceActionCommand()` contained a JavaScript automatic-semicolon-insertion return defect.
+
+CAST29 closes those source defects generically:
+
+- Tray Manager remains the desktop presentation/session coordinator and requests provider lifecycle from persistent Boss;
+- persistent Boss owns governed Construction, RuntimeLease and provider process lifecycle;
+- start, stop, reconcile and runtime-deactivate IPC boundaries validate installed module identity before touching runtime state;
+- `runtime.env` carries the certified desktop UID/GID, runtime identity and session Tray socket into persistent Boss;
+- Boss UI accepts QML array-like `QVariantList` / nested SurfaceContent values;
+- Launcher height follows real `moduleList.contentHeight`;
+- Launcher Surface action command construction returns the command value correctly;
+- post-install enable receives a bounded 600-second execution window for legitimate first RuntimeLease composition.
+
+Local CAST29 gates:
+
+```text
+git diff --check                                  GREEN
+bash -n scripts/install.sh                        GREEN
+Boss library suite                               120 / 120 GREEN
+Boss main suite                                  650 / 650 GREEN
+persistent runtime IPC confinement tests           3 / 3 GREEN
+domesticacion executed tests                      13 GREEN
+domestic-root certification test                   1 intentionally ignored
+cargo check --locked                              GREEN
+```
+
+These remain source/local gates. Fresh Live and installed-system acceptance remain separate.
 # Release policy
 
-The repository carries **1.0.27** as the current published Boss release. The latest published Boss release recorded by the repository is **1.0.27**.
+The repository carries **1.0.28** as the current published Boss release. The latest published Boss release recorded by the repository is **1.0.28**.
 
 This README deliberately does **not** promote a preparation version into a release claim.
 

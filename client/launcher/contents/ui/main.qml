@@ -13,7 +13,7 @@ PlasmoidItem {
     property var installedModules: []
     property var strings: ({})
     property var callbacks: ({})
-    property string bossVersion: "1.0.28"
+    property string bossVersion: "1.0.29"
 
     component NeeblesSwitch: QQC2.Switch {
         id: control
@@ -192,8 +192,7 @@ PlasmoidItem {
         itemId,
         action
     ) {
-        return
-            "/opt/neebles/client/bin/neebles boss surface-action "
+        return "/opt/neebles/client/bin/neebles boss surface-action "
             + shellArg(moduleName)
             + " "
             + shellArg(itemId)
@@ -290,7 +289,7 @@ PlasmoidItem {
             470,
             Math.max(
                 250,
-                178 + Math.max(1, root.modules.length) * 58
+                178 + Math.max(58, moduleList.contentHeight)
             )
         )
 

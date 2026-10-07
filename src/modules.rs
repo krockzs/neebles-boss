@@ -2548,12 +2548,10 @@ fn request_runtime_shutdown(name: &str, reason: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn deactivate_module(name: &str, reason: &str) -> Result<(), String> {
+pub fn deactivate_runtime_resources_local(name: &str, reason: &str) -> Result<(), String> {
     /*
-     * No intermediate resource registry exists here.
-     *
-     * Normal module runtime belongs to Module IPC.
-     * Tray provider runtime belongs to Tray Manager.
+     * Persistent Boss runtime authority owns Module IPC RuntimeRegistry
+     * and governed Tray RuntimeLease/process ownership.
      */
     request_runtime_shutdown(name, reason)?;
 
@@ -2574,6 +2572,52 @@ fn deactivate_module(name: &str, reason: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn request_persistent_boss_action(action: &str, args: Vec<String>) -> Result<Value, String> {
+    let response = crate::ipc::request(&crate::request::ExecutionRequest {
+        target: "boss".to_string(),
+        action: Some(action.to_string()),
+        args,
+        context: crate::request::ExecutionContext {
+            caller: "module-lifecycle".to_string(),
+        },
+    })?;
+
+    if response.ok {
+        return Ok(response.result.unwrap_or(Value::Null));
+    }
+
+    let detail = response
+        .error
+        .map(|error| error.message)
+        .unwrap_or_else(|| {
+            format!(
+                "Boss returned code {} without an error payload",
+                response.code
+            )
+        });
+
+    Err(format!(
+        "persistent Boss action '{}' failed: {}",
+        action, detail
+    ))
+}
+
+fn request_persistent_tray_start(name: &str) -> Result<(), String> {
+    request_persistent_boss_action("tray-provider-start", vec![name.to_string()]).map(|_| ())
+}
+
+fn request_persistent_tray_stop(name: &str) -> Result<(), String> {
+    request_persistent_boss_action("tray-provider-stop", vec![name.to_string()]).map(|_| ())
+}
+
+fn deactivate_module(name: &str, reason: &str) -> Result<(), String> {
+    request_persistent_boss_action(
+        "module-runtime-deactivate",
+        vec![name.to_string(), reason.to_string()],
+    )
+    .map(|_| ())
 }
 
 fn runtime_identity() -> String {
@@ -5194,7 +5238,7 @@ fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
 
     config::set_module_enabled(name, true)?;
 
-    if let Err(error) = start_tray_provider(name) {
+    if let Err(error) = request_persistent_tray_start(name) {
         /*
          * Enabling is one operation. Do not leave
          * Boss saying "enabled" when the declared
@@ -5209,7 +5253,7 @@ fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
         if let Err(error) =
             execute_module_governor_lifecycle(&lifecycle_runtime, name, "enable", &lifecycle, None)
         {
-            let tray_cleanup = stop_tray_provider(name);
+            let tray_cleanup = request_persistent_tray_stop(name);
 
             let config_cleanup = config::set_module_enabled(name, false);
 

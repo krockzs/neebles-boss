@@ -95,6 +95,36 @@ pub fn socket_path() -> PathBuf {
     crate::tray::protocol::socket_path()
 }
 
+fn request_persistent_boss_action(action: &str, args: Vec<String>) -> Result<(), String> {
+    let response = crate::ipc::request(&ExecutionRequest {
+        target: "boss".to_string(),
+        action: Some(action.to_string()),
+        args,
+        context: ExecutionContext {
+            caller: "tray-manager".to_string(),
+        },
+    })?;
+
+    if response.ok {
+        return Ok(());
+    }
+
+    let detail = response
+        .error
+        .map(|error| error.message)
+        .unwrap_or_else(|| {
+            format!(
+                "Boss returned code {} without an error payload",
+                response.code
+            )
+        });
+
+    Err(format!(
+        "persistent Boss action '{}' failed: {}",
+        action, detail
+    ))
+}
+
 fn manager_lock_path(socket_path: &Path) -> PathBuf {
     let mut value = socket_path.as_os_str().to_os_string();
     value.push(".lock");
@@ -492,7 +522,7 @@ pub fn serve() -> Result<(), String> {
         path.display()
     );
 
-    if let Err(error) = modules::start_enabled_tray_providers() {
+    if let Err(error) = request_persistent_boss_action("tray-provider-reconcile", Vec::new()) {
         /*
          * A broken module must not take the common
          * tray infrastructure down with it.
@@ -631,7 +661,9 @@ fn expire_stale_providers() -> Result<(), String> {
          * may remain alive and its PID marker would prevent
          * reconciliation from starting a replacement.
          */
-        if let Err(error) = modules::stop_tray_provider(&tray_id) {
+        if let Err(error) =
+            request_persistent_boss_action("tray-provider-stop", vec![tray_id.clone()])
+        {
             errors.push(format!(
                 "could not stop stale tray provider '{}': {}",
                 tray_id, error
@@ -657,7 +689,9 @@ fn expire_stale_providers() -> Result<(), String> {
          */
         match config::module_enabled(&tray_id) {
             Ok(true) => {
-                if let Err(error) = modules::start_tray_provider(&tray_id) {
+                if let Err(error) =
+                    request_persistent_boss_action("tray-provider-start", vec![tray_id.clone()])
+                {
                     errors.push(format!(
                         "could not restart tray provider '{}': {}",
                         tray_id, error
@@ -1056,7 +1090,7 @@ fn process_message(
 
             modules::resolved_tray_contract(&tray_id)?;
 
-            modules::stop_tray_provider(&tray_id)?;
+            request_persistent_boss_action("tray-provider-stop", vec![tray_id.clone()])?;
 
             ack(writer, "stop_provider", Some(tray_id))
         }
@@ -1074,7 +1108,7 @@ fn process_message(
                 );
             }
 
-            modules::start_enabled_tray_providers()?;
+            request_persistent_boss_action("tray-provider-reconcile", Vec::new())?;
 
             ack(writer, "reconcile", None)
         }

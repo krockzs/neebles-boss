@@ -2278,7 +2278,7 @@ void BossController::startModuleProcess(
                         name
                     },
                     false,
-                    5000,
+                    600000,
                     &enabled
                 );
 

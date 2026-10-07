@@ -660,6 +660,172 @@ fn dispatch_domestic_construction(request: &ExecutionRequest) -> ExecutionRespon
     })))
 }
 
+fn dispatch_tray_provider_start(request: &ExecutionRequest) -> ExecutionResponse {
+    if request.args.len() != 1 {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_tray_provider_start_arguments",
+            "Boss tray-provider-start requires exactly: <module>",
+        );
+    }
+
+    let module = &request.args[0];
+
+    if let Err(error) = modules::find_module_dir(module) {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_tray_provider_start_module",
+            error,
+        );
+    }
+
+    match modules::start_tray_provider(module) {
+        Ok(started) => ExecutionResponse::ok(Some(json!({
+            "module": module,
+            "started": started
+        }))),
+        Err(error) => ExecutionResponse::fail(1, "tray_provider_start", error),
+    }
+}
+
+fn dispatch_tray_provider_stop(request: &ExecutionRequest) -> ExecutionResponse {
+    if request.args.len() != 1 {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_tray_provider_stop_arguments",
+            "Boss tray-provider-stop requires exactly: <module>",
+        );
+    }
+
+    let module = &request.args[0];
+
+    if let Err(error) = modules::find_module_dir(module) {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_tray_provider_stop_module",
+            error,
+        );
+    }
+
+    match modules::stop_tray_provider(module) {
+        Ok(stopped) => ExecutionResponse::ok(Some(json!({
+            "module": module,
+            "stopped": stopped
+        }))),
+        Err(error) => ExecutionResponse::fail(1, "tray_provider_stop", error),
+    }
+}
+
+fn dispatch_tray_provider_reconcile(request: &ExecutionRequest) -> ExecutionResponse {
+    if !request.args.is_empty() {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_tray_provider_reconcile_arguments",
+            "Boss tray-provider-reconcile does not accept arguments",
+        );
+    }
+
+    match modules::start_enabled_tray_providers() {
+        Ok(()) => ExecutionResponse::ok(None),
+        Err(error) => ExecutionResponse::fail(1, "tray_provider_reconcile", error),
+    }
+}
+
+fn dispatch_module_runtime_deactivate(request: &ExecutionRequest) -> ExecutionResponse {
+    if request.args.len() != 2 {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_module_runtime_deactivate_arguments",
+            "Boss module-runtime-deactivate requires exactly: <module> <reason>",
+        );
+    }
+
+    let module = &request.args[0];
+    let reason = request.args[1].trim();
+
+    if let Err(error) = modules::find_module_dir(module) {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_module_runtime_deactivate_module",
+            error,
+        );
+    }
+
+    if reason.is_empty() {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_module_runtime_deactivate_reason",
+            "Boss module-runtime-deactivate reason cannot be empty",
+        );
+    }
+
+    match modules::deactivate_runtime_resources_local(module, reason) {
+        Ok(()) => ExecutionResponse::ok(None),
+        Err(error) => ExecutionResponse::fail(1, "module_runtime_deactivate", error),
+    }
+}
+
+#[cfg(test)]
+mod persistent_runtime_dispatch_tests {
+    use super::*;
+
+    fn request(action: &str, args: &[&str]) -> ExecutionRequest {
+        ExecutionRequest {
+            target: "boss".to_string(),
+            action: Some(action.to_string()),
+            args: args.iter().map(|value| value.to_string()).collect(),
+            context: crate::request::ExecutionContext {
+                caller: "runtime-dispatch-certification".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn tray_start_rejects_invalid_module_identity_before_runtime_birth() {
+        let response = dispatch_tray_provider_start(&request(
+            "tray-provider-start",
+            &["../escape"],
+        ));
+
+        assert!(!response.ok);
+        assert_eq!(response.code, 2);
+        assert_eq!(
+            response.error.unwrap().kind,
+            "invalid_tray_provider_start_module"
+        );
+    }
+
+    #[test]
+    fn tray_stop_rejects_invalid_module_identity_before_runtime_probe() {
+        let response = dispatch_tray_provider_stop(&request(
+            "tray-provider-stop",
+            &["../escape"],
+        ));
+
+        assert!(!response.ok);
+        assert_eq!(response.code, 2);
+        assert_eq!(
+            response.error.unwrap().kind,
+            "invalid_tray_provider_stop_module"
+        );
+    }
+
+    #[test]
+    fn runtime_deactivate_rejects_invalid_module_identity_before_runtime_probe() {
+        let response = dispatch_module_runtime_deactivate(&request(
+            "module-runtime-deactivate",
+            &["../escape", "disabled"],
+        ));
+
+        assert!(!response.ok);
+        assert_eq!(response.code, 2);
+        assert_eq!(
+            response.error.unwrap().kind,
+            "invalid_module_runtime_deactivate_module"
+        );
+    }
+}
+
 fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
     match request.action.as_deref() {
         Some("version") => ExecutionResponse::ok(Some(json!({ "version": crate::VERSION }))),
@@ -681,6 +847,18 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
 
         Some("surface-action") =>
             dispatch_surface_action(&request),
+
+        Some("tray-provider-start") =>
+            dispatch_tray_provider_start(&request),
+
+        Some("tray-provider-stop") =>
+            dispatch_tray_provider_stop(&request),
+
+        Some("tray-provider-reconcile") =>
+            dispatch_tray_provider_reconcile(&request),
+
+        Some("module-runtime-deactivate") =>
+            dispatch_module_runtime_deactivate(&request),
 
         Some("domestic-construction-execute") => dispatch_domestic_construction(&request),
 

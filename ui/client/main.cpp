@@ -179,7 +179,7 @@ int main(int argc, char *argv[])
     );
 
     app.setApplicationVersion(
-        QStringLiteral("1.0.28")
+        QStringLiteral("1.0.29")
     );
 
     app.setOrganizationName(
