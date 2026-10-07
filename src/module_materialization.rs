@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Cursor, Read};
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 use flate2::read::GzDecoder;
@@ -20,6 +20,12 @@ struct DebDataMember {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingSymlink {
+    path: PathBuf,
+    target: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingHardlink {
     path: PathBuf,
     target: PathBuf,
 }
@@ -144,6 +150,7 @@ fn unpack_tar<R: Read>(reader: R, destination: &Path) -> Result<(), String> {
     })?;
 
     let mut archive = Archive::new(reader);
+    let mut hardlinks = Vec::<PendingHardlink>::new();
     let mut symlinks = Vec::<PendingSymlink>::new();
 
     let entries = archive
@@ -195,7 +202,7 @@ fn unpack_tar<R: Read>(reader: R, destination: &Path) -> Result<(), String> {
             continue;
         }
 
-        if kind.is_file() {
+        if kind.is_file() || kind.is_contiguous() || kind.is_gnu_sparse() {
             create_parent(&target)?;
 
             if fs::symlink_metadata(&target).is_ok() {
@@ -233,6 +240,33 @@ fn unpack_tar<R: Read>(reader: R, destination: &Path) -> Result<(), String> {
             continue;
         }
 
+        if kind.is_hard_link() {
+            let raw_link = entry
+                .link_name()
+                .map_err(|error| {
+                    format!(
+                        "could not read material hardlink target {}: {error}",
+                        path.display()
+                    )
+                })?
+                .ok_or_else(|| format!("material hardlink target missing: {}", path.display()))?
+                .into_owned();
+
+            let link = normalize_archive_path(&raw_link)?.ok_or_else(|| {
+                format!(
+                    "material hardlink target cannot be archive root: {}",
+                    path.display()
+                )
+            })?;
+
+            hardlinks.push(PendingHardlink {
+                path: target,
+                target: destination.join(link),
+            });
+
+            continue;
+        }
+
         if kind.is_symlink() {
             let link = entry
                 .link_name()
@@ -253,10 +287,87 @@ fn unpack_tar<R: Read>(reader: R, destination: &Path) -> Result<(), String> {
             continue;
         }
 
+        if kind.is_character_special() || kind.is_block_special() || kind.is_fifo() {
+            return Err(format!(
+                "forbidden material tar special entry type 0x{:02x} for {}",
+                kind.as_byte(),
+                path.display()
+            ));
+        }
+
+        if kind.is_pax_global_extensions() {
+            return Err(format!(
+                "unsupported material tar global PAX header for {}",
+                path.display()
+            ));
+        }
+
         return Err(format!(
-            "unsupported material tar entry type for {}",
+            "unsupported material tar entry type 0x{:02x} for {}",
+            kind.as_byte(),
             path.display()
         ));
+    }
+
+    let mut unresolved = hardlinks;
+
+    while !unresolved.is_empty() {
+        let mut next = Vec::<PendingHardlink>::new();
+        let mut progress = false;
+
+        for pending in unresolved {
+            create_parent(&pending.path)?;
+
+            if fs::symlink_metadata(&pending.path).is_ok() {
+                return Err(format!(
+                    "duplicate material hardlink path: {}",
+                    pending.path.display()
+                ));
+            }
+
+            match fs::symlink_metadata(&pending.target) {
+                Ok(metadata) => {
+                    if !metadata.file_type().is_file() {
+                        return Err(format!(
+                            "material hardlink target is not a regular file: {}",
+                            pending.target.display()
+                        ));
+                    }
+
+                    fs::hard_link(&pending.target, &pending.path).map_err(|error| {
+                        format!(
+                            "could not create material hardlink {} -> {}: {error}",
+                            pending.path.display(),
+                            pending.target.display()
+                        )
+                    })?;
+
+                    progress = true;
+                }
+
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    next.push(pending);
+                }
+
+                Err(error) => {
+                    return Err(format!(
+                        "could not inspect material hardlink target {}: {error}",
+                        pending.target.display()
+                    ));
+                }
+            }
+        }
+
+        if !next.is_empty() && !progress {
+            let pending = next
+                .iter()
+                .map(|item| format!("{} -> {}", item.path.display(), item.target.display()))
+                .collect::<Vec<_>>();
+
+            return Err(format!("unresolved material hardlink targets: {pending:?}"));
+        }
+
+        unresolved = next;
     }
 
     for pending in symlinks {
@@ -706,6 +817,79 @@ fn identical_material_path(source: &Path, destination: &Path) -> Result<bool, St
     Ok(false)
 }
 
+fn verify_destination_parent_confinement(
+    destination_root: &Path,
+    relative: &Path,
+) -> Result<(), String> {
+    if relative.is_absolute() {
+        return Err(format!(
+            "material merge path must be relative: {}",
+            relative.display()
+        ));
+    }
+
+    let root_metadata = fs::symlink_metadata(destination_root).map_err(|error| {
+        format!(
+            "could not inspect material destination root {}: {error}",
+            destination_root.display()
+        )
+    })?;
+
+    if !root_metadata.file_type().is_dir() {
+        return Err(format!(
+            "material destination root is not a directory: {}",
+            destination_root.display()
+        ));
+    }
+
+    let parent = relative.parent().unwrap_or_else(|| Path::new(""));
+    let mut current = destination_root.to_path_buf();
+
+    for component in parent.components() {
+        match component {
+            Component::Normal(value) => current.push(value),
+            Component::CurDir => continue,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(format!(
+                    "unsafe material merge path: {}",
+                    relative.display()
+                ));
+            }
+        }
+
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(format!(
+                        "material destination parent is a symlink: {}",
+                        current.display()
+                    ));
+                }
+
+                if !metadata.file_type().is_dir() {
+                    return Err(format!(
+                        "material destination parent is not a directory: {}",
+                        current.display()
+                    ));
+                }
+            }
+
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(());
+            }
+
+            Err(error) => {
+                return Err(format!(
+                    "could not inspect material destination parent {}: {error}",
+                    current.display()
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn preflight_merge(source_root: &Path, destination_root: &Path) -> Result<(usize, usize), String> {
     let paths = collect_tree(source_root)?;
 
@@ -715,6 +899,8 @@ fn preflight_merge(source_root: &Path, destination_root: &Path) -> Result<(usize
     for relative in paths {
         let source = source_root.join(&relative);
         let destination = destination_root.join(&relative);
+
+        verify_destination_parent_confinement(destination_root, &relative)?;
 
         match fs::symlink_metadata(&destination) {
             Ok(_) => {
@@ -758,6 +944,8 @@ fn merge_tree(source_root: &Path, destination_root: &Path) -> Result<(), String>
         let source = source_root.join(relative);
         let destination = destination_root.join(relative);
 
+        verify_destination_parent_confinement(destination_root, relative)?;
+
         let source_metadata = fs::symlink_metadata(&source).map_err(|error| {
             format!(
                 "could not inspect staged material {}: {error}",
@@ -766,35 +954,53 @@ fn merge_tree(source_root: &Path, destination_root: &Path) -> Result<(), String>
         })?;
 
         if source_metadata.file_type().is_dir() {
-            if fs::symlink_metadata(&destination).is_err() {
-                fs::create_dir(&destination).map_err(|error| {
-                    format!(
-                        "could not publish material directory {}: {error}",
-                        destination.display()
-                    )
-                })?;
+            match fs::symlink_metadata(&destination) {
+                Ok(metadata) => {
+                    if !metadata.file_type().is_dir() {
+                        return Err(format!(
+                            "material destination directory collides with non-directory: {}",
+                            destination.display()
+                        ));
+                    }
+                }
 
-                fs::set_permissions(
-                    &destination,
-                    fs::Permissions::from_mode(filesystem_mode(&source_metadata)),
-                )
-                .map_err(|error| {
-                    format!(
-                        "could not publish material directory mode {}: {error}",
-                        destination.display()
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    fs::create_dir(&destination).map_err(|error| {
+                        format!(
+                            "could not publish material directory {}: {error}",
+                            destination.display()
+                        )
+                    })?;
+
+                    fs::set_permissions(
+                        &destination,
+                        fs::Permissions::from_mode(filesystem_mode(&source_metadata)),
                     )
-                })?;
+                    .map_err(|error| {
+                        format!(
+                            "could not publish material directory mode {}: {error}",
+                            destination.display()
+                        )
+                    })?;
+                }
+
+                Err(error) => {
+                    return Err(format!(
+                        "could not inspect material destination directory {}: {error}",
+                        destination.display()
+                    ));
+                }
             }
         }
     }
+
+    let mut hardlink_destinations = BTreeMap::<(u64, u64), PathBuf>::new();
 
     for relative in &paths {
         let source = source_root.join(relative);
         let destination = destination_root.join(relative);
 
-        if fs::symlink_metadata(&destination).is_ok() {
-            continue;
-        }
+        verify_destination_parent_confinement(destination_root, relative)?;
 
         let source_metadata = fs::symlink_metadata(&source).map_err(|error| {
             format!(
@@ -804,7 +1010,44 @@ fn merge_tree(source_root: &Path, destination_root: &Path) -> Result<(), String>
         })?;
 
         if source_metadata.file_type().is_file() {
+            let hardlink_key = (source_metadata.dev(), source_metadata.ino());
+
+            match fs::symlink_metadata(&destination) {
+                Ok(_) => {
+                    if source_metadata.nlink() > 1 {
+                        hardlink_destinations
+                            .entry(hardlink_key)
+                            .or_insert_with(|| destination.clone());
+                    }
+
+                    continue;
+                }
+
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+
+                Err(error) => {
+                    return Err(format!(
+                        "could not inspect material destination file {}: {error}",
+                        destination.display()
+                    ));
+                }
+            }
+
             create_parent(&destination)?;
+
+            if source_metadata.nlink() > 1 {
+                if let Some(existing) = hardlink_destinations.get(&hardlink_key) {
+                    fs::hard_link(existing, &destination).map_err(|error| {
+                        format!(
+                            "could not preserve material hardlink {} -> {}: {error}",
+                            destination.display(),
+                            existing.display()
+                        )
+                    })?;
+
+                    continue;
+                }
+            }
 
             fs::copy(&source, &destination).map_err(|error| {
                 format!(
@@ -824,10 +1067,25 @@ fn merge_tree(source_root: &Path, destination_root: &Path) -> Result<(), String>
                 )
             })?;
 
+            if source_metadata.nlink() > 1 {
+                hardlink_destinations.insert(hardlink_key, destination.clone());
+            }
+
             continue;
         }
 
         if source_metadata.file_type().is_symlink() {
+            match fs::symlink_metadata(&destination) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "could not inspect material destination symlink {}: {error}",
+                        destination.display()
+                    ));
+                }
+            }
+
             create_parent(&destination)?;
 
             let target = fs::read_link(&source).map_err(|error| {
@@ -1110,6 +1368,65 @@ mod tests {
         encoder.finish().expect("fixture gzip must finish")
     }
 
+    fn gzip_tar_with_hardlink(link_first: bool) -> Vec<u8> {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+
+        let mut builder = tar::Builder::new(encoder);
+
+        let body = b"#!/usr/bin/perl\n";
+
+        let mut file = tar::Header::new_gnu();
+        file.set_size(body.len() as u64);
+        file.set_mode(0o755);
+        file.set_cksum();
+
+        let mut link = tar::Header::new_gnu();
+        link.set_entry_type(tar::EntryType::Link);
+        link.set_size(0);
+        link.set_mode(0o755);
+
+        if link_first {
+            builder
+                .append_link(&mut link, "usr/bin/perl5.40.1", "./usr/bin/perl")
+                .expect("hardlink fixture must append");
+
+            builder
+                .append_data(&mut file, "usr/bin/perl", Cursor::new(body))
+                .expect("hardlink target fixture must append");
+        } else {
+            builder
+                .append_data(&mut file, "usr/bin/perl", Cursor::new(body))
+                .expect("hardlink target fixture must append");
+
+            builder
+                .append_link(&mut link, "usr/bin/perl5.40.1", "./usr/bin/perl")
+                .expect("hardlink fixture must append");
+        }
+
+        let encoder = builder.into_inner().expect("fixture tar must finish");
+
+        encoder.finish().expect("fixture gzip must finish")
+    }
+
+    fn gzip_tar_with_missing_hardlink_target() -> Vec<u8> {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+
+        let mut builder = tar::Builder::new(encoder);
+
+        let mut link = tar::Header::new_gnu();
+        link.set_entry_type(tar::EntryType::Link);
+        link.set_size(0);
+        link.set_mode(0o755);
+
+        builder
+            .append_link(&mut link, "usr/bin/perl5.40.1", "./usr/bin/missing")
+            .expect("missing hardlink fixture must append");
+
+        let encoder = builder.into_inner().expect("fixture tar must finish");
+
+        encoder.finish().expect("fixture gzip must finish")
+    }
+
     fn gzip_tar_with_root_and_file() -> Vec<u8> {
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
 
@@ -1225,6 +1542,76 @@ mod tests {
     }
 
     #[test]
+    fn extracts_hardlink_to_existing_target_inside_staging() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let deb = temporary.path().join("fixture-hardlink.deb");
+        let destination = temporary.path().join("rootfs");
+
+        fs::write(
+            &deb,
+            synthetic_deb("data.tar.gz", &gzip_tar_with_hardlink(false)),
+        )
+        .expect("hardlink fixture deb must write");
+
+        extract_deb_data_to_staging(&deb, &destination).expect("hardlink fixture deb must extract");
+
+        let target =
+            fs::metadata(destination.join("usr/bin/perl")).expect("hardlink target must exist");
+
+        let link =
+            fs::metadata(destination.join("usr/bin/perl5.40.1")).expect("hardlink path must exist");
+
+        assert_eq!(target.ino(), link.ino());
+        assert_eq!(target.dev(), link.dev());
+    }
+
+    #[test]
+    fn extracts_hardlink_whose_target_appears_later() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let deb = temporary.path().join("fixture-hardlink-late.deb");
+        let destination = temporary.path().join("rootfs");
+
+        fs::write(
+            &deb,
+            synthetic_deb("data.tar.gz", &gzip_tar_with_hardlink(true)),
+        )
+        .expect("late hardlink fixture deb must write");
+
+        extract_deb_data_to_staging(&deb, &destination)
+            .expect("late hardlink fixture deb must extract");
+
+        let target = fs::metadata(destination.join("usr/bin/perl"))
+            .expect("late hardlink target must exist");
+
+        let link = fs::metadata(destination.join("usr/bin/perl5.40.1"))
+            .expect("late hardlink path must exist");
+
+        assert_eq!(target.ino(), link.ino());
+        assert_eq!(target.dev(), link.dev());
+    }
+
+    #[test]
+    fn missing_hardlink_target_fails_closed() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let deb = temporary.path().join("fixture-hardlink-missing.deb");
+        let destination = temporary.path().join("rootfs");
+
+        fs::write(
+            &deb,
+            synthetic_deb("data.tar.gz", &gzip_tar_with_missing_hardlink_target()),
+        )
+        .expect("missing hardlink fixture deb must write");
+
+        let error = extract_deb_data_to_staging(&deb, &destination)
+            .expect_err("missing hardlink target must fail");
+
+        assert!(error.contains("unresolved material hardlink targets"));
+    }
+
+    #[test]
     fn staging_destination_must_be_new() {
         let temporary = tempfile::tempdir().expect("temporary directory");
 
@@ -1241,6 +1628,68 @@ mod tests {
             .expect_err("existing staging destination must fail");
 
         assert!(error.contains("staging destination already exists"));
+    }
+
+    #[test]
+    fn merge_tree_preserves_hardlink_identity() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let source = temporary.path().join("source");
+        let destination = temporary.path().join("destination");
+
+        fs::create_dir_all(source.join("usr/bin")).expect("source directories must exist");
+        fs::create_dir(&destination).expect("destination root must exist");
+
+        fs::write(source.join("usr/bin/perl"), b"perl-hardlink\n")
+            .expect("hardlink source file must write");
+
+        fs::hard_link(
+            source.join("usr/bin/perl"),
+            source.join("usr/bin/perl5.40.1"),
+        )
+        .expect("source hardlink must exist");
+
+        preflight_merge(&source, &destination).expect("hardlink merge preflight must pass");
+        merge_tree(&source, &destination).expect("hardlink merge must pass");
+
+        let target = fs::metadata(destination.join("usr/bin/perl"))
+            .expect("merged hardlink target must exist");
+
+        let link = fs::metadata(destination.join("usr/bin/perl5.40.1"))
+            .expect("merged hardlink path must exist");
+
+        assert_eq!(target.dev(), link.dev());
+        assert_eq!(target.ino(), link.ino());
+    }
+
+    #[test]
+    fn merge_tree_rejects_symlink_parent_escape_without_writing_outside() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let source = temporary.path().join("source");
+        let destination = temporary.path().join("destination");
+        let outside = temporary.path().join("outside");
+
+        fs::create_dir_all(source.join("usr/bin")).expect("source directories must exist");
+        fs::create_dir(&destination).expect("destination root must exist");
+        fs::create_dir(&outside).expect("outside root must exist");
+
+        fs::write(source.join("usr/bin/fixture"), b"must-stay-contained\n")
+            .expect("source fixture must write");
+
+        symlink(&outside, destination.join("usr")).expect("destination escape symlink must exist");
+
+        let error = preflight_merge(&source, &destination)
+            .expect_err("symlink parent escape must fail preflight");
+
+        assert!(error.contains("symlink") || error.contains("collision"));
+        assert!(!outside.join("bin/fixture").exists());
+
+        let error =
+            merge_tree(&source, &destination).expect_err("symlink parent escape must fail merge");
+
+        assert!(error.contains("symlink") || error.contains("non-directory"));
+        assert!(!outside.join("bin/fixture").exists());
     }
 
     #[test]

@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.27**
-**Latest published Boss release recorded by the repository:** **1.0.26**
-**Current integration status (2026-10-06):** **Point 1 corrective source closure, Point 2 source closure and the Config/Features source closure are locally verified.** Boss carries authenticated Construction inside MaterialBinding schema 2, fetched from the exact pinned CUSTOM V2 revision during Preinstall, while module source is selected independently through the immutable Registry commit. Productive Construction consumers resolve the declaration from the active module MaterialBinding. Lifecycle workspace execution receives module identity only from Governor-owned execution context and accepts only `munition.step`. MaterialBinding + RuntimeLease remain the productive module-material architecture. Boss 1.0.27 additionally implements Surface schema 2 typed requirements, strict `active` / `open` resolution, persistent Surface model/action routing, module-scoped Surface translations, dynamic Config -> Features materialization, Lifecycle -> Module IPC execution and bounded Launcher/Tray presentation. Fresh Live and installed-system acceptance remain pending re-run.
+**Current source line:** **1.0.28**
+**Latest published Boss release recorded by the repository:** **1.0.27**
+**Current integration status (2026-10-07):** **Boss 1.0.28 source closure is locally GREEN.** The Point 1 / Point 2, Config/Features, Surface, Lifecycle, Module IPC, Construction, MaterialBinding and RuntimeLease architecture remains intact. Boss 1.0.28 closes the RuntimeLease materialization defect discovered during Fresh Live: controlled Debian TAR materialization now supports confined hardlinks generically, resolves link targets inside the archive root, preserves hardlink inode identity through staging and layer merge, rejects destination-parent symlink traversal, and fails closed on unsupported special TAR entry types. The exact certified `perl-base_5.40.1-6+deb13u1_amd64.deb` package that failed Fresh Live now extracts and merges with `usr/bin/perl` and `usr/bin/perl5.40.1` retaining shared inode identity. Fresh Live and installed-system acceptance remain pending re-run.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -461,6 +461,10 @@ The lease owns its temporary rootfs. Drop destroys it.
 
 Two concurrent executions receive physically independent leases. There is no global rootfs symlink swap and no mutable global runtime manifest.
 
+RuntimeLease composition preserves certified filesystem semantics rather than flattening package content into unrelated copies. In particular, controlled TAR hardlinks are reconstructed inside package staging and remain hardlinks when the staged layer is merged into the candidate/composed lease rootfs.
+
+Materialization never follows a destination-parent symlink as construction authority. Existing destination parents are validated component-by-component and any symlink parent or non-directory parent fails closed before publication.
+
 Lifetime is part of correctness:
 
 ```text
@@ -616,12 +620,41 @@ Boss supports native `.deb` extraction for controlled module material:
 .deb
     -> ar
     -> data.tar.*
-    -> tar
-    -> safe path validation
-    -> fresh staging
+    -> controlled TAR parsing
+    -> confined archive-entry paths
+    -> fresh package staging
+    -> deferred hardlink resolution
     -> certified metadata verification
-    -> strict layer merge into a new destination
+    -> confined layer merge
+    -> hardlink identity preservation
+    -> fresh RuntimeLease rootfs
 ```
+
+The canonical TAR materialization law is generic:
+
+```text
+regular / contiguous / GNU sparse
+    -> controlled file material
+
+symlink
+    -> opaque link metadata
+    -> never dereferenced as materialization authority
+
+hardlink
+    -> target normalized inside archive root
+    -> target may appear before or after the link entry
+    -> unresolved, escaping or non-regular target fails closed
+    -> real filesystem hardlink reconstructed
+
+character device / block device / FIFO / unsupported global PAX / unknown
+    -> fail closed
+
+merge destination parent
+    -> existing parent chain must remain real directories
+    -> symlink parent rejected before publication
+```
+
+Hardlink handling is package-agnostic. Boss contains no Perl-specific branch; `perl-base` is the real certified regression gate because it exposed the missing generic TAR hardlink semantic during Fresh Live.
 
 There is no host `dpkg-deb` compatibility fallback in the canonical materializer.
 
@@ -990,10 +1023,28 @@ These are **local source verification gates**, not Esbirro certification, not a 
 Current local closure evidence for this source line:
 
 ```text
-git diff --check                       GREEN
-cargo test --bin neebles-backend      647 / 647 GREEN
-cargo check --bin neebles-backend     GREEN
+git diff --check                                  GREEN
+module_materialization focused suite             14 / 14 GREEN
+Boss library suite                               120 / 120 GREEN
+Boss main suite                                  647 / 647 GREEN
+domesticacion executed tests                      13 GREEN
+domestic-root certification test                   1 intentionally ignored
+cargo check --locked                              GREEN
+cargo build --release --locked --bins             GREEN
+real certified perl-base SHA256 gate              GREEN
+perl/perl5.40.1 staging hardlink identity         GREEN
+perl/perl5.40.1 merged hardlink identity          GREEN
+destination symlink-parent escape gate            GREEN
 ```
+
+The real regression package is:
+
+```text
+perl-base_5.40.1-6+deb13u1_amd64.deb
+SHA256 b795464137a0f4d443fc9284f4b93e883fb83883cb533adf300ac660807a352a
+```
+
+Its `usr/bin/perl5.40.1` entry is a TAR hardlink to `usr/bin/perl`. The controlled 1.0.28 materializer preserves that relationship after extraction and after layer merge.
 
 Point 1 source closure now verifies:
 
@@ -1004,6 +1055,10 @@ Point 1 source closure now verifies:
 - Construction subject validation before binding publication;
 - productive Construction resolution from active MaterialBinding;
 - authenticated ephemeral RuntimeLease;
+- confined native TAR hardlink materialization inside RuntimeLease staging;
+- preservation of hardlink identity across staging -> candidate/composed layer merge;
+- destination-parent symlink confinement during preflight and publication;
+- fail-closed rejection of unsupported special TAR entry types;
 - concurrent independent RuntimeLeases;
 - install/update/uninstall MaterialBinding transaction semantics;
 - Governor-owned module identity propagation into prepared Lifecycle operations;
@@ -1053,7 +1108,7 @@ Release certification, Fresh Live acceptance and installed-system acceptance rem
 
 # Release policy
 
-The repository carries **1.0.26** as the current published Boss release. The latest published Boss release recorded by the repository is **1.0.26**.
+The repository carries **1.0.27** as the current published Boss release. The latest published Boss release recorded by the repository is **1.0.27**.
 
 This README deliberately does **not** promote a preparation version into a release claim.
 
@@ -1123,6 +1178,7 @@ Fresh Live
     -> construction.step selects open-runtime
     -> modules.runtime creates independent RuntimeLease
     -> Essential + Test Module delta compose in the lease rootfs
+    -> certified hardlink/material semantics survive RuntimeLease composition
     -> desktop identity/session authority
     -> persistent runtime retains RuntimeLease for real process lifetime
     -> Module IPC registration
