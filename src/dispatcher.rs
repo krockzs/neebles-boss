@@ -8,6 +8,7 @@ use crate::settings;
 use crate::surface_state::{self, BossUiState};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 pub fn launch_ui() -> Result<(), String> {
     match surface_state::boss_ui_state() {
@@ -487,6 +488,177 @@ fn dispatch_module(module: &str, request: ExecutionRequest) -> ExecutionResponse
     }
 }
 
+fn parse_module_governor_action_request(
+    request: &ExecutionRequest,
+) -> Result<(
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    bool,
+), String> {
+    if request.args.len() != 5 {
+        return Err(
+            "Boss module-governor-action requires exactly: <module> <action> <object-id-or-empty> <transition-or-empty> <lifecycle-events-bool>"
+                .to_string()
+        );
+    }
+
+    let module = request.args[0].trim();
+    let action = request.args[1].trim();
+
+    if module.is_empty() {
+        return Err(
+            "Boss module-governor-action module cannot be empty"
+                .to_string()
+        );
+    }
+
+    if action.is_empty() {
+        return Err(
+            "Boss module-governor-action action cannot be empty"
+                .to_string()
+        );
+    }
+
+    let object_id = request.args[2]
+        .trim();
+
+    let transition_id = request.args[3]
+        .trim();
+
+    let lifecycle_events = match request.args[4]
+        .trim()
+    {
+        "true" => true,
+        "false" => false,
+
+        _ => {
+            return Err(
+                "Boss module-governor-action lifecycle-events must be true or false"
+                    .to_string()
+            );
+        }
+    };
+
+    Ok((
+        module.to_string(),
+        action.to_string(),
+        if object_id.is_empty() {
+            None
+        } else {
+            Some(object_id.to_string())
+        },
+        if transition_id.is_empty() {
+            None
+        } else {
+            Some(transition_id.to_string())
+        },
+        lifecycle_events,
+    ))
+}
+
+fn dispatch_module_governor_action(
+    request: &ExecutionRequest,
+) -> ExecutionResponse {
+    let (
+        module,
+        action,
+        object_id,
+        transition_id,
+        collect_lifecycle_events,
+    ) = match parse_module_governor_action_request(request) {
+        Ok(value) => value,
+
+        Err(error) => {
+            return ExecutionResponse::fail(
+                2,
+                "invalid_module_governor_action",
+                error,
+            );
+        }
+    };
+
+    let event_sink =
+        Arc::new(Mutex::new(Vec::<Value>::new()));
+
+    let operation =
+        if collect_lifecycle_events {
+            let sink = Arc::clone(&event_sink);
+
+            let observer_factory:
+                modules::ModuleLifecycleObserverFactory =
+                Arc::new(
+                    move |observed_module, observed_action| {
+                        let observed_module =
+                            observed_module.to_string();
+
+                        let observed_action =
+                            observed_action.to_string();
+
+                        let sink = Arc::clone(&sink);
+
+                        crate::lifecycle_observer::LifecycleObserver::observing(
+                            move |snapshot| {
+                                let envelope = json!({
+                                    "type":
+                                        "lifecycle.communication",
+                                    "module":
+                                        observed_module,
+                                    "action":
+                                        observed_action,
+                                    "communication":
+                                        snapshot.values()
+                                });
+
+                                if let Ok(mut guard) =
+                                    sink.lock()
+                                {
+                                    guard.push(envelope);
+                                }
+                            },
+                        )
+                    },
+                );
+
+            modules::execute_governor_target_observed(
+                &module,
+                &action,
+                object_id.as_deref(),
+                transition_id.as_deref(),
+                &observer_factory,
+            )
+        } else {
+            modules::execute_governor_target(
+                &module,
+                &action,
+                object_id.as_deref(),
+                transition_id.as_deref(),
+            )
+        };
+
+    match operation {
+        Ok(()) => {
+            let lifecycle_events = event_sink
+                .lock()
+                .map(|guard| guard.clone())
+                .unwrap_or_default();
+
+            ExecutionResponse::ok(Some(json!({
+                "module": module,
+                "action": action,
+                "lifecycle_events": lifecycle_events
+            })))
+        }
+
+        Err(error) => ExecutionResponse::fail(
+            1,
+            "module_governor_action",
+            error,
+        ),
+    }
+}
+
 fn dispatch_surface_action(request: &ExecutionRequest) -> ExecutionResponse {
     if request.args.len() != 3 {
         return ExecutionResponse::fail(
@@ -535,6 +707,76 @@ fn dispatch_surface_model(
             ),
     }
 }
+#[cfg(test)]
+mod module_governor_action_dispatch_tests {
+    use super::*;
+
+    fn request(args: Vec<&str>) -> ExecutionRequest {
+        ExecutionRequest {
+            target: "boss".to_string(),
+            action:
+                Some("module-governor-action".to_string()),
+            args:
+                args.into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            context:
+                crate::request::ExecutionContext::default(),
+        }
+    }
+
+    #[test]
+    fn governor_action_transport_preserves_exact_target() {
+        let parsed =
+            parse_module_governor_action_request(
+                &request(vec![
+                    "module.alpha",
+                    "future-action",
+                    "object.alpha",
+                    "future-transition",
+                    "true",
+                ]),
+            )
+            .unwrap();
+
+        assert_eq!(parsed.0, "module.alpha");
+        assert_eq!(parsed.1, "future-action");
+        assert_eq!(
+            parsed.2.as_deref(),
+            Some("object.alpha")
+        );
+        assert_eq!(
+            parsed.3.as_deref(),
+            Some("future-transition")
+        );
+        assert!(parsed.4);
+    }
+
+    #[test]
+    fn governor_action_transport_rejects_ambiguous_shape() {
+        for args in [
+            vec![
+                "module.alpha",
+                "open",
+            ],
+            vec![
+                "module.alpha",
+                "open",
+                "",
+                "",
+                "maybe",
+            ],
+        ] {
+            assert!(
+                parse_module_governor_action_request(
+                    &request(args)
+                )
+                .is_err()
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod surface_action_dispatch_tests {
     use super::*;
@@ -841,6 +1083,9 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
 
             Err(error) => ExecutionResponse::fail(1, "boss_update_execute", error),
         },
+
+        Some("module-governor-action") =>
+            dispatch_module_governor_action(&request),
 
         Some("surface-model") =>
             dispatch_surface_model(&request),

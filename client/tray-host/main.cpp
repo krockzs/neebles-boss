@@ -1163,6 +1163,31 @@ int main(
         );
 
     QObject::connect(
+        &bossEvents,
+        &BossEventClient::settingsChanged,
+        &engine,
+        [&engine]() {
+            QString error;
+
+            const QVariantMap strings =
+                loadBossStrings(&error);
+
+            if (
+                !error.isEmpty()
+                || strings.isEmpty()
+            ) {
+                return;
+            }
+
+            engine.rootContext()
+                ->setContextProperty(
+                    QStringLiteral("bossStrings"),
+                    strings
+                );
+        }
+    );
+
+    QObject::connect(
         &engine,
         &QQmlApplicationEngine::objectCreationFailed,
         &app,

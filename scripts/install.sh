@@ -43,6 +43,7 @@ GLOBAL_INSTALLER_DESKTOP="${DESTDIR}/usr/share/applications/org.neebles.Installe
 SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 TRAY_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-host.service"
 TRAY_SNI_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-sni-host.service"
+NOTIFICATION_PRESENTER_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-notification-presenter.service"
 RUNTIME_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-runtime.service"
 EXTERNAL_SOCKET="${DESTDIR}/usr/lib/systemd/system/neebles-external.socket"
 EXTERNAL_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-external.service"
@@ -227,6 +228,24 @@ resolve_desktop_identity() {
             awk -F: 'NR == 1 { print $4 }'
         )"
 
+    elif [[ -z "$DESTDIR" && ${EUID} -eq 0 && -f "$RUNTIME_ENV" ]]; then
+        # Critical Update may run as persistent Boss root, without PKEXEC_UID.
+        # The previous root-owned runtime identity is the only allowed fallback.
+        [[ ! -L "$RUNTIME_ENV" && "$(stat -c '%u' -- "$RUNTIME_ENV")" == "0" ]] || {
+            echo "Refusing untrusted persisted Boss runtime identity." >&2
+            exit 1
+        }
+        [[ "$(stat -c '%a' -- "$RUNTIME_ENV")" =~ ^(600|640|644)$ ]] || {
+            echo "Refusing writable persisted Boss runtime identity." >&2
+            exit 1
+        }
+        [[ "$(grep -c '^NEEBLES_DESKTOP_UID=' "$RUNTIME_ENV")" -eq 1 && \
+           "$(grep -c '^NEEBLES_DESKTOP_GID=' "$RUNTIME_ENV")" -eq 1 ]] || {
+            echo "Persisted Boss desktop UID/GID must be unique." >&2
+            exit 1
+        }
+        DESKTOP_UID="$(awk -F= '$1 == "NEEBLES_DESKTOP_UID" {print $2}' "$RUNTIME_ENV")"
+        DESKTOP_GID="$(awk -F= '$1 == "NEEBLES_DESKTOP_GID" {print $2}' "$RUNTIME_ENV")"
     else
         DESKTOP_UID="$(id -u)"
         DESKTOP_GID="$(id -g)"
@@ -241,6 +260,11 @@ resolve_desktop_identity() {
         echo "Invalid desktop GID: $DESKTOP_GID" >&2
         exit 1
     }
+
+    if [[ -z "$DESTDIR" && "$DESKTOP_UID" == "0" ]]; then
+        echo "Refusing to install desktop Presenter for root: desktop UID is unresolved." >&2
+        exit 1
+    fi
 
     DESKTOP_USER="$(
         getent passwd "$DESKTOP_UID" |
@@ -700,6 +724,7 @@ backup_global_path "$GLOBAL_INSTALLER_DESKTOP" "global-installer-desktop"
 backup_global_path "$SYSTEMD_SERVICE" "systemd-service"
 backup_global_path "$TRAY_HOST_SERVICE" "tray-host-service"
 backup_global_path "$TRAY_SNI_HOST_SERVICE" "tray-sni-host-service"
+backup_global_path "$NOTIFICATION_PRESENTER_SERVICE" "notification-presenter-service"
 backup_global_path "$RUNTIME_SERVICE" "runtime-service"
 backup_global_path "$EXTERNAL_SOCKET" "external-socket"
 backup_global_path "$EXTERNAL_SERVICE" "external-service"
@@ -880,6 +905,10 @@ install -m 0644 \
     "$CLIENT_DATA_SOURCE/systemd/neebles-tray-sni-host.service" \
     "$TRAY_SNI_HOST_SERVICE"
 
+install -m 0644 \
+    "$CLIENT_DATA_SOURCE/systemd/neebles-notification-presenter.service" \
+    "$NOTIFICATION_PRESENTER_SERVICE"
+
 
 progress 88
 status_key "installer.progress.installing_launcher"
@@ -964,6 +993,14 @@ cmp -s \
         exit 1
     }
 
+cmp -s \
+    "$CLIENT_DATA_SOURCE/systemd/neebles-notification-presenter.service" \
+    "$NOTIFICATION_PRESENTER_SERVICE" \
+    || {
+        echo "Installed Notification Presenter service differs from payload." >&2
+        exit 1
+    }
+
 cmp -s     "$CLIENT_DATA_SOURCE/runtime/tray-host/neebles-tray-host"     "$TRAY_HOST_DIR/neebles-tray-host"     || {
         echo "Installed Qt Tray Host does not match payload." >&2
         exit 1
@@ -1027,6 +1064,64 @@ grep -Fxq "SocketGroup=$DESKTOP_GROUP" "$EXTERNAL_SOCKET_DROPIN" || {
     exit 1
 }
 
+# PRESENTER_USER_MANAGER_AUTHORITY: root Critical Update and fresh install converge.
+activate_desktop_notification_presenter() {
+    local session_root="/run/user/$DESKTOP_UID"
+    local session_bus="$session_root/bus"
+    local runtime_manifest="$CLIENT_ROOT/runtime/boss/domestic-runtime.json"
+    local runtime_resolver="$CLIENT_ROOT/runtime/neebles-runtime-resolve"
+    local runtime_root="$CLIENT_ROOT/runtime/boss/rootfs"
+    local domestic_setpriv=""
+    local domestic_systemctl=""
+
+    [[ "$DESKTOP_UID" != "0" && "$DESKTOP_GID" =~ ^[0-9]+$ ]] || {
+        echo "Refusing to activate desktop presenter without a non-root identity." >&2
+        return 1
+    }
+    [[ -d "$session_root" && "$(stat -c '%u' -- "$session_root")" == "$DESKTOP_UID" ]] || {
+        echo "Authenticated desktop session runtime directory is unavailable: $session_root" >&2
+        return 1
+    }
+    [[ -S "$session_bus" && "$(stat -c '%u' -- "$session_bus")" == "$DESKTOP_UID" ]] || {
+        echo "Authenticated desktop session bus is unavailable: $session_bus" >&2
+        return 1
+    }
+    [[ -x "$runtime_resolver" && -f "$runtime_manifest" ]] || {
+        echo "Installed Boss domestic runtime resolver or manifest is missing." >&2
+        return 1
+    }
+
+    domestic_setpriv="$("$runtime_resolver" --manifest "$runtime_manifest" --world boss.setpriv --category executable)" || return 1
+    domestic_systemctl="$("$runtime_resolver" --manifest "$runtime_manifest" --world boss.systemctl --category executable)" || return 1
+
+    [[ "$domestic_setpriv" == "$runtime_root/"* && -x "$domestic_setpriv" ]] || {
+        echo "Refusing non-domestic or unavailable boss.setpriv executable." >&2
+        return 1
+    }
+    [[ "$domestic_systemctl" == "$runtime_root/"* && -x "$domestic_systemctl" ]] || {
+        echo "Refusing non-domestic or unavailable boss.systemctl executable." >&2
+        return 1
+    }
+
+    presenter_user_systemctl() {
+        /usr/bin/env -i \
+            "XDG_RUNTIME_DIR=$session_root" \
+            "DBUS_SESSION_BUS_ADDRESS=unix:path=$session_bus" \
+            "LC_ALL=C" \
+            "$domestic_setpriv" \
+            "--reuid=$DESKTOP_UID" \
+            "--regid=$DESKTOP_GID" \
+            --init-groups \
+            "$domestic_systemctl" --user "$@"
+    }
+
+    presenter_user_systemctl daemon-reload || return 1
+    presenter_user_systemctl enable --now neebles-notification-presenter.service || return 1
+    presenter_user_systemctl restart neebles-notification-presenter.service || return 1
+    presenter_user_systemctl is-active --quiet neebles-notification-presenter.service || return 1
+    echo "N.E.E.B.L.E.S.: authenticated desktop Notification Presenter is active for UID $DESKTOP_UID."
+}
+
 if [[ -z "$DESTDIR" ]]; then
     systemctl daemon-reload
 
@@ -1038,6 +1133,13 @@ if [[ -z "$DESTDIR" ]]; then
 
     systemctl is-active --quiet neebles-runtime.service || {
         echo "N.E.E.B.L.E.S. Boss Runtime did not start correctly." >&2
+        exit 1
+    }
+
+    # Critical Update runs install.sh directly; Qt Installer integrateDesktop()
+    # is not part of that path. Treat this user service as mandatory infrastructure.
+    activate_desktop_notification_presenter || {
+        echo "N.E.E.B.L.E.S. desktop presenter activation failed." >&2
         exit 1
     }
 fi

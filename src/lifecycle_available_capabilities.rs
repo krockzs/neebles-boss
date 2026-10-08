@@ -354,7 +354,11 @@ fn async_domestic_command(command: std::process::Command) -> async_process::Comm
 async fn execute_workspace_operation(
     operation: PreparedOperation,
 ) -> Result<ExecutionPayload, String> {
-    let (subject, step) = workspace_operation_identity(&operation)?;
+    let governor_execution_id =
+        operation.execution_id.clone();
+
+    let (subject, step) =
+        workspace_operation_identity(&operation)?;
 
     let declaration =
         neebles_backend::domestic_construction::load_module_domestic_construction_declaration(
@@ -408,6 +412,23 @@ async fn execute_workspace_operation(
         neebles_backend::domestic_construction::DomesticConstructionExecution::Persistent => {
             let mut command = command;
 
+            let owns_runtime_lease =
+                runtime_lease.is_some();
+
+            let runtime_execution_id =
+                if owns_runtime_lease {
+                    Some(
+                        governor_execution_id
+                            .clone()
+                            .ok_or_else(|| {
+                                "persistent domestic runtime requires Governor-owned execution identity"
+                                    .to_string()
+                            })?
+                    )
+                } else {
+                    None
+                };
+
             let mut child = command.spawn().map_err(|error| {
                 format!(
                     "persistent domestic workspace failed to start: subject={} step={} error={}",
@@ -417,9 +438,81 @@ async fn execute_workspace_operation(
 
             let pid = child.id();
 
+            let opening_generation =
+                if let Some(execution_id) =
+                    runtime_execution_id.as_deref()
+                {
+                    match crate::module_ipc::runtime_registry()
+                        .claim_opening_owner(
+                            &subject,
+                            execution_id,
+                            pid,
+                        )
+                    {
+                        Ok(generation) => generation,
+
+                        Err(error) => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+
+                            return Err(format!(
+                                "persistent domestic runtime owner registration failed: subject={} step={} error={}",
+                                subject,
+                                step,
+                                error
+                            ));
+                        }
+                    }
+                } else {
+                    None
+                };
+
+            let opening_owner =
+                opening_generation.map(|generation| {
+                    (
+                        subject.clone(),
+                        generation,
+                        pid,
+                    )
+                });
+
             std::thread::spawn(move || {
                 let _runtime_lease = runtime_lease;
                 let _ = child.wait();
+
+                if let Some((
+                    module,
+                    generation,
+                    owner_pid,
+                )) = opening_owner
+                {
+                    match crate::module_ipc::runtime_registry()
+                        .release_opening_owner(
+                            &module,
+                            generation,
+                            owner_pid,
+                        )
+                    {
+                        Ok(true) => {
+                            crate::modules::broadcast_surface_module_change(
+                                &module,
+                                "runtime_open_failed",
+                            );
+                        }
+
+                        Ok(false) => {}
+
+                        Err(error) => {
+                            eprintln!(
+                                "N.E.E.B.L.E.S.: runtime opening owner cleanup failed for {} generation {} pid {}: {}",
+                                module,
+                                generation,
+                                owner_pid,
+                                error
+                            );
+                        }
+                    }
+                }
             });
 
             Ok(ExecutionPayload::from([
@@ -568,6 +661,7 @@ mod tests {
         for contract in ["commands", "connect", "llm"] {
             let operation = PreparedOperation {
                 module_id: Some("module.alpha".to_string()),
+                execution_id: None,
                 artillery: MODULE_IPC_ARTILLERY.to_string(),
                 objective: contract.to_string(),
                 munition: BTreeMap::from([("endpoint".to_string(), "logical.action".to_string())]),
@@ -588,6 +682,7 @@ mod tests {
     fn module_ipc_identity_rejects_missing_identity_and_extra_munition() {
         let missing_identity = PreparedOperation {
             module_id: None,
+            execution_id: None,
             artillery: MODULE_IPC_ARTILLERY.to_string(),
             objective: "commands".to_string(),
             munition: BTreeMap::from([("endpoint".to_string(), "notify".to_string())]),
@@ -601,6 +696,7 @@ mod tests {
 
         let extra = PreparedOperation {
             module_id: Some("module.alpha".to_string()),
+            execution_id: None,
             artillery: MODULE_IPC_ARTILLERY.to_string(),
             objective: "commands".to_string(),
             munition: BTreeMap::from([
@@ -690,6 +786,7 @@ mod tests {
     fn workspace_execution_rejects_unknown_objective_before_authority_use() {
         let operation = PreparedOperation {
             module_id: Some("fixture".to_string()),
+            execution_id: None,
             artillery: WORKSPACE_ARTILLERY.to_string(),
 
             objective: "future.unknown".to_string(),
@@ -711,6 +808,7 @@ mod tests {
     fn workspace_execution_requires_exact_step_munition() {
         let missing = PreparedOperation {
             module_id: Some("fixture".to_string()),
+            execution_id: None,
             artillery: WORKSPACE_ARTILLERY.to_string(),
 
             objective: WORKSPACE_OBJECTIVE.to_string(),
@@ -729,6 +827,7 @@ mod tests {
 
         let extra = PreparedOperation {
             module_id: Some("fixture".to_string()),
+            execution_id: None,
             artillery: WORKSPACE_ARTILLERY.to_string(),
 
             objective: WORKSPACE_OBJECTIVE.to_string(),
@@ -753,6 +852,7 @@ mod tests {
     fn workspace_execution_uses_governor_owned_module_identity() {
         let operation = PreparedOperation {
             module_id: Some("fixture".to_string()),
+            execution_id: None,
             artillery: WORKSPACE_ARTILLERY.to_string(),
             objective: WORKSPACE_OBJECTIVE.to_string(),
             munition: BTreeMap::from([("step".to_string(), "run".to_string())]),
@@ -770,6 +870,7 @@ mod tests {
     fn workspace_execution_rejects_missing_governor_owned_module_identity() {
         let operation = PreparedOperation {
             module_id: None,
+            execution_id: None,
             artillery: WORKSPACE_ARTILLERY.to_string(),
             objective: WORKSPACE_OBJECTIVE.to_string(),
             munition: BTreeMap::from([("step".to_string(), "run".to_string())]),

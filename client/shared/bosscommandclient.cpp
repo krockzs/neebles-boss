@@ -35,7 +35,7 @@ BossCommandClient::BossCommandClient(
                 setError(
                     stderrText.isEmpty()
                     ? QStringLiteral(
-                        "Surface action failed"
+                        "Module command failed"
                     )
                     : stderrText
                 );
@@ -282,6 +282,50 @@ BossCommandClient::surfaceAction(
             )
         );
 
+        return false;
+    }
+
+    return true;
+}
+
+bool
+BossCommandClient::setModuleEnabled(
+    const QString &moduleName,
+    bool enabled
+)
+{
+    if (m_busy) {
+        return false;
+    }
+
+    const QString module =
+        moduleName.trimmed();
+
+    if (module.isEmpty()) {
+        return false;
+    }
+
+    setError(QString());
+    setBusy(true);
+
+    m_actionProcess.start(
+        commandPath(),
+        QStringList{
+            QStringLiteral("modules"),
+            enabled
+                ? QStringLiteral("enable")
+                : QStringLiteral("disable"),
+            module
+        }
+    );
+
+    if (!m_actionProcess.waitForStarted(1000)) {
+        setBusy(false);
+        setError(
+            QStringLiteral(
+                "Could not start module state action"
+            )
+        );
         return false;
     }
 

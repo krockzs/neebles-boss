@@ -47,6 +47,7 @@ mod module_preinstall;
 mod modules;
 mod network_boundary;
 pub mod nightmare;
+mod notification_presenter;
 mod notifications;
 mod privileges;
 mod request;

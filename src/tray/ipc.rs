@@ -1056,7 +1056,7 @@ fn process_message(
         }
 
         TrayMessage::SetRootVisibility { visible } => {
-            assert_session_peer(peer)?;
+            assert_lifecycle_peer(peer)?;
 
             if registered_tray.is_some() {
                 return Err("tray providers cannot change root tray visibility".to_string());

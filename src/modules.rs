@@ -492,36 +492,17 @@ pub fn installed_module_surface_projection(
 
     let lifecycle = lifecycle_contract_from_module(&module_dir, &manifest)?;
 
-    let mut projection = surface_projection_from_module(&module_dir, &manifest, &lifecycle)?;
-
     /*
-     * Contract visibility is the module-provided default.
+     * Surface item visibility remains module contract truth.
      *
-     * Boss-owned durable presentation overrides are applied here,
-     * before SurfaceContent is materialized for UI, Launcher, Tray
-     * or any future Boss surface.
-     *
-     * Functional state remains Lifecycle-owned and is not stored here.
+     * User preference is whole-module visibility and is
+     * materialized independently for each Boss surface.
      */
-    let items = projection
-        .items()
-        .values()
-        .map(|item| (item.id().to_string(), item.surface().to_string()))
-        .collect::<Vec<_>>();
-
-    for (item_id, surface) in items {
-        if surface != "tray" && surface != "launcher" {
-            continue;
-        }
-
-        if let Some(visible) =
-            config::surface_item_visibility_override(&surface, &manifest.name, &item_id)?
-        {
-            projection.set_visibility(&item_id, visible)?;
-        }
-    }
-
-    Ok(projection)
+    surface_projection_from_module(
+        &module_dir,
+        &manifest,
+        &lifecycle,
+    )
 }
 
 /*
@@ -1788,7 +1769,7 @@ fn publish_require_candidate(
     ]))
 }
 
-fn broadcast_surface_module_change(name: &str, reason: &str) {
+pub(crate) fn broadcast_surface_module_change(name: &str, reason: &str) {
     crate::ipc::broadcast_event(
         "module.lifecycle",
         "state_changed",
@@ -1900,16 +1881,126 @@ fn execute_governor_target_with_observer(
         .map(|factory| factory(name, action))
         .unwrap_or_else(crate::lifecycle_observer::LifecycleObserver::none);
 
-    lifecycle_runtime.execute_target_blocking_observed(
-        name,
-        &format!("module.{action}"),
-        &lifecycle,
-        action,
-        object_id,
-        transition_id,
-        std::collections::BTreeMap::new(),
-        observer,
-    )?;
+    let canonical_open =
+        action == "open";
+
+    let (
+        opening_generation,
+        lifecycle_execution_id,
+    ) = if canonical_open {
+        if !crate::surface_requirement_resolver::module_active(name) {
+            return Err(format!(
+                "module {} is not active and cannot open",
+                name
+            ));
+        }
+
+        let (generation, execution_id) =
+            crate::module_ipc::runtime_registry()
+                .begin_opening(name)?;
+
+        broadcast_surface_module_change(
+            name,
+            "runtime_opening",
+        );
+
+        (Some(generation), execution_id)
+    } else {
+        (None, format!("module.{action}"))
+    };
+
+    let execution =
+        match lifecycle_runtime
+            .execute_target_blocking_observed(
+                name,
+                &lifecycle_execution_id,
+                &lifecycle,
+                action,
+                object_id,
+                transition_id,
+                std::collections::BTreeMap::new(),
+                observer,
+            )
+        {
+            Ok(execution) => execution,
+
+            Err(error) => {
+                if let Some(generation) =
+                    opening_generation
+                {
+                    match crate::module_ipc::runtime_registry()
+                        .seal_opening(
+                            name,
+                            generation,
+                        )
+                    {
+                        Ok(false) => {
+                            broadcast_surface_module_change(
+                                name,
+                                "runtime_open_failed",
+                            );
+                        }
+
+                        Ok(true) => {}
+
+                        Err(seal_error) => {
+                            return Err(format!(
+                                "{}; opening seal failed: {}",
+                                error,
+                                seal_error
+                            ));
+                        }
+                    }
+                }
+
+                return Err(error);
+            }
+        };
+
+    if let Some(generation) =
+        opening_generation
+    {
+        if execution.is_none() {
+            let _ = crate::module_ipc::runtime_registry()
+                .seal_opening(
+                    name,
+                    generation,
+                )?;
+
+            broadcast_surface_module_change(
+                name,
+                "runtime_open_failed",
+            );
+
+            return Err(format!(
+                "module {} does not declare canonical Governor open binding",
+                name
+            ));
+        }
+
+        let opening_alive =
+            crate::module_ipc::runtime_registry()
+                .seal_opening(
+                    name,
+                    generation,
+                )?;
+
+        if !opening_alive
+            && crate::module_ipc::runtime_registry()
+                .state(name)?
+                != crate::module_ipc::registry::ModuleRuntimeState::Open
+        {
+            broadcast_surface_module_change(
+                name,
+                "runtime_open_failed",
+            );
+
+            return Err(format!(
+                "module {} open transition completed without a live modules.runtime owner",
+                name
+            ));
+        }
+    }
 
     if let (Some(object_id), Some(transition_id)) = (object_id, transition_id) {
         if let Some(active) = lifecycle
@@ -3805,6 +3896,116 @@ where
     Ok(())
 }
 
+fn materialize_runtime_presentation_with<State>(
+    value: &mut Value,
+    mut state: State,
+) -> Result<(), String>
+where
+    State: FnMut(
+        &str,
+    ) -> Result<
+        crate::module_ipc::registry::ModuleRuntimeState,
+        String,
+    >,
+{
+    let modules = value
+        .as_array_mut()
+        .ok_or_else(|| {
+            "runtime presentation model must be an array"
+                .to_string()
+        })?;
+
+    for module in modules.iter_mut() {
+        let object = module
+            .as_object_mut()
+            .ok_or_else(|| {
+                "runtime presentation entry must be an object"
+                    .to_string()
+            })?;
+
+        let name = object
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "runtime presentation module has no name"
+                    .to_string()
+            })?
+            .to_string();
+
+        let runtime_state = state(&name)?;
+
+        let enabled = object
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+        let open_available =
+            enabled
+            && runtime_state
+                == crate::module_ipc::registry::ModuleRuntimeState::Closed;
+
+        object.insert(
+            "runtime_state".to_string(),
+            Value::String(
+                runtime_state.as_str().to_string()
+            ),
+        );
+
+        object.insert(
+            "open_available".to_string(),
+            Value::Bool(open_available),
+        );
+
+        let content = object
+            .get_mut("surface_content")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| {
+                format!(
+                    "module {} has no SurfaceContent array",
+                    name
+                )
+            })?;
+
+        for item in content.iter_mut() {
+            let item_object = item
+                .as_object_mut()
+                .ok_or_else(|| {
+                    format!(
+                        "module {} has invalid SurfaceContent",
+                        name
+                    )
+                })?;
+
+            let requirements_met = item_object
+                .get("requirements_met")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+
+            let canonical_open_action = item_object
+                .get("data")
+                .and_then(Value::as_object)
+                .and_then(|data| data.get("action"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                == Some("open");
+
+            let action_available =
+                requirements_met
+                && (!canonical_open_action
+                    || open_available);
+
+            item_object.insert(
+                "action_available".to_string(),
+                Value::Bool(action_available),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod surface_presentation_model_tests {
     use super::*;
@@ -3917,8 +4118,11 @@ mod surface_presentation_model_tests {
 pub fn installed_modules_json() -> Result<Value, String> {
     let mut result = Vec::new();
 
+    let boss_config =
+        config::load_or_initialize()?;
+
     let requested_language =
-        config::load_or_initialize()?.language;
+        boss_config.language.clone();
 
     let root = modules_root();
     if !root.exists() {
@@ -3960,16 +4164,54 @@ pub fn installed_modules_json() -> Result<Value, String> {
          * Launcher, Tray and future Boss surfaces
          * consume the exact same canonical material.
          */
-        let surface_content = installed_module_all_surface_content(&manifest.name)?
-            .iter()
-            .map(|item| {
-                surface_content_item_json(
-                    item,
-                    &object_states,
-                    &module_strings,
-                )
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let declared_surface_content =
+            installed_module_all_surface_content(
+                &manifest.name
+            )?;
+
+        let tray_default =
+            declared_surface_content
+                .iter()
+                .any(|item| {
+                    item.surface() == "tray"
+                        && item.visible()
+                });
+
+        let launcher_default =
+            declared_surface_content
+                .iter()
+                .any(|item| {
+                    item.surface() == "launcher"
+                        && item.visible()
+                });
+
+        let tray_visible =
+            config::effective_surface_module_visibility(
+                &boss_config,
+                "tray",
+                &manifest.name,
+                tray_default,
+            )?;
+
+        let launcher_visible =
+            config::effective_surface_module_visibility(
+                &boss_config,
+                "launcher",
+                &manifest.name,
+                launcher_default,
+            )?;
+
+        let surface_content =
+            declared_surface_content
+                .iter()
+                .map(|item| {
+                    surface_content_item_json(
+                        item,
+                        &object_states,
+                        &module_strings,
+                    )
+                })
+                .collect::<Result<Vec<_>, String>>()?;
 
         let mut item = json!({
             "name": manifest.name,
@@ -3979,6 +4221,10 @@ pub fn installed_modules_json() -> Result<Value, String> {
             "path": entry.path(),
             "icon": icon,
             "surface_content": surface_content,
+            "surface_visibility": {
+                "tray": tray_visible,
+                "launcher": launcher_visible
+            },
 
             "notifications": manifest.notifications.as_ref().map(|contract| {
                 json!({
@@ -4022,6 +4268,14 @@ pub fn installed_modules_presentation_json() -> Result<Value, String> {
                 owner,
                 requirements,
             )
+        },
+    )?;
+
+    materialize_runtime_presentation_with(
+        &mut value,
+        |module| {
+            crate::module_ipc::runtime_registry()
+                .state(module)
         },
     )?;
 

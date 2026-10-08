@@ -31,9 +31,21 @@ pub struct BossConfig {
     pub disabled_modules: Vec<String>,
 
     #[serde(default)]
-    pub tray_item_visibility: BTreeMap<String, BTreeMap<String, bool>>,
+    pub tray_module_visibility: BTreeMap<String, bool>,
 
     #[serde(default)]
+    pub launcher_module_visibility: BTreeMap<String, bool>,
+
+    /*
+     * Compatibility input from Boss 1.0.29.
+     *
+     * These maps are migration material only.
+     * They are never current presentation authority.
+     */
+    #[serde(default, skip_serializing)]
+    pub tray_item_visibility: BTreeMap<String, BTreeMap<String, bool>>,
+
+    #[serde(default, skip_serializing)]
     pub launcher_item_visibility: BTreeMap<String, BTreeMap<String, bool>>,
 
     #[serde(default)]
@@ -70,11 +82,13 @@ fn schema_json() -> Result<Value, String> {
     let schema = json!({
         "launcher": {
             "enabled": "true",
+            "module_visibility": "{}",
             "item_visibility": "{}"
         },
 
         "tray": {
             "enabled": "true",
+            "module_visibility": "{}",
             "item_visibility": "{}"
         },
 
@@ -237,6 +251,32 @@ fn string_map(value: &BTreeMap<String, String>) -> Result<String, String> {
         .map_err(|error| format!("could not serialize Boss String: {error}"))
 }
 
+fn surface_module_visibility(
+    local: &Value,
+    path: &str,
+) -> Result<BTreeMap<String, bool>, String> {
+    let Some(value) = local_string(local, path)? else {
+        return Ok(BTreeMap::new());
+    };
+
+    serde_json::from_str(&value).map_err(|error| {
+        format!(
+            "Boss setting {} contains invalid surface module visibility data: {error}",
+            path
+        )
+    })
+}
+
+fn string_surface_module_visibility(
+    value: &BTreeMap<String, bool>,
+) -> Result<String, String> {
+    serde_json::to_string(value)
+        .map_err(|error| {
+            format!(
+                "could not serialize Boss surface module visibility: {error}"
+            )
+        })
+}
 fn surface_item_visibility(
     local: &Value,
     path: &str,
@@ -485,9 +525,29 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
 
         disabled_modules: boss_list(&local, "ui.disabled_modules")?,
 
-        tray_item_visibility: surface_item_visibility(&local, "tray.item_visibility")?,
+        tray_module_visibility:
+            surface_module_visibility(
+                &local,
+                "tray.module_visibility",
+            )?,
 
-        launcher_item_visibility: surface_item_visibility(&local, "launcher.item_visibility")?,
+        launcher_module_visibility:
+            surface_module_visibility(
+                &local,
+                "launcher.module_visibility",
+            )?,
+
+        tray_item_visibility:
+            surface_item_visibility(
+                &local,
+                "tray.item_visibility",
+            )?,
+
+        launcher_item_visibility:
+            surface_item_visibility(
+                &local,
+                "launcher.item_visibility",
+            )?,
 
         module_update_notifications: boss_map(&local, "ui.module_update_notifications")?,
     })
@@ -563,6 +623,21 @@ pub fn module_enabled(name: &str) -> Result<bool, String> {
     Ok(!modules.iter().any(|item| item == name))
 }
 
+fn surface_module_visibility_path(
+    surface: &str,
+) -> Result<String, String> {
+    match surface {
+        "tray" =>
+            Ok("tray.module_visibility".to_string()),
+
+        "launcher" =>
+            Ok("launcher.module_visibility".to_string()),
+
+        _ => Err(format!(
+            "unknown surface module visibility surface: {surface}"
+        )),
+    }
+}
 fn surface_item_visibility_path(surface: &str) -> Result<&'static str, String> {
     match surface {
         "tray" => Ok("tray.item_visibility"),
@@ -575,45 +650,109 @@ fn surface_item_visibility_path(surface: &str) -> Result<&'static str, String> {
     }
 }
 
-pub fn set_surface_item_visibility(
+pub fn set_surface_module_visibility(
     surface: &str,
     module: &str,
-    item_id: &str,
     visible: bool,
 ) -> Result<BossConfig, String> {
-    let path = surface_item_visibility_path(surface)?;
+    let path =
+        surface_module_visibility_path(surface)?;
+
+    let legacy_path =
+        surface_item_visibility_path(surface)?;
 
     let local = local_settings()?;
 
-    let mut visibility = surface_item_visibility(&local, path)?;
+    let mut visibility =
+        surface_module_visibility(
+            &local,
+            &path,
+        )?;
 
-    visibility
-        .entry(module.to_string())
-        .or_default()
-        .insert(item_id.to_string(), visible);
+    visibility.insert(
+        module.to_string(),
+        visible,
+    );
 
-    write_setting(path, string_surface_item_visibility(&visibility)?)?;
+    write_setting(
+        &path,
+        string_surface_module_visibility(
+            &visibility
+        )?,
+    )?;
+
+    /*
+     * Once this new whole-module switch is touched,
+     * the legacy per-item state for this module/surface
+     * is retired.
+     */
+    let mut legacy =
+        surface_item_visibility(
+            &local,
+            legacy_path,
+        )?;
+
+    if legacy.remove(module).is_some() {
+        write_setting(
+            legacy_path,
+            string_surface_item_visibility(
+                &legacy
+            )?,
+        )?;
+    }
 
     load_or_initialize()
 }
 
-pub fn surface_item_visibility_override(
+pub fn effective_surface_module_visibility(
+    config: &BossConfig,
     surface: &str,
     module: &str,
-    item_id: &str,
-) -> Result<Option<bool>, String> {
-    let path = surface_item_visibility_path(surface)?;
+    declared_default: bool,
+) -> Result<bool, String> {
+    let (module_visibility, legacy_visibility) =
+        match surface {
+            "tray" => (
+                &config.tray_module_visibility,
+                &config.tray_item_visibility,
+            ),
 
-    let local = local_settings()?;
+            "launcher" => (
+                &config.launcher_module_visibility,
+                &config.launcher_item_visibility,
+            ),
 
-    let visibility = surface_item_visibility(&local, path)?;
+            _ => {
+                return Err(format!(
+                    "unknown surface module visibility surface: {surface}"
+                ));
+            }
+        };
 
-    Ok(visibility
-        .get(module)
-        .and_then(|items| items.get(item_id))
-        .copied())
+    if let Some(visible) =
+        module_visibility.get(module)
+    {
+        return Ok(*visible);
+    }
+
+    /*
+     * Boss 1.0.29 migration:
+     * any visible old item means the module is visible;
+     * all old items false means the module is hidden.
+     */
+    if let Some(items) =
+        legacy_visibility.get(module)
+    {
+        if !items.is_empty() {
+            return Ok(
+                items.values()
+                    .any(|visible| *visible)
+            );
+        }
+    }
+
+    Ok(declared_default)
 }
-
 pub fn mark_module_update_notified(name: &str, version: &str) -> Result<BossConfig, String> {
     let local = local_settings()?;
 
@@ -634,13 +773,37 @@ pub fn module_has_user_state(name: &str) -> Result<bool, String> {
 
     let disabled = boss_list(&local, "ui.disabled_modules")?;
 
-    let tray_visibility = surface_item_visibility(&local, "tray.item_visibility")?;
+    let tray_module_visibility =
+        surface_module_visibility(
+            &local,
+            "tray.module_visibility",
+        )?;
 
-    let launcher_visibility = surface_item_visibility(&local, "launcher.item_visibility")?;
+    let launcher_module_visibility =
+        surface_module_visibility(
+            &local,
+            "launcher.module_visibility",
+        )?;
 
-    Ok(disabled.iter().any(|item| item == name)
-        || tray_visibility.contains_key(name)
-        || launcher_visibility.contains_key(name))
+    let tray_legacy_visibility =
+        surface_item_visibility(
+            &local,
+            "tray.item_visibility",
+        )?;
+
+    let launcher_legacy_visibility =
+        surface_item_visibility(
+            &local,
+            "launcher.item_visibility",
+        )?;
+
+    Ok(
+        disabled.iter().any(|item| item == name)
+        || tray_module_visibility.contains_key(name)
+        || launcher_module_visibility.contains_key(name)
+        || tray_legacy_visibility.contains_key(name)
+        || launcher_legacy_visibility.contains_key(name)
+    )
 }
 
 pub fn remove_module_transient_state(name: &str) -> Result<BossConfig, String> {
@@ -680,9 +843,29 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
 
     let mut disabled = boss_list(&local, "ui.disabled_modules")?;
 
-    let mut tray_visibility = surface_item_visibility(&local, "tray.item_visibility")?;
+    let mut tray_module_visibility =
+        surface_module_visibility(
+            &local,
+            "tray.module_visibility",
+        )?;
 
-    let mut launcher_visibility = surface_item_visibility(&local, "launcher.item_visibility")?;
+    let mut launcher_module_visibility =
+        surface_module_visibility(
+            &local,
+            "launcher.module_visibility",
+        )?;
+
+    let mut tray_visibility =
+        surface_item_visibility(
+            &local,
+            "tray.item_visibility",
+        )?;
+
+    let mut launcher_visibility =
+        surface_item_visibility(
+            &local,
+            "launcher.item_visibility",
+        )?;
 
     let mut notifications = boss_map(&local, "ui.module_update_notifications")?;
 
@@ -692,6 +875,8 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
 
     disabled.retain(|item| item != name);
 
+    tray_module_visibility.remove(name);
+    launcher_module_visibility.remove(name);
     tray_visibility.remove(name);
     launcher_visibility.remove(name);
     notifications.remove(name);
@@ -701,13 +886,31 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
     write_setting("ui.disabled_modules", string_list(&disabled)?)?;
 
     write_setting(
+        "tray.module_visibility",
+        string_surface_module_visibility(
+            &tray_module_visibility
+        )?,
+    )?;
+
+    write_setting(
+        "launcher.module_visibility",
+        string_surface_module_visibility(
+            &launcher_module_visibility
+        )?,
+    )?;
+
+    write_setting(
         "tray.item_visibility",
-        string_surface_item_visibility(&tray_visibility)?,
+        string_surface_item_visibility(
+            &tray_visibility
+        )?,
     )?;
 
     write_setting(
         "launcher.item_visibility",
-        string_surface_item_visibility(&launcher_visibility)?,
+        string_surface_item_visibility(
+            &launcher_visibility
+        )?,
     )?;
 
     write_setting(
@@ -793,6 +996,14 @@ mod boss_seed_persistence_tests {
         );
 
         assert!(local_string(&local, "modules").unwrap().is_none());
+
+        assert!(local_string(&local, "tray.module_visibility")
+            .unwrap()
+            .is_none());
+
+        assert!(local_string(&local, "launcher.module_visibility")
+            .unwrap()
+            .is_none());
 
         assert!(local_string(&local, "tray.item_visibility")
             .unwrap()
@@ -901,6 +1112,143 @@ mod boss_seed_persistence_tests {
         );
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod surface_module_visibility_tests {
+    use super::*;
+
+    fn config_with_visibility(
+        module_visibility: BTreeMap<String, bool>,
+        legacy_visibility:
+            BTreeMap<String, BTreeMap<String, bool>>,
+    ) -> BossConfig {
+        BossConfig {
+            language: "es_CL".to_string(),
+            tray_enabled: true,
+            launcher_enabled: true,
+            normal_notifications: true,
+            telemetry_enabled: false,
+            modules: BTreeMap::new(),
+            features: BTreeMap::new(),
+            disabled_modules: Vec::new(),
+            tray_module_visibility:
+                module_visibility,
+            launcher_module_visibility:
+                BTreeMap::new(),
+            tray_item_visibility:
+                legacy_visibility,
+            launcher_item_visibility:
+                BTreeMap::new(),
+            module_update_notifications:
+                BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn module_visibility_override_beats_legacy_items() {
+        let mut module_visibility =
+            BTreeMap::new();
+
+        module_visibility.insert(
+            "demo".to_string(),
+            false,
+        );
+
+        let mut items = BTreeMap::new();
+
+        items.insert(
+            "open".to_string(),
+            true,
+        );
+
+        let mut legacy = BTreeMap::new();
+
+        legacy.insert(
+            "demo".to_string(),
+            items,
+        );
+
+        let config = config_with_visibility(
+            module_visibility,
+            legacy,
+        );
+
+        assert!(
+            !effective_surface_module_visibility(
+                &config,
+                "tray",
+                "demo",
+                true,
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn legacy_items_collapse_to_whole_module_visibility() {
+        let mut items = BTreeMap::new();
+
+        items.insert(
+            "open".to_string(),
+            false,
+        );
+
+        items.insert(
+            "other".to_string(),
+            true,
+        );
+
+        let mut legacy = BTreeMap::new();
+
+        legacy.insert(
+            "demo".to_string(),
+            items,
+        );
+
+        let config = config_with_visibility(
+            BTreeMap::new(),
+            legacy,
+        );
+
+        assert!(
+            effective_surface_module_visibility(
+                &config,
+                "tray",
+                "demo",
+                false,
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn absent_user_state_preserves_declared_default() {
+        let config = config_with_visibility(
+            BTreeMap::new(),
+            BTreeMap::new(),
+        );
+
+        assert!(
+            effective_surface_module_visibility(
+                &config,
+                "tray",
+                "demo",
+                true,
+            )
+            .unwrap()
+        );
+
+        assert!(
+            !effective_surface_module_visibility(
+                &config,
+                "tray",
+                "demo",
+                false,
+            )
+            .unwrap()
+        );
     }
 }
 

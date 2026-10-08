@@ -421,6 +421,72 @@ ApplicationWindow {
         return result
     }
 
+    function surfaceConfigModules(surfaceName) {
+        var result = []
+
+        if (
+            typeof boss === "undefined"
+            || !boss.modules
+            || boss.modules.length === undefined
+        )
+            return result
+
+        for (
+            var moduleIndex = 0;
+            moduleIndex < boss.modules.length;
+            ++moduleIndex
+        ) {
+            var module = boss.modules[moduleIndex]
+
+            if (
+                !module
+                || !module.installed
+                || !module.surface_content
+                || module.surface_content.length === undefined
+            )
+                continue
+
+            var declaresSurface = false
+
+            for (
+                var itemIndex = 0;
+                itemIndex < module.surface_content.length;
+                ++itemIndex
+            ) {
+                var item =
+                    module.surface_content[itemIndex]
+
+                if (
+                    item
+                    && item.surface === surfaceName
+                ) {
+                    declaresSurface = true
+                    break
+                }
+            }
+
+            if (!declaresSurface)
+                continue
+
+            var visibility =
+                module.surface_visibility
+                ? module.surface_visibility
+                : ({})
+
+            result.push({
+                "moduleName": module.name,
+                "moduleIcon": module.icon
+                    ? module.icon
+                    : "",
+                "visible":
+                    visibility[surfaceName]
+                    === true
+            })
+        }
+
+        return result
+    }
+
     function surfaceConfigLabel(entry) {
         if (
             !entry
@@ -1171,7 +1237,7 @@ ApplicationWindow {
 
                                 model:
                                     typeof boss !== "undefined"
-                                    ? root.surfaceConfigItems("tray")
+                                    ? root.surfaceConfigModules("tray")
                                     : []
 
                                 boundsBehavior:
@@ -1209,9 +1275,7 @@ ApplicationWindow {
                                         Layout.fillWidth: true
 
                                         text:
-                                            root.surfaceConfigLabel(
-                                                modelData
-                                            )
+                                            modelData.moduleName
 
                                         color: "#67E8F9"
                                         font.pixelSize: 13
@@ -1222,7 +1286,7 @@ ApplicationWindow {
 
                                     NeeblesSwitch {
                                         checked:
-                                            !!modelData.item.visible
+                                            !!modelData.visible
 
                                         checkable: false
 
@@ -1237,10 +1301,9 @@ ApplicationWindow {
                                             )
                                                 return
 
-                                            boss.setSurfaceItemVisibility(
+                                            boss.setSurfaceModuleVisibility(
                                                 "tray",
                                                 modelData.moduleName,
-                                                modelData.item.item_id,
                                                 !checked
                                             )
                                         }
@@ -1305,7 +1368,7 @@ ApplicationWindow {
 
                                 model:
                                     typeof boss !== "undefined"
-                                    ? root.surfaceConfigItems("launcher")
+                                    ? root.surfaceConfigModules("launcher")
                                     : []
 
                                 boundsBehavior:
@@ -1343,9 +1406,7 @@ ApplicationWindow {
                                         Layout.fillWidth: true
 
                                         text:
-                                            root.surfaceConfigLabel(
-                                                modelData
-                                            )
+                                            modelData.moduleName
 
                                         color: "#67E8F9"
                                         font.pixelSize: 13
@@ -1356,7 +1417,7 @@ ApplicationWindow {
 
                                     NeeblesSwitch {
                                         checked:
-                                            !!modelData.item.visible
+                                            !!modelData.visible
 
                                         checkable: false
 
@@ -1371,10 +1432,9 @@ ApplicationWindow {
                                             )
                                                 return
 
-                                            boss.setSurfaceItemVisibility(
+                                            boss.setSurfaceModuleVisibility(
                                                 "launcher",
                                                 modelData.moduleName,
-                                                modelData.item.item_id,
                                                 !checked
                                             )
                                         }
@@ -1490,8 +1550,16 @@ ApplicationWindow {
                                             surfaceData.control
                                             === "button"
 
-                                        Layout.fillWidth: true
+                                        Layout.fillWidth: false
+                                        Layout.preferredWidth:
+                                            Math.max(
+                                                96,
+                                                implicitWidth
+                                            )
                                         Layout.preferredHeight: 34
+                                        Layout.alignment:
+                                            Qt.AlignLeft
+                                            | Qt.AlignVCenter
 
                                         text:
                                             root.surfaceConfigLabel(
@@ -2026,6 +2094,32 @@ if (
                                                         false
                                                     )
                                                 }
+                                            }
+                                        }
+
+                                        Button {
+                                            id: moduleOpenButton
+
+                                            visible:
+                                                moduleCard.effectiveInstalled
+
+                                            Layout.preferredWidth: 82
+                                            Layout.preferredHeight: 34
+
+                                            text:
+                                                root.t("common.open")
+
+                                            enabled:
+                                                typeof boss !== "undefined"
+                                                && !boss.busy
+                                                && moduleCard.effectiveEnabled
+                                                && modelData.open_available
+                                                === true
+
+                                            onClicked: {
+                                                boss.openModule(
+                                                    modelData.name
+                                                )
                                             }
                                         }
 

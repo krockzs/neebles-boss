@@ -79,16 +79,20 @@ public:
         const QString &itemId,
         const QString &action
     );
+
+    Q_INVOKABLE void openModule(
+        const QString &name
+    );
+
     Q_INVOKABLE QVariantMap dependencyPreflight(
         const QString &action,
         const QString &name
     );
     Q_INVOKABLE void setModuleEnabled(const QString &name, bool enabled);
 
-    Q_INVOKABLE void setSurfaceItemVisibility(
+    Q_INVOKABLE void setSurfaceModuleVisibility(
         const QString &surface,
         const QString &module,
-        const QString &itemId,
         bool visible
     );
 

@@ -271,6 +271,7 @@ mod tests {
     fn prepared(artillery: &str, objective: &str) -> PreparedOperation {
         PreparedOperation {
             module_id: None,
+            execution_id: None,
             artillery: artillery.to_string(),
 
             objective: objective.to_string(),
@@ -640,6 +641,7 @@ mod tests {
 
         let operation = PreparedOperation {
             module_id: None,
+            execution_id: None,
             artillery: "artillery".to_string(),
 
             objective: "objective".to_string(),

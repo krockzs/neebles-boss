@@ -55,6 +55,7 @@ REQUIRED_CLIENT_DATA_FILES = {
     "spacer/contents/ui/main.qml",
     "systemd/neebles-tray-manager.service",
     "systemd/neebles-tray-host.service",
+    "systemd/neebles-notification-presenter.service",
     "runtime/tray-host/neebles-tray-host",
     "runtime/qml/NEEBLES/BossEvents/libneebles-launcher-events.so",
     "runtime/qml/NEEBLES/BossEvents/libneebles-launcher-eventsplugin.so",
@@ -462,6 +463,47 @@ def validate_critical_update_manifest(
     return value
 
 
+def validate_boss_qt_domestic_elf(path: Path) -> None:
+    name = path.name
+    if name not in {'neebles-ui', 'neebles-installer', 'neebles-auth-agent'}:
+        fail(f'unknown domestic Boss Qt ELF: {name}')
+    if not path.is_file():
+        fail(f'missing domestic Boss Qt ELF: {path}')
+    try:
+        with path.open('rb') as handle:
+            if handle.read(4) != b'\x7fELF':
+                fail(f'not a domestic Boss Qt ELF: {path}')
+    except OSError as exc:
+        fail(f'could not open domestic Boss Qt ELF {path}: {exc}')
+    def inspection(arguments):
+        result = subprocess.run(arguments, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        if result.returncode:
+            fail(f'could not inspect domestic Boss Qt ELF {name}: {result.stdout}')
+        return result.stdout
+    interpreter = inspection(['readelf', '-l', str(path)])
+    expected = '/opt/neebles/client/runtime/boss/rootfs/lib64/ld-linux-x86-64.so.2'
+    if expected not in interpreter:
+        fail(f'{name}: missing domestic ELF interpreter')
+    dynamic = inspection(['readelf', '-d', str(path)])
+    if 'Shared library: [libQt6Core.so.6]' not in dynamic:
+        fail(f'{name}: missing Qt 6 NEEDED library')
+    rpath = '\n'.join(line for line in dynamic.splitlines()
+                      if '(RPATH)' in line or '(RUNPATH)' in line)
+    required_paths = (
+        '/opt/neebles/client/runtime/boss/rootfs/lib/x86_64-linux-gnu',
+        '/opt/neebles/client/runtime/boss/rootfs/usr/lib/x86_64-linux-gnu',
+    )
+    if not rpath or any(required not in rpath for required in required_paths):
+        fail(f'{name}: missing domestic RPATH/RUNPATH')
+    for forbidden in ('/work/neebles-', 'neebles-boss-source', 'build_sysroot_6.8.2'):
+        if forbidden in rpath:
+            fail(f'{name}: build tree path leaked into domestic RPATH')
+    version_info = inspection(['readelf', '--version-info', str(path)])
+    if 'Qt_6.10' in version_info or 'Qt_6.9' in version_info:
+        fail(f'{name}: forbidden Qt versions found')
+    print('DOMESTIC BOSS QT ELF: VALID', name)
+
 def validate_runtime_archive(path: Path) -> None:
     try:
         archive = tarfile.open(path, mode="r:gz")
@@ -695,6 +737,8 @@ def main() -> None:
             if not mode & stat.S_IXUSR:
                 fail(f"asset {key!r} is not executable: {filename}")
 
+    for name in ('neebles-ui', 'neebles-installer', 'neebles-auth-agent'):
+        validate_boss_qt_domestic_elf(dist / name)
     validate_tar(dist / REQUIRED_ASSETS["client_data"])
     validate_tray_host_rpath(
         dist / REQUIRED_ASSETS["client_data"]

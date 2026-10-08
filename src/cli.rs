@@ -3,7 +3,6 @@ use crate::dispatcher;
 use crate::ipc;
 use crate::languages;
 use crate::modules;
-use crate::notifications::{self, Severity};
 use crate::privileges;
 use crate::request::{ExecutionContext, ExecutionRequest};
 use crate::tray;
@@ -31,6 +30,11 @@ pub fn run(args: Vec<String>) -> i32 {
         "i18n" => i18n_command(&args[1..]),
         "modules" => modules_command(&args[1..]),
         "notify" => notify_command(&args[1..]),
+        "notifications" => {
+            if args.get(1).map(String::as_str) == Some("serve") && args.len() == 2 {
+                result(crate::notification_presenter::serve())
+            } else { fail("usage: neebles notifications serve".to_string()) }
+        },
         "socket" => socket_command(&args[1..]),
         "tray" => tray_command(&args[1..]),
         target => module_command(target, &args[1..]),
@@ -151,31 +155,32 @@ fn config_command(args: &[String]) -> i32 {
                 Err(error) => fail(error),
             }
         }
-        Some("surface-item-visibility") => {
+        Some("surface-module-visibility") => {
             let Some(surface) = args.get(1) else {
                 return fail(
-                    "config surface-item-visibility requires a surface"
+                    "config surface-module-visibility requires a surface"
                         .to_string()
                 );
             };
+
+            if surface != "tray"
+                && surface != "launcher"
+            {
+                return fail(format!(
+                    "unknown surface module visibility surface: {surface}"
+                ));
+            }
 
             let Some(module) = args.get(2) else {
                 return fail(
-                    "config surface-item-visibility requires a module name"
+                    "config surface-module-visibility requires a module name"
                         .to_string()
                 );
             };
 
-            let Some(item_id) = args.get(3) else {
+            let Some(value) = args.get(3) else {
                 return fail(
-                    "config surface-item-visibility requires an item id"
-                        .to_string()
-                );
-            };
-
-            let Some(value) = args.get(4) else {
-                return fail(
-                    "config surface-item-visibility requires true or false"
+                    "config surface-module-visibility requires true or false"
                         .to_string()
                 );
             };
@@ -185,41 +190,27 @@ fn config_command(args: &[String]) -> i32 {
                 Err(error) => return fail(error),
             };
 
-            let projection =
-                match modules::installed_module_surface_projection(module) {
-                    Ok(projection) => projection,
+            let content =
+                match modules::installed_module_all_surface_content(
+                    module
+                ) {
+                    Ok(content) => content,
                     Err(error) => return fail(error),
                 };
 
-            let Some(item) = projection.get(item_id) else {
+            if !content.iter().any(|item| {
+                item.surface() == surface
+            }) {
                 return fail(format!(
-                    "module '{}' does not declare surface projection item '{}'",
+                    "module {} does not declare surface {}",
                     module,
-                    item_id
-                ));
-            };
-
-            if item.owner_module() != module {
-                return fail(format!(
-                    "surface projection item '{}' is not owned by module '{}'",
-                    item_id,
-                    module
-                ));
-            }
-
-            if item.surface() != surface {
-                return fail(format!(
-                    "surface projection item '{}' belongs to surface '{}', not '{}'",
-                    item_id,
-                    item.surface(),
                     surface
                 ));
             }
 
-            match config::set_surface_item_visibility(
+            match config::set_surface_module_visibility(
                 surface,
                 module,
-                item_id,
                 visible,
             ) {
                 Ok(config) => {
@@ -230,7 +221,6 @@ fn config_command(args: &[String]) -> i32 {
                 Err(error) => fail(error),
             }
         }
-
         Some("module-update-notified") => {
             let Some(name) = args.get(1) else {
                 return fail(
@@ -255,7 +245,7 @@ fn config_command(args: &[String]) -> i32 {
             }
         }
         _ => fail(
-            "usage: neebles config show | neebles config set <key> <value> | neebles config surface-item-visibility <surface> <module> <item-id> <true|false> | neebles config module-update-notified <module> <version>"
+            "usage: neebles config show | neebles config set <key> <value> | neebles config surface-module-visibility <surface> <module> <true|false> | neebles config module-update-notified <module> <version>"
                 .to_string()
         ),
     }
@@ -653,30 +643,63 @@ fn modules_command(args: &[String]) -> i32 {
                 );
             };
 
-            let operation =
-                if lifecycle_events {
-                    let observer_factory =
-                        lifecycle_process_observer_factory();
+            let request = ExecutionRequest {
+                target: "boss".to_string(),
+                action:
+                    Some("module-governor-action".to_string()),
+                args: vec![
+                    name.to_string(),
+                    action.to_string(),
+                    object_id.unwrap_or("").to_string(),
+                    transition_id.unwrap_or("").to_string(),
+                    lifecycle_events.to_string(),
+                ],
+                context: ExecutionContext {
+                    caller:
+                        "cli.modules.action".to_string(),
+                },
+            };
 
-                    modules::execute_governor_target_observed(
-                        name,
-                        action,
-                        object_id,
-                        transition_id,
-                        &observer_factory,
-                    )
-                } else {
-                    modules::execute_governor_target(
-                        name,
-                        action,
-                        object_id,
-                        transition_id,
-                    )
-                };
+            let response = match ipc::request(&request) {
+                Ok(response) => response,
 
-            result(
-                operation
-            )
+                Err(error) => {
+                    return fail(error);
+                }
+            };
+
+            if response.ok && lifecycle_events {
+                if let Some(events) = response
+                    .result
+                    .as_ref()
+                    .and_then(|value| {
+                        value
+                            .get("lifecycle_events")
+                    })
+                    .and_then(Value::as_array)
+                {
+                    for event in events {
+                        if let Ok(json) =
+                            serde_json::to_string(event)
+                        {
+                            println!(
+                                "{LIFECYCLE_EVENT_PREFIX}{json}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            if !response.ok {
+                if let Some(error) = response.error.as_ref() {
+                    eprintln!(
+                        "N.E.E.B.L.E.S.: {}",
+                        error.message
+                    );
+                }
+            }
+
+            response.code
         }
 
         Some("preflight") => {
@@ -1058,21 +1081,22 @@ fn notify_command(args: &[String]) -> i32 {
     } else {
         String::new()
     };
-    let severity = match Severity::parse(severity) {
-        Ok(severity) => severity,
-        Err(error) => return fail(error),
+    if let Err(error) = crate::notifications::Severity::parse(severity) {
+        return fail(error);
+    }
+    if std::env::var("NEEBLES_MODULE").ok().is_some_and(|s| !s.trim().is_empty()) {
+        return fail("module runtimes must use governed modules.sock notification messages".to_string());
+    }
+    let request = ExecutionRequest {
+        target: "notifications".to_string(),
+        action: Some("emit".to_string()),
+        args: vec![severity.clone(), title, message],
+        context: ExecutionContext { caller: "cli.notify".to_string() },
     };
-
-    let result = match std::env::var("NEEBLES_MODULE") {
-        Ok(module) if !module.trim().is_empty() => {
-            notifications::emit_for_module(module.trim(), severity, &title, &message)
-        }
-
-        _ => notifications::emit(severity, &title, &message),
-    };
-
-    match result {
-        Ok(()) => 0,
+    match ipc::request(&request) {
+        Ok(response) if response.ok => 0,
+        Ok(response) => fail(response.error.map(|error| error.message)
+            .unwrap_or_else(|| "persistent Boss rejected notification".to_string())),
         Err(error) => fail(error),
     }
 }
@@ -1225,7 +1249,7 @@ fn print_help() {
     println!("Boss administration:");
     println!("  neebles config show");
     println!("  neebles config set <key> <value>");
-    println!("  neebles config surface-item-visibility <surface> <module> <item-id> <true|false>");
+    println!("  neebles config surface-module-visibility <surface> <module> <true|false>");
     println!("  neebles config module-update-notified <module> <version>");
     println!("  neebles domestic execute <subject> <step>");
     println!("  neebles modules available|installed");

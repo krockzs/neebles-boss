@@ -96,6 +96,7 @@ mod tests {
     fn operation(artillery: &str, objective: &str) -> PreparedOperation {
         PreparedOperation {
             module_id: None,
+            execution_id: None,
             artillery: artillery.to_string(),
             objective: objective.to_string(),
             munition: BTreeMap::new(),
@@ -213,6 +214,7 @@ mod tests {
 
         let prepared = PreparedOperation {
             module_id: None,
+            execution_id: None,
             artillery: "arbitrary.artillery".to_string(),
             objective: "arbitrary.objective".to_string(),
             munition: BTreeMap::from([("source".to_string(), "munition-value".to_string())]),

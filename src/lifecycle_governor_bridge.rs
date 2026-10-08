@@ -88,10 +88,15 @@ fn validate_identity(label: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn execution_battlefield(module_id: &str, contract: &LifecycleContract) -> Battlefield {
+fn execution_battlefield(
+    module_id: &str,
+    execution_id: &str,
+    contract: &LifecycleContract,
+) -> Battlefield {
     let mut battlefield = Battlefield::new();
 
     battlefield.insert("module", "id", module_id);
+    battlefield.insert("execution", "id", execution_id);
 
     for (key, value) in &contract.hardcoded {
         battlefield.insert("hardcoded", key.clone(), value.clone());
@@ -152,7 +157,7 @@ pub async fn execute_transition_with_observer(
 
     lifecycle::validate(contract)?;
 
-    let mut battlefield = execution_battlefield(module_id, contract);
+    let mut battlefield = execution_battlefield(module_id, execution_id, contract);
 
     let mut state = LifecycleRuntimeState::new(execution_id, transition_id)?;
 
@@ -236,7 +241,7 @@ pub async fn execute_transition_from_available_with_observer(
 
     lifecycle::validate(contract)?;
 
-    let mut battlefield = execution_battlefield(module_id, contract);
+    let mut battlefield = execution_battlefield(module_id, execution_id, contract);
 
     let mut state = LifecycleRuntimeState::new(execution_id, transition_id)?;
 
@@ -302,7 +307,7 @@ pub async fn execute_object_transition_from_available_with_observer(
 
     lifecycle::validate(contract)?;
 
-    let mut battlefield = execution_battlefield(module_id, contract);
+    let mut battlefield = execution_battlefield(module_id, execution_id, contract);
 
     let mut state = LifecycleRuntimeState::new(execution_id, transition_id)?;
 
@@ -373,7 +378,7 @@ pub async fn execute_object_transition_with_observer(
 
     lifecycle::validate(contract)?;
 
-    let mut battlefield = execution_battlefield(module_id, contract);
+    let mut battlefield = execution_battlefield(module_id, execution_id, contract);
 
     let mut state = LifecycleRuntimeState::new(execution_id, transition_id)?;
 

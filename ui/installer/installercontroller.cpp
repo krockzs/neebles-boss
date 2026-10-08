@@ -658,6 +658,17 @@ void InstallerController::integrateDesktop()
         }
     );
 
+    executeSystemInterface(
+        {
+            QStringLiteral("--user"),
+            QStringLiteral("enable"),
+            QStringLiteral("--now"),
+            QStringLiteral(
+                "neebles-notification-presenter.service"
+            )
+        }
+    );
+
     installLauncherIntoPanel();
 
 }

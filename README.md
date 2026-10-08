@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.29**
-**Latest published Boss release recorded by the repository:** **1.0.28**
-**Current integration status (2026-10-07):** **Boss 1.0.29 CAST29 source closure is locally GREEN.** Fresh Live with published Boss 1.0.28 passed Preinstall, the complete 59 Essential + 32 module-delta material world, native hardlink-aware RuntimeLease materialization and MaterialBinding activation, then exposed post-install runtime-ownership and Surface-consumer defects. CAST29 moves governed Tray provider start/stop/reconcile and runtime deactivation behind the persistent Boss runtime authority, exports the desktop runtime identity and Tray socket to that persistent runtime, fixes Boss UI QVariantList Surface consumption, fixes Launcher dynamic height and Surface action command construction, extends the post-install enable execution window, and confines the new persistent runtime IPC actions to validated installed module identity. Fresh Live and installed-system acceptance remain pending re-run with published Boss 1.0.29.
+**Current source line:** **1.0.30 (release preparation)**
+**Published release status:** **must be verified from the GitHub Release and its assets; 1.0.30 is not yet published**
+**Current integration status (2026-10-08):** CAST30 B3A/B3B/B4/B5 are CLOSED/GREEN at source level. Boss 1.0.30 is being prepared, not yet certified as a release. Persistent Governor, single-flight Open, per-module visibility and desktop Notification Presenter integration are source-complete; controlled Qt/Rust release build, Critical Update user-service activation, publication, Fresh Live and installed-system acceptance remain pending.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -1142,52 +1142,36 @@ cargo check --locked                              GREEN
 ```
 
 These remain source/local gates. Fresh Live and installed-system acceptance remain separate.
-# Release policy
+## Boss 1.0.30 — CAST30 source closure
 
-The repository carries **1.0.28** as the current published Boss release. The latest published Boss release recorded by the repository is **1.0.28**.
+The CAST30 source gates close:
 
-This README deliberately does **not** promote a preparation version into a release claim.
+- B3A: persistent Boss module-Governor-action IPC and governed lifecycle results.
+- B3B: canonical closed/opening/open state, atomic single-flight Open, generation/execution/PID ownership.
+- B4: module-wide Launcher/Tray visibility and conservative 1.0.29 settings migration.
+- B5: separate desktop-UID Notification Presenter, user-session authority, SO_PEERCRED,
+  Present/Presented/Activate ownership handshake and authenticated return routing.
 
-Current sequencing for the next Boss release is:
+The recorded Gate 75 passed 665 Boss main tests, 120 library tests,
+15 ownership tests, 3 Presenter tests and 13 domesticacion tests
+(1 intentionally ignored). This does not imply installed-system acceptance.
 
-```text
-Point 1
-    -> CLOSED / GREEN
+## Release policy
 
-Point 2
-    -> CLOSED / GREEN at source level
+Boss 1.0.30 is in release preparation. Historical CAST29 references above
+and historical release workflow/notes files remain preserved.
 
-Config / Features
-    -> CLOSED / GREEN at source level
+Release prerequisites:
 
-README / repository truth
-    -> CLOSED / GREEN locally
+1. All current product-facing Cargo, CMake, C++, QML and Plasma metadata versions agree on 1.0.30.
+2. The two CAST30 Presenter source/service files are tracked and packaged.
+3. `scripts/check-release-version.py` and the controlled release pipeline pass.
+4. Installer, reinstall, rollback, and non-graphical Critical Update of the user-session Presenter are certified.
+5. The pinned CUSTOM classic/Esbirro Qt 6.8.2 world and Rust 1.98.1 produce and certify all 11 release assets.
+6. Only then create/push release/trigger-v1.0.30 and verify GitHub Release assets.
+7. Perform Fresh Live and installed-system acceptance as separate gates.
 
-next release preparation + publication
-    -> pending
-
-Fresh Live acceptance
-    -> pending
-
-installed-system acceptance after Calamares
-    -> pending
-```
-
-Before the next release is cut, the repository must be audited for coherent versioning and release surfaces, including:
-
-- `Cargo.toml` / `Cargo.lock`;
-- all Boss version constants and generated metadata;
-- current release workflow and trigger;
-- release notes;
-- release asset/tag names;
-- pinned CUSTOM/CUSTOM V2 revisions actually required by the release;
-- controlled Qt 6.8.2 build world where applicable;
-- Rust release toolchain;
-- Boss runtime materialization;
-- installer/auth agent/Launcher/Tray Host/runtime resolver/bootstrap;
-- final payload verification.
-
-A source preparation number is not, by itself, release authority.
+Do not claim a published version on the basis of Cargo.toml or a prepared workflow.
 
 ---
 

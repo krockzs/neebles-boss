@@ -41,14 +41,312 @@ pub struct ModuleRuntimeRecord {
     pub writer: Sender<ModuleMessage>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleRuntimeState {
+    Closed,
+    Opening,
+    Open,
+}
+
+impl ModuleRuntimeState {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Closed => "closed",
+            Self::Opening => "opening",
+            Self::Open => "open",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RuntimeOpeningRecord {
+    generation: u64,
+    execution_id: String,
+    owners: BTreeSet<u32>,
+    sealed: bool,
+}
+
+#[derive(Debug, Default)]
+struct RuntimeRegistryInner {
+    runtimes: HashMap<String, ModuleRuntimeRecord>,
+    openings: HashMap<String, RuntimeOpeningRecord>,
+    next_opening_generation: u64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeRegistry {
-    inner: Arc<RwLock<HashMap<String, ModuleRuntimeRecord>>>,
+    inner: Arc<RwLock<RuntimeRegistryInner>>,
 }
 
 impl RuntimeRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn state(
+        &self,
+        module: &str,
+    ) -> Result<ModuleRuntimeState, String> {
+        let module = module.trim();
+
+        if module.is_empty() {
+            return Err(
+                "runtime state module cannot be empty"
+                    .to_string()
+            );
+        }
+
+        let registry = self
+            .inner
+            .read()
+            .map_err(|_| {
+                "runtime registry read lock poisoned"
+                    .to_string()
+            })?;
+
+        if registry.runtimes.contains_key(module) {
+            return Ok(ModuleRuntimeState::Open);
+        }
+
+        if registry.openings.contains_key(module) {
+            return Ok(ModuleRuntimeState::Opening);
+        }
+
+        Ok(ModuleRuntimeState::Closed)
+    }
+
+    pub fn begin_opening(
+        &self,
+        module: &str,
+    ) -> Result<(u64, String), String> {
+        let module = module.trim();
+
+        if module.is_empty() {
+            return Err(
+                "runtime opening module cannot be empty"
+                    .to_string()
+            );
+        }
+
+        let mut registry = self
+            .inner
+            .write()
+            .map_err(|_| {
+                "runtime registry write lock poisoned"
+                    .to_string()
+            })?;
+
+        if registry.runtimes.contains_key(module) {
+            return Err(format!(
+                "module {} already has an open runtime",
+                module
+            ));
+        }
+
+        if registry.openings.contains_key(module) {
+            return Err(format!(
+                "module {} is already opening",
+                module
+            ));
+        }
+
+        let generation = registry
+            .next_opening_generation
+            .checked_add(1)
+            .ok_or_else(|| {
+                "runtime opening generation overflow"
+                    .to_string()
+            })?;
+
+        registry.next_opening_generation =
+            generation;
+
+        let execution_id =
+            format!("module.open.{generation}");
+
+        registry.openings.insert(
+            module.to_string(),
+            RuntimeOpeningRecord {
+                generation,
+                execution_id: execution_id.clone(),
+                owners: BTreeSet::new(),
+                sealed: false,
+            },
+        );
+
+        Ok((generation, execution_id))
+    }
+
+    pub fn claim_opening_owner(
+        &self,
+        module: &str,
+        execution_id: &str,
+        pid: u32,
+    ) -> Result<Option<u64>, String> {
+        let module = module.trim();
+
+        if module.is_empty() {
+            return Err(
+                "runtime opening owner module cannot be empty"
+                    .to_string()
+            );
+        }
+
+        if execution_id.trim().is_empty() {
+            return Err(
+                "runtime opening owner execution id cannot be empty"
+                    .to_string()
+            );
+        }
+        if pid == 0 {
+            return Err(
+                "runtime opening owner pid cannot be zero"
+                    .to_string()
+            );
+        }
+
+        let mut registry = self
+            .inner
+            .write()
+            .map_err(|_| {
+                "runtime registry write lock poisoned"
+                    .to_string()
+            })?;
+
+        if registry.runtimes.contains_key(module) {
+            return Ok(None);
+        }
+
+        let Some(opening) =
+            registry.openings.get_mut(module)
+        else {
+            return Ok(None);
+        };
+
+        if opening.execution_id != execution_id {
+            return Err(format!(
+                "module {} opening generation {} belongs to Governor execution {} and cannot be claimed by {}",
+                module,
+                opening.generation,
+                opening.execution_id,
+                execution_id
+            ));
+        }
+        if opening.sealed {
+            return Ok(None);
+        }
+
+        opening.owners.insert(pid);
+
+        Ok(Some(opening.generation))
+    }
+
+    pub fn seal_opening(
+        &self,
+        module: &str,
+        generation: u64,
+    ) -> Result<bool, String> {
+        let module = module.trim();
+
+        if module.is_empty() {
+            return Err(
+                "runtime opening module cannot be empty"
+                    .to_string()
+            );
+        }
+
+        let mut registry = self
+            .inner
+            .write()
+            .map_err(|_| {
+                "runtime registry write lock poisoned"
+                    .to_string()
+            })?;
+
+        if registry.runtimes.contains_key(module) {
+            return Ok(true);
+        }
+
+        let keep_opening = {
+            let Some(opening) =
+                registry.openings.get_mut(module)
+            else {
+                return Ok(false);
+            };
+
+            if opening.generation != generation {
+                return Err(format!(
+                    "module {} opening generation mismatch: expected={} actual={}",
+                    module,
+                    generation,
+                    opening.generation
+                ));
+            }
+
+            opening.sealed = true;
+
+            !opening.owners.is_empty()
+        };
+
+        if !keep_opening {
+            registry.openings.remove(module);
+        }
+
+        Ok(keep_opening)
+    }
+
+    pub fn release_opening_owner(
+        &self,
+        module: &str,
+        generation: u64,
+        pid: u32,
+    ) -> Result<bool, String> {
+        let module = module.trim();
+
+        if module.is_empty() {
+            return Err(
+                "runtime opening owner module cannot be empty"
+                    .to_string()
+            );
+        }
+
+        let mut registry = self
+            .inner
+            .write()
+            .map_err(|_| {
+                "runtime registry write lock poisoned"
+                    .to_string()
+            })?;
+
+        if registry.runtimes.contains_key(module) {
+            return Ok(false);
+        }
+
+        let should_close = {
+            let Some(opening) =
+                registry.openings.get_mut(module)
+            else {
+                return Ok(false);
+            };
+
+            if opening.generation != generation {
+                return Ok(false);
+            }
+
+            if !opening.owners.remove(&pid) {
+                return Ok(false);
+            }
+
+            opening.sealed
+                && opening.owners.is_empty()
+        };
+
+        if should_close {
+            registry.openings.remove(module);
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     pub fn register(&self, record: ModuleRuntimeRecord) -> Result<(), String> {
@@ -72,14 +370,21 @@ impl RuntimeRegistry {
             .write()
             .map_err(|_| "runtime registry write lock poisoned".to_string())?;
 
-        if let Some(existing) = registry.get(&record.module) {
+        if let Some(existing) = registry.runtimes.get(&record.module) {
             return Err(format!(
                 "module '{}' already has registered session '{}'; new session '{}' was rejected",
                 record.module, existing.session_id, record.session_id
             ));
         }
 
-        registry.insert(record.module.clone(), record);
+        let module = record.module.clone();
+
+        registry.runtimes.insert(
+            module.clone(),
+            record,
+        );
+
+        registry.openings.remove(&module);
 
         Ok(())
     }
@@ -90,7 +395,7 @@ impl RuntimeRegistry {
             .write()
             .map_err(|_| "runtime registry write lock poisoned".to_string())?;
 
-        let Some(existing) = registry.get(module) else {
+        let Some(existing) = registry.runtimes.get(module) else {
             return Ok(false);
         };
 
@@ -98,7 +403,8 @@ impl RuntimeRegistry {
             return Ok(false);
         }
 
-        registry.remove(module);
+        registry.runtimes.remove(module);
+        registry.openings.remove(module);
 
         Ok(true)
     }
@@ -115,6 +421,7 @@ impl RuntimeRegistry {
             .map_err(|_| "runtime registry write lock poisoned".to_string())?;
 
         let record = registry
+            .runtimes
             .get_mut(module)
             .ok_or_else(|| format!("module '{}' has no registered runtime", module))?;
 
@@ -232,7 +539,7 @@ impl RuntimeRegistry {
             .read()
             .map_err(|_| "runtime registry read lock poisoned".to_string())?;
 
-        Ok(registry.get(module).cloned())
+        Ok(registry.runtimes.get(module).cloned())
     }
 
     pub fn list(&self) -> Result<Vec<ModuleRuntimeRecord>, String> {
@@ -241,7 +548,11 @@ impl RuntimeRegistry {
             .read()
             .map_err(|_| "runtime registry read lock poisoned".to_string())?;
 
-        let mut records = registry.values().cloned().collect::<Vec<_>>();
+        let mut records = registry
+            .runtimes
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
 
         records.sort_by(|left, right| left.module.cmp(&right.module));
 
@@ -295,6 +606,212 @@ mod certification_tests {
     use super::*;
     use std::sync::mpsc;
 
+    #[test]
+    fn canonical_opening_is_single_flight() {
+        let registry = RuntimeRegistry::new();
+
+        assert_eq!(
+            registry.state("alpha").unwrap(),
+            ModuleRuntimeState::Closed
+        );
+
+        let (generation, _execution_id) =
+            registry.begin_opening("alpha").unwrap();
+
+        assert_eq!(
+            registry.state("alpha").unwrap(),
+            ModuleRuntimeState::Opening
+        );
+
+        let error = registry
+            .begin_opening("alpha")
+            .expect_err(
+                "second opening must fail"
+            );
+
+        assert!(error.contains("already opening"));
+
+        assert!(
+            !registry
+                .seal_opening(
+                    "alpha",
+                    generation,
+                )
+                .unwrap()
+        );
+
+        assert_eq!(
+            registry.state("alpha").unwrap(),
+            ModuleRuntimeState::Closed
+        );
+    }
+
+    #[test]
+    fn runtime_registration_consumes_opening_state() {
+        let registry = RuntimeRegistry::new();
+
+        let (generation, _execution_id) =
+            registry.begin_opening("alpha").unwrap();
+
+        let (runtime, _receiver) =
+            record("alpha", "session-a", &[]);
+
+        registry.register(runtime).unwrap();
+
+        assert_eq!(
+            registry.state("alpha").unwrap(),
+            ModuleRuntimeState::Open
+        );
+
+        assert!(
+            registry
+                .seal_opening(
+                    "alpha",
+                    generation,
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn opening_owners_are_generation_bound_and_multi_process_safe() {
+        let registry = RuntimeRegistry::new();
+
+        let (first, first_execution_id) =
+            registry.begin_opening("alpha").unwrap();
+
+        assert_eq!(
+            registry
+                .claim_opening_owner("alpha", &first_execution_id, 1001)
+                .unwrap(),
+            Some(first)
+        );
+
+        assert_eq!(
+            registry
+                .claim_opening_owner("alpha", &first_execution_id, 1002)
+                .unwrap(),
+            Some(first)
+        );
+
+        assert!(
+            registry
+                .seal_opening("alpha", first)
+                .unwrap()
+        );
+
+        assert!(
+            !registry
+                .release_opening_owner(
+                    "alpha",
+                    first,
+                    1001,
+                )
+                .unwrap()
+        );
+
+        assert_eq!(
+            registry.state("alpha").unwrap(),
+            ModuleRuntimeState::Opening
+        );
+
+        assert!(
+            registry
+                .release_opening_owner(
+                    "alpha",
+                    first,
+                    1002,
+                )
+                .unwrap()
+        );
+
+        assert_eq!(
+            registry.state("alpha").unwrap(),
+            ModuleRuntimeState::Closed
+        );
+
+        let (second, _second_execution_id) =
+            registry.begin_opening("alpha").unwrap();
+
+        assert_ne!(first, second);
+
+        assert!(
+            !registry
+                .release_opening_owner(
+                    "alpha",
+                    first,
+                    1002,
+                )
+                .unwrap()
+        );
+
+        assert_eq!(
+            registry.state("alpha").unwrap(),
+            ModuleRuntimeState::Opening
+        );
+
+        assert!(
+            !registry
+                .seal_opening("alpha", second)
+                .unwrap()
+        );
+    }
+    #[test]
+    fn foreign_governor_execution_cannot_claim_opening_owner() {
+        let registry = RuntimeRegistry::new();
+
+        let (generation, execution_id) =
+            registry.begin_opening("alpha").unwrap();
+
+        let error = registry
+            .claim_opening_owner(
+                "alpha",
+                "module.notify-demo",
+                1001,
+            )
+            .expect_err(
+                "foreign Governor execution must fail"
+            );
+
+        assert!(error.contains("Governor execution"));
+
+        assert_eq!(
+            registry.state("alpha").unwrap(),
+            ModuleRuntimeState::Opening
+        );
+
+        assert_eq!(
+            registry
+                .claim_opening_owner(
+                    "alpha",
+                    &execution_id,
+                    1001,
+                )
+                .unwrap(),
+            Some(generation)
+        );
+
+        assert!(
+            registry
+                .seal_opening("alpha", generation)
+                .unwrap()
+        );
+
+        assert!(
+            registry
+                .release_opening_owner(
+                    "alpha",
+                    generation,
+                    1001,
+                )
+                .unwrap()
+        );
+
+        assert_eq!(
+            registry.state("alpha").unwrap(),
+            ModuleRuntimeState::Closed
+        );
+    }
     #[test]
     fn targeted_delivery_reaches_only_exact_runtime_session() {
         let registry = RuntimeRegistry::new();

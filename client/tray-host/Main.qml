@@ -30,9 +30,8 @@ Window {
     function trayContent(module) {
         if (
             !module
-            || !Array.isArray(
-                module.surface_content
-            )
+            || !module.surface_content
+            || module.surface_content.length === undefined
         )
             return []
 
@@ -50,9 +49,8 @@ Window {
     function trayModules() {
         if (
             typeof bossCommands === "undefined"
-            || !Array.isArray(
-                bossCommands.installedModules
-            )
+            || !bossCommands.installedModules
+            || bossCommands.installedModules.length === undefined
         )
             return []
 
@@ -60,7 +58,9 @@ Window {
             function(module) {
                 return (
                     module
-                    && module.enabled
+                    && module.surface_visibility
+                    && module.surface_visibility.tray
+                        === true
                     && root.trayContent(module).length > 0
                 )
             }
@@ -397,7 +397,10 @@ Window {
                     spacing: 5
 
                     Label {
-                        text: "Modules"
+                        text:
+                            root.t(
+                                "modules.title"
+                            )
 
                         color: "#C4B5FD"
 
@@ -572,6 +575,51 @@ Window {
                             Text.ElideRight
                     }
 
+                    RowLayout {
+                        property var selectedModuleData:
+                            root.selectedModuleObject()
+
+                        Layout.fillWidth: true
+
+                        visible:
+                            selectedModuleData !== null
+
+                        Label {
+                            Layout.fillWidth: true
+
+                            text:
+                                selectedModuleData
+                                && selectedModuleData.enabled
+                                ? root.t("modules.active")
+                                : root.t("modules.inactive")
+
+                            color:
+                                selectedModuleData
+                                && selectedModuleData.enabled
+                                ? "#A78BFA"
+                                : "#71717A"
+                        }
+
+                        NeeblesSwitch {
+                            checked:
+                                !!selectedModuleData
+                                && !!selectedModuleData.enabled
+
+                            checkable: false
+
+                            enabled:
+                                !!selectedModuleData
+                                && !bossCommands.busy
+
+                            onClicked: {
+                                bossCommands.setModuleEnabled(
+                                    selectedModuleData.name,
+                                    !selectedModuleData.enabled
+                                )
+                            }
+                        }
+                    }
+
                     Repeater {
                         model:
                             root.selectedButtons()
@@ -594,7 +642,7 @@ Window {
 
                             enabled:
                                 !bossCommands.busy
-                                && surfaceItem.requirements_met
+                                && surfaceItem.action_available
                                 === true
 
                             onClicked: {

@@ -46,6 +46,11 @@ public:
         const QString &action
     );
 
+    Q_INVOKABLE bool setModuleEnabled(
+        const QString &moduleName,
+        bool enabled
+    );
+
 signals:
     void installedModulesChanged();
     void busyChanged();

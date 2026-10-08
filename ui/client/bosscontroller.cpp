@@ -1211,6 +1211,46 @@ void BossController::pollModuleRuntime()
             moduleChanged = true;
         }
 
+        const QString runtimeState =
+            presentation.value(
+                QStringLiteral("runtime_state"),
+                QStringLiteral("closed")
+            ).toString();
+
+        if (
+            module.value(
+                QStringLiteral("runtime_state")
+            ).toString()
+            != runtimeState
+        ) {
+            module.insert(
+                QStringLiteral("runtime_state"),
+                runtimeState
+            );
+
+            moduleChanged = true;
+        }
+
+        const bool openAvailable =
+            presentation.value(
+                QStringLiteral("open_available"),
+                false
+            ).toBool();
+
+        if (
+            module.value(
+                QStringLiteral("open_available"),
+                false
+            ).toBool()
+            != openAvailable
+        ) {
+            module.insert(
+                QStringLiteral("open_available"),
+                openAvailable
+            );
+
+            moduleChanged = true;
+        }
         const bool enabled =
             presentation.value(
                 QStringLiteral("enabled"),
@@ -1973,6 +2013,19 @@ void BossController::startModuleProcess(
             QStringLiteral("boss"),
             QStringLiteral("surface-action"),
             name
+        };
+    } else if (
+        operation
+            == QStringLiteral("open")
+    ) {
+        commandArguments = {
+            QStringLiteral("boss"),
+            QStringLiteral("module-governor-action"),
+            name,
+            QStringLiteral("open"),
+            QString(),
+            QString(),
+            QStringLiteral("false")
         };
     } else {
         commandArguments = {
@@ -2797,6 +2850,27 @@ void BossController::requestSurfaceAction(
     );
 }
 
+void BossController::openModule(
+    const QString &name
+)
+{
+    const QString normalizedName =
+        name.trimmed();
+
+    if (
+        normalizedName.isEmpty()
+        || m_busy
+    ) {
+        return;
+    }
+
+    startModuleProcess(
+        QStringLiteral("open"),
+        normalizedName,
+        false
+    );
+}
+
 QVariantMap BossController::dependencyPreflight(
     const QString &action,
     const QString &name
@@ -2901,10 +2975,9 @@ void BossController::setModuleEnabled(const QString &name, bool enabled)
     );
 }
 
-void BossController::setSurfaceItemVisibility(
+void BossController::setSurfaceModuleVisibility(
     const QString &surface,
     const QString &module,
-    const QString &itemId,
     bool visible
 )
 {
@@ -2913,10 +2986,9 @@ void BossController::setSurfaceItemVisibility(
     run(
         {
             QStringLiteral("config"),
-            QStringLiteral("surface-item-visibility"),
+            QStringLiteral("surface-module-visibility"),
             surface,
             module,
-            itemId,
             visible
                 ? QStringLiteral("true")
                 : QStringLiteral("false")

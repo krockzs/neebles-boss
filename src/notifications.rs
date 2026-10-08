@@ -2,17 +2,18 @@ use crate::config;
 use crate::modules;
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{mpsc, OnceLock, RwLock};
-use std::thread;
+use std::sync::{Mutex, OnceLock, RwLock};
 
-use zbus::blocking::{connection, Proxy};
+use serde::{Deserialize, Serialize};
+use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{Array, OwnedValue, Str, Value};
 
 const NOTIFICATIONS_SERVICE: &str = "org.freedesktop.Notifications";
 const NOTIFICATIONS_PATH: &str = "/org/freedesktop/Notifications";
 const NOTIFICATIONS_INTERFACE: &str = "org.freedesktop.Notifications";
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Severity {
     Info,
     Success,
@@ -21,7 +22,7 @@ pub enum Severity {
     Fatal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotificationImageData {
     pub width: i32,
     pub height: i32,
@@ -32,7 +33,7 @@ pub struct NotificationImageData {
     pub data: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotificationOptions {
     pub replace_id: Option<u32>,
     pub expire_timeout_ms: Option<i32>,
@@ -52,13 +53,13 @@ pub struct NotificationOptions {
 
 pub const DEFAULT_NOTIFICATION_EXPIRE_MS: i32 = 3000;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotificationAction {
     pub key: String,
     pub label: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotificationReply {
     pub label: String,
     pub placeholder_text: Option<String>,
@@ -98,7 +99,8 @@ pub(crate) enum NotificationOwner {
     Module { module: String, session_id: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum NotificationReturnEvent {
     Closed {
         notification_id: u32,
@@ -313,6 +315,65 @@ pub(crate) fn release_module_notification_session(
     notification_ownership().release_module_session(module, session_id)
 }
 
+static NOTIFICATION_PRESENTATION_GATE: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn present_owned_for_module_with_activation<F, A>(
+    module: &str,
+    session_id: &str,
+    replace_id: Option<u32>,
+    present: F,
+    activate: A,
+) -> Result<NotificationOutcome, String>
+where
+    F: FnOnce() -> Result<NotificationOutcome, String>,
+    A: FnOnce(u32) -> Result<(), String>,
+{
+    let gate = NOTIFICATION_PRESENTATION_GATE
+        .get_or_init(|| Mutex::new(()));
+    let _transaction = gate.lock()
+        .map_err(|_| "notification presentation lock poisoned".to_string())?;
+
+    if let Some(id) = replace_id {
+        validate_module_notification_replace_owner(id, module, session_id)?;
+    }
+
+    let outcome = present()?;
+    let NotificationOutcome::Presented(id) = outcome else {
+        return Ok(outcome);
+    };
+
+    let previous_owner = match notification_owner(id) {
+        Ok(owner) => owner,
+        Err(error) => {
+            crate::notification_presenter::discard_unowned(id);
+            return Err(error);
+        }
+    };
+
+    if let Err(error) = register_module_notification_owner(
+        id, module, session_id
+    ) {
+        crate::notification_presenter::discard_unowned(id);
+        return Err(error);
+    }
+
+    if let Err(error) = activate(id) {
+        if previous_owner.is_none() {
+            let _ = release_notification_owner(id);
+        }
+        crate::notification_presenter::discard_unowned(id);
+        return Err(error);
+    }
+
+    if let Some(old_id) = replace_id {
+        if old_id != id {
+            let _ = release_notification_owner(old_id)?;
+        }
+    }
+
+    Ok(outcome)
+}
+
 fn present_owned_for_module<F>(
     module: &str,
     session_id: &str,
@@ -322,25 +383,13 @@ fn present_owned_for_module<F>(
 where
     F: FnOnce() -> Result<NotificationOutcome, String>,
 {
-    if let Some(replace_id) = replace_id {
-        validate_module_notification_replace_owner(replace_id, module, session_id)?;
-    }
-
-    let outcome = present()?;
-
-    let NotificationOutcome::Presented(notification_id) = outcome else {
-        return Ok(outcome);
-    };
-
-    register_module_notification_owner(notification_id, module, session_id)?;
-
-    if let Some(replace_id) = replace_id {
-        if replace_id != notification_id {
-            let _ = release_notification_owner(replace_id)?;
-        }
-    }
-
-    Ok(outcome)
+    present_owned_for_module_with_activation(
+        module,
+        session_id,
+        replace_id,
+        present,
+        crate::notification_presenter::activate,
+    )
 }
 
 impl Severity {
@@ -360,29 +409,7 @@ impl Severity {
     }
 }
 
-fn desktop_notification_connection_for(
-    desktop_session: &neebles_backend::domestic_desktop_session_interface::DesktopSessionInterface,
-) -> Result<zbus::blocking::Connection, String> {
-    let address = desktop_session.session_bus_address();
-
-    connection::Builder::address(address)
-        .map_err(|error| {
-            format!(
-                "invalid authorized desktop D-Bus address: {error}"
-            )
-        })?
-        .user_id(desktop_session.desktop_uid())
-        .build()
-        .map_err(|error| {
-            format!(
-                "could not connect Notifications presenter to authorized desktop session D-Bus: {error}"
-            )
-        })
-}
-
-static NOTIFICATION_RETURN_LISTENER: OnceLock<Result<(), String>> = OnceLock::new();
-
-fn notification_return_event_from_message(
+pub(crate) fn notification_return_event_from_message(
     message: &zbus::message::Message,
 ) -> Result<Option<NotificationReturnEvent>, String> {
     let header = message.header();
@@ -455,116 +482,6 @@ fn notification_return_event_from_message(
         };
 
     Ok(Some(event))
-}
-
-fn run_notification_return_listener(
-    address: String,
-    desktop_uid: libc::uid_t,
-    ready: mpsc::Sender<Result<(), String>>,
-) {
-    let builder = match connection::Builder::address(address.as_str()) {
-        Ok(builder) => builder,
-
-        Err(error) => {
-            let message = format!("invalid authorized notification return D-Bus address: {error}");
-
-            let _ = ready.send(Err(message));
-            return;
-        }
-    };
-
-    let connection = match builder.user_id(desktop_uid).build() {
-        Ok(connection) => connection,
-
-        Err(error) => {
-            let message = format!(
-                "could not connect notification return listener to authorized desktop session D-Bus: {error}"
-            );
-
-            let _ = ready.send(Err(message));
-            return;
-        }
-    };
-
-    let proxy = match Proxy::new(
-        &connection,
-        NOTIFICATIONS_SERVICE,
-        NOTIFICATIONS_PATH,
-        NOTIFICATIONS_INTERFACE,
-    ) {
-        Ok(proxy) => proxy,
-
-        Err(error) => {
-            let message =
-                format!("could not create Plasma Notifications return listener proxy: {error}");
-
-            let _ = ready.send(Err(message));
-            return;
-        }
-    };
-
-    let mut signals = match proxy.receive_all_signals() {
-        Ok(signals) => signals,
-
-        Err(error) => {
-            let message =
-                format!("could not subscribe to Plasma Notifications return signals: {error}");
-
-            let _ = ready.send(Err(message));
-            return;
-        }
-    };
-
-    if ready.send(Ok(())).is_err() {
-        return;
-    }
-
-    for message in &mut signals {
-        match notification_return_event_from_message(&message) {
-            Ok(Some(event)) => {
-                if let Err(error) =
-                    crate::module_ipc::server::route_notification_return_event(event)
-                {
-                    eprintln!("N.E.E.B.L.E.S. notification return routing failed: {error}");
-                }
-            }
-
-            Ok(None) => {}
-
-            Err(error) => {
-                eprintln!("N.E.E.B.L.E.S. notification return signal rejected: {error}");
-            }
-        }
-    }
-
-    eprintln!("N.E.E.B.L.E.S. notification return listener ended");
-}
-
-fn ensure_notification_return_listener(
-    desktop_session: &neebles_backend::domestic_desktop_session_interface::DesktopSessionInterface,
-) -> Result<(), String> {
-    NOTIFICATION_RETURN_LISTENER
-        .get_or_init(|| {
-            let address = desktop_session.session_bus_address().to_string();
-
-            let desktop_uid = desktop_session.desktop_uid();
-
-            let (ready_sender, ready_receiver) = mpsc::channel::<Result<(), String>>();
-
-            thread::Builder::new()
-                .name("neebles-notification-return-listener".to_string())
-                .spawn(move || {
-                    run_notification_return_listener(address, desktop_uid, ready_sender);
-                })
-                .map_err(|error| {
-                    format!("could not spawn notification return listener: {error}")
-                })?;
-
-            ready_receiver.recv().map_err(|error| {
-                format!("notification return listener startup channel failed: {error}")
-            })?
-        })
-        .clone()
 }
 
 fn validate_notification_image_data(image: &NotificationImageData) -> Result<(), String> {
@@ -756,21 +673,42 @@ fn emit_transport(
         return Ok(NotificationOutcome::Suppressed);
     }
 
-    let desktop_session =
-        neebles_backend::domestic_desktop_session_interface::
-            resolve_current_desktop_session_interface()?;
+    let notification_id = crate::notification_presenter::present(
+        crate::notification_presenter::Presentation {
+            severity,
+            application: application.to_string(),
+            icon: icon.to_string_lossy().into_owned(),
+            options: options.clone(),
+            title: title.to_string(),
+            message: message.to_string(),
+            actions: notification_actions.to_vec(),
+            reply: reply.cloned(),
+        },
+    )?;
+    Ok(NotificationOutcome::Presented(notification_id))
+}
 
-    ensure_notification_return_listener(&desktop_session)?;
+pub(crate) fn physical_notify_for_presenter(
+    presentation: &crate::notification_presenter::Presentation,
+) -> Result<u32, String> {
+    let severity = presentation.severity;
+    let application = presentation.application.as_str();
+    let icon = std::path::Path::new(&presentation.icon);
+    let options = &presentation.options;
+    let title = presentation.title.as_str();
+    let message = presentation.message.as_str();
+    let notification_actions = presentation.actions.as_slice();
+    let reply = presentation.reply.as_ref();
 
-    let connection = desktop_notification_connection_for(&desktop_session)?;
-
-    let proxy = Proxy::new(
-        &connection,
-        NOTIFICATIONS_SERVICE,
-        NOTIFICATIONS_PATH,
-        NOTIFICATIONS_INTERFACE,
-    )
-    .map_err(|error| format!("could not create Plasma Notifications proxy: {error}"))?;
+    // This function is reached ONLY in the user-owned presenter process.
+    if unsafe { libc::geteuid() } == 0 {
+        return Err("physical notification presentation cannot run as root".to_string());
+    }
+    let connection = Connection::session()
+        .map_err(|error| format!("could not connect to user Notifications D-Bus: {error}"))?;
+    let proxy = Proxy::new(&connection, NOTIFICATIONS_SERVICE, NOTIFICATIONS_PATH,
+        NOTIFICATIONS_INTERFACE)
+        .map_err(|error| format!("could not create user Notifications proxy: {error}"))?;
 
     let actions = notification_actions_for_freedesktop(notification_actions, reply);
 
@@ -910,11 +848,15 @@ fn emit_transport(
                 options.expire_timeout_ms.unwrap_or(-1),
             ),
         )
-        .map(NotificationOutcome::Presented)
         .map_err(|error| format!("Plasma Notify call failed: {error}"))
 }
 
 pub fn emit(severity: Severity, title: &str, message: &str) -> Result<(), String> {
+    let gate = NOTIFICATION_PRESENTATION_GATE
+        .get_or_init(|| Mutex::new(()));
+    let _transaction = gate.lock()
+        .map_err(|_| "notification presentation lock poisoned".to_string())?;
+
     let icon =
         crate::languages::client_root()?.join("assets/branding/neebles-boss-launcher-icon.png");
 
@@ -935,7 +877,26 @@ pub fn emit(severity: Severity, title: &str, message: &str) -> Result<(), String
     )?;
 
     if let NotificationOutcome::Presented(notification_id) = outcome {
-        register_boss_notification_owner(notification_id)?;
+        let previous_owner = match notification_owner(notification_id) {
+            Ok(owner) => owner,
+            Err(error) => {
+                crate::notification_presenter::discard_unowned(notification_id);
+                return Err(error);
+            }
+        };
+
+        if let Err(error) = register_boss_notification_owner(notification_id) {
+            crate::notification_presenter::discard_unowned(notification_id);
+            return Err(error);
+        }
+
+        if let Err(error) = crate::notification_presenter::activate(notification_id) {
+            if previous_owner.is_none() {
+                let _ = release_notification_owner(notification_id);
+            }
+            crate::notification_presenter::discard_unowned(notification_id);
+            return Err(error);
+        }
     }
 
     Ok(())
@@ -1134,6 +1095,11 @@ pub fn emit_for_module(
     title: &str,
     message: &str,
 ) -> Result<(), String> {
+    let gate = NOTIFICATION_PRESENTATION_GATE
+        .get_or_init(|| Mutex::new(()));
+    let _transaction = gate.lock()
+        .map_err(|_| "notification presentation lock poisoned".to_string())?;
+
     let manifest = modules::installed_module_manifest(module)?;
 
     if !config::module_enabled(module)? {
@@ -1162,7 +1128,7 @@ pub fn emit_for_module(
     let icon =
         crate::languages::client_root()?.join("assets/branding/neebles-boss-launcher-icon.png");
 
-    emit_transport(
+    let outcome = emit_transport(
         severity,
         &format!("N.E.E.B.L.E.S. · {}", manifest.name),
         &icon,
@@ -1171,8 +1137,11 @@ pub fn emit_for_module(
         message,
         &[],
         None,
-    )
-    .map(|_| ())
+    )?;
+    if let NotificationOutcome::Presented(id) = outcome {
+        crate::notification_presenter::discard_unowned(id);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1572,9 +1541,13 @@ mod notification_ownership_tests {
         let notification_id = 4_500_001;
 
         let outcome =
-            present_owned_for_module("productive-alpha", "session-productive-a", None, || {
-                Ok(NotificationOutcome::Presented(notification_id))
-            })
+            present_owned_for_module_with_activation(
+                "productive-alpha",
+                "session-productive-a",
+                None,
+                || Ok(NotificationOutcome::Presented(notification_id)),
+                |_| Ok(()),
+            )
             .unwrap();
 
         assert_eq!(outcome, NotificationOutcome::Presented(notification_id));
@@ -1625,11 +1598,12 @@ mod notification_ownership_tests {
         register_module_notification_owner(old_id, "productive-alpha", "session-productive-a")
             .unwrap();
 
-        let outcome = present_owned_for_module(
+        let outcome = present_owned_for_module_with_activation(
             "productive-alpha",
             "session-productive-a",
             Some(old_id),
             || Ok(NotificationOutcome::Presented(new_id)),
+            |_| Ok(()),
         )
         .unwrap();
 
@@ -1643,6 +1617,52 @@ mod notification_ownership_tests {
         );
 
         let _ = release_notification_owner(new_id).unwrap();
+    }
+
+    #[test]
+    fn failed_presenter_activation_rolls_back_new_owner() {
+        let id = 4_500_010;
+
+        let error = present_owned_for_module_with_activation(
+            "productive-rollback",
+            "session-rollback",
+            None,
+            || Ok(NotificationOutcome::Presented(id)),
+            |_| Err("simulated presenter activation failure".to_string()),
+        )
+        .expect_err("failed activation must reject presentation");
+
+        assert!(error.contains("activation failure"));
+        assert_eq!(notification_owner(id).unwrap(), None);
+    }
+
+    #[test]
+    fn failed_replacement_activation_preserves_previous_owner() {
+        let old_id = 4_500_011;
+        let new_id = 4_500_012;
+
+        register_module_notification_owner(
+            old_id, "productive-rollback", "session-rollback"
+        )
+        .unwrap();
+
+        let error = present_owned_for_module_with_activation(
+            "productive-rollback",
+            "session-rollback",
+            Some(old_id),
+            || Ok(NotificationOutcome::Presented(new_id)),
+            |_| Err("simulated presenter activation failure".to_string()),
+        )
+        .expect_err("failed replacement activation must reject presentation");
+
+        assert!(error.contains("activation failure"));
+        assert_eq!(notification_owner(new_id).unwrap(), None);
+        assert_eq!(
+            notification_owner(old_id).unwrap(),
+            Some(module_owner("productive-rollback", "session-rollback"))
+        );
+
+        let _ = release_notification_owner(old_id).unwrap();
     }
 
     #[test]

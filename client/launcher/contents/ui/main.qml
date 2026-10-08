@@ -13,7 +13,7 @@ PlasmoidItem {
     property var installedModules: []
     property var strings: ({})
     property var callbacks: ({})
-    property string bossVersion: "1.0.29"
+    property string bossVersion: "1.0.30"
 
     component NeeblesSwitch: QQC2.Switch {
         id: control
@@ -110,7 +110,8 @@ PlasmoidItem {
     function launcherContent(module) {
         if (
             !module
-            || !Array.isArray(module.surface_content)
+            || !module.surface_content
+            || module.surface_content.length === undefined
         )
             return []
 
@@ -172,6 +173,9 @@ PlasmoidItem {
             function(module) {
                 return (
                     root.safeModuleId(module.name)
+                    && module.surface_visibility
+                    && module.surface_visibility.launcher
+                        === true
                     && root.launcherContent(module).length > 0
                 )
             }
@@ -564,7 +568,7 @@ PlasmoidItem {
                                         surfaceItem.label
 
                                     enabled:
-                                        surfaceItem.requirements_met
+                                        surfaceItem.action_available
                                         === true
 
                                     hoverEnabled: true
