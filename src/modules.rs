@@ -6697,11 +6697,21 @@ mod point2_tray_governed_runtime_tests {
 
     #[test]
     fn governed_tray_process_group_can_be_stopped_as_one_owned_tree() {
+        // This fixture must install its SIGTERM trap and launch its child
+        // *before* Boss signals the process group. Otherwise the shell can
+        // exit first, leaving an unowned orphan and making a valid fail-closed
+        // runtime ownership check appear to be a test failure.
+        let ready_dir = tempfile::tempdir().expect("tray fixture ready directory");
+        let ready_path = ready_dir.path().join("ready");
+
         let mut command = std::process::Command::new("/bin/sh");
 
         command
             .arg("-c")
-            .arg("sleep 30 & wait")
+            .arg(
+                "trap 'wait' TERM; sleep 30 & printf ready > \"$NEEBLES_TRAY_FIXTURE_READY\"; wait",
+            )
+            .env("NEEBLES_TRAY_FIXTURE_READY", &ready_path)
             .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -6713,34 +6723,64 @@ mod point2_tray_governed_runtime_tests {
             .expect("fixture identity must inspect")
             .expect("fixture leader must exist");
 
+        let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+
+        while !ready_path.exists() && std::time::Instant::now() < ready_deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert!(
+            ready_path.exists(),
+            "tray fixture did not reach child-ready state"
+        );
+
         assert!(
             tray_runtime_group_alive(identity).expect("fixture group must probe"),
             "fresh governed process group must be alive"
         );
 
         assert!(
-            signal_tray_runtime_group(identity, libc::SIGTERM,)
-                .expect("SIGTERM delivery must work"),
+            signal_tray_runtime_group(identity, libc::SIGTERM).expect("SIGTERM delivery must work"),
             "live governed process group must accept SIGTERM"
         );
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        // Reap our own authenticated leader promptly. A process group may
+        // transiently exist after its leader exits, and the *production*
+        // ownership checker must continue to reject that unknown-owner case.
+        let leader_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
 
-        while tray_runtime_group_alive(identity).expect("fixture group probe must work")
-            && std::time::Instant::now() < deadline
+        while child.try_wait().expect("fixture leader probe").is_none()
+            && std::time::Instant::now() < leader_deadline
         {
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
 
-        if tray_runtime_group_alive(identity).expect("final fixture probe must work") {
-            let _ = signal_tray_runtime_group(identity, libc::SIGKILL);
+        if child
+            .try_wait()
+            .expect("final fixture leader probe")
+            .is_none()
+        {
+            // Only an authenticated live leader can authorize a fallback
+            // group signal. Never signal after the leader has been reaped.
+            let _ = signal_tray_runtime_group(identity, libc::SIGKILL)
+                .expect("authenticated fixture fallback must be safe");
         }
 
-        let _ = child.wait();
+        child.wait().expect("fixture leader must be reaped");
+
+        // The test can now inspect group existence read-only; it must NOT
+        // invoke tray_runtime_group_alive once leader ownership has ended.
+        let group_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+
+        while tray_process_group_exists(identity.pid).expect("group existence probe")
+            && std::time::Instant::now() < group_deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
 
         assert!(
-            !tray_runtime_group_alive(identity).expect("dead fixture group must probe"),
-            "whole governed process group must terminate"
+            !tray_process_group_exists(identity.pid).expect("final group existence probe"),
+            "whole governed fixture process group must terminate"
         );
     }
 
