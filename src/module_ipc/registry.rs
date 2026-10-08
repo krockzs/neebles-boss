@@ -534,6 +534,45 @@ mod certification_tests {
     use std::sync::mpsc;
 
     #[test]
+    fn ui_launcher_tray_open_race_has_exactly_one_winner() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let registry = RuntimeRegistry::new();
+        let starting_line = Arc::new(Barrier::new(4));
+        let handles: Vec<_> = ["boss-ui", "launcher", "tray"]
+            .into_iter()
+            .map(|_surface| {
+                let registry = registry.clone();
+                let starting_line = Arc::clone(&starting_line);
+                thread::spawn(move || {
+                    starting_line.wait();
+                    registry.begin_opening("module.alpha")
+                })
+            })
+            .collect();
+
+        starting_line.wait();
+        let outcomes: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("surface worker panicked"))
+            .collect();
+        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
+        assert_eq!(
+            registry.state("module.alpha").unwrap(),
+            ModuleRuntimeState::Opening
+        );
+        assert!(registry.begin_opening("module.alpha").is_err());
+
+        // A separate module has its own independent runtime identity.
+        assert!(registry.begin_opening("module.beta").is_ok());
+        assert_eq!(
+            registry.state("module.beta").unwrap(),
+            ModuleRuntimeState::Opening
+        );
+    }
+
+    #[test]
     fn canonical_opening_is_single_flight() {
         let registry = RuntimeRegistry::new();
 

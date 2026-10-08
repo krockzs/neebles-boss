@@ -1802,6 +1802,19 @@ fn execute_governor_target_with_observer(
             return Err(format!("module {} is not active and cannot open", name));
         }
 
+        // Boss UI's administrative Open has no caller-owned object identity.
+        // Do not announce `opening` for a module that declares no Governor Open.
+        // Module Surface object actions retain their own declared bindings.
+        if object_id.is_none()
+            && transition_id.is_none()
+            && crate::lifecycle_governor_binding::resolve(&lifecycle, "open")?.is_none()
+        {
+            return Err(format!(
+                "module {} does not declare canonical Governor open binding",
+                name
+            ));
+        }
+
         let (generation, execution_id) =
             crate::module_ipc::runtime_registry().begin_opening(name)?;
 
@@ -3924,12 +3937,14 @@ where
     Ok(())
 }
 
-fn materialize_runtime_presentation_with<State>(
+fn materialize_runtime_presentation_with<State, GovernorOpen>(
     value: &mut Value,
     mut state: State,
+    mut governor_open: GovernorOpen,
 ) -> Result<(), String>
 where
     State: FnMut(&str) -> Result<crate::module_ipc::registry::ModuleRuntimeState, String>,
+    GovernorOpen: FnMut(&str) -> Result<bool, String>,
 {
     let modules = value
         .as_array_mut()
@@ -3955,8 +3970,16 @@ where
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        let open_available =
+        // Only a closed, enabled runtime can begin a new Open. This is
+        // per-module authoritative RuntimeRegistry state, not a UI-local flag.
+        let may_open =
             enabled && runtime_state == crate::module_ipc::registry::ModuleRuntimeState::Closed;
+
+        // Boss UI always presents its administrative Open button, but that
+        // button is usable only if the module owns a Governor Open binding.
+        // Optional Launcher/Tray controls keep their separate Surface contract.
+        let governor_open_declared = may_open && governor_open(&name)?;
+        let open_available = governor_open_declared;
 
         object.insert(
             "runtime_state".to_string(),
@@ -3988,7 +4011,16 @@ where
                 .map(str::trim)
                 == Some("open");
 
-            let action_available = requirements_met && (!canonical_open_action || open_available);
+            // A canonical Open Surface button either uses the module's
+            // Governor Open or its own module-declared object transition.
+            // Both share RuntimeRegistry's atomic single-flight protection.
+            let surface_object_open = item_object
+                .get("object_id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.trim().is_empty());
+            let action_available = requirements_met
+                && (!canonical_open_action
+                    || (may_open && (governor_open_declared || surface_object_open)));
 
             item_object.insert(
                 "action_available".to_string(),
@@ -4003,6 +4035,127 @@ where
 #[cfg(test)]
 mod surface_presentation_model_tests {
     use super::*;
+
+    #[test]
+    fn open_projection_is_shared_by_optional_launcher_and_tray_even_when_hidden() {
+        use crate::module_ipc::registry::ModuleRuntimeState;
+
+        for (state, expected) in [
+            (ModuleRuntimeState::Closed, true),
+            (ModuleRuntimeState::Opening, false),
+            (ModuleRuntimeState::Open, false),
+        ] {
+            // Surface visibility is presentation-only. Both declared Open
+            // actions receive the same live availability, even when hidden.
+            let mut model = json!([{
+                "name": "module.alpha",
+                "enabled": true,
+                "surface_visibility": {"tray": false, "launcher": false},
+                "surface_content": [
+                    {"surface": "launcher", "requirements_met": true, "data": {"action": "open"}},
+                    {"surface": "tray", "requirements_met": true, "data": {"action": "open"}},
+                    {"surface": "ui", "requirements_met": true, "data": {"action": "notify-demo"}}
+                ]
+            }]);
+
+            materialize_runtime_presentation_with(&mut model, |_| Ok(state), |_| Ok(true)).unwrap();
+
+            assert_eq!(model[0]["runtime_state"], json!(state.as_str()));
+            assert_eq!(model[0]["open_available"], json!(expected));
+            assert_eq!(
+                model[0]["surface_content"][0]["action_available"],
+                json!(expected)
+            );
+            assert_eq!(
+                model[0]["surface_content"][1]["action_available"],
+                json!(expected)
+            );
+            assert_eq!(
+                model[0]["surface_content"][2]["action_available"],
+                json!(true)
+            );
+            assert_eq!(model[0]["surface_visibility"]["launcher"], json!(false));
+            assert_eq!(model[0]["surface_visibility"]["tray"], json!(false));
+        }
+    }
+
+    #[test]
+    fn boss_open_capability_is_distinct_from_object_owned_surface_open() {
+        use crate::module_ipc::registry::ModuleRuntimeState;
+
+        let mut model = json!([{
+            "name": "module.with-surface-only-open",
+            "enabled": true,
+            "surface_content": [
+                {"surface": "launcher", "object_id": "module-custom-open", "requirements_met": true, "data": {"action": "open"}}
+            ]
+        }]);
+
+        materialize_runtime_presentation_with(
+            &mut model,
+            |_| Ok(ModuleRuntimeState::Closed),
+            |_| Ok(false),
+        )
+        .unwrap();
+
+        // Modules tab retains Open control, disabled without governor.open;
+        // an object-owned Surface may expose its own Open Lifecycle action.
+        assert_eq!(model[0]["open_available"], json!(false));
+        assert_eq!(
+            model[0]["surface_content"][0]["action_available"],
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn module_open_projection_does_not_apply_a_global_single_instance_lock() {
+        use crate::module_ipc::registry::ModuleRuntimeState;
+
+        let mut model = json!([
+            {"name": "module.alpha", "enabled": true, "surface_content": []},
+            {"name": "module.beta", "enabled": true, "surface_content": []}
+        ]);
+
+        materialize_runtime_presentation_with(
+            &mut model,
+            |module| {
+                Ok(if module == "module.alpha" {
+                    ModuleRuntimeState::Open
+                } else {
+                    ModuleRuntimeState::Closed
+                })
+            },
+            |_| Ok(true),
+        )
+        .unwrap();
+
+        assert_eq!(model[0]["open_available"], json!(false));
+        assert_eq!(model[1]["open_available"], json!(true));
+    }
+
+    #[test]
+    fn inactive_module_never_exposes_open_even_if_declared() {
+        use crate::module_ipc::registry::ModuleRuntimeState;
+
+        let mut model = json!([{
+            "name": "module.alpha",
+            "enabled": false,
+            "surface_content": [
+                {"surface": "launcher", "requirements_met": false, "data": {"action": "open"}}
+            ]
+        }]);
+        materialize_runtime_presentation_with(
+            &mut model,
+            |_| Ok(ModuleRuntimeState::Closed),
+            |_| panic!("disabled module must not query Open capability"),
+        )
+        .unwrap();
+        assert_eq!(model[0]["open_available"], json!(false));
+        assert_eq!(
+            model[0]["surface_content"][0]["action_available"],
+            json!(false)
+        );
+    }
 
     #[test]
     fn presentation_model_materializes_requirements_without_replacing_contract() {
@@ -4210,9 +4363,14 @@ pub fn installed_modules_presentation_json() -> Result<Value, String> {
         crate::surface_requirement_resolver::requirements_satisfied(owner, requirements)
     })?;
 
-    materialize_runtime_presentation_with(&mut value, |module| {
-        crate::module_ipc::runtime_registry().state(module)
-    })?;
+    materialize_runtime_presentation_with(
+        &mut value,
+        |module| crate::module_ipc::runtime_registry().state(module),
+        |module| {
+            let lifecycle = installed_module_lifecycle_contract(module)?;
+            Ok(crate::lifecycle_governor_binding::resolve(&lifecycle, "open")?.is_some())
+        },
+    )?;
 
     Ok(value)
 }

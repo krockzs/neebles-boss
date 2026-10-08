@@ -1167,14 +1167,16 @@ The recorded Gate 75 passed 665 Boss main tests, 120 library tests,
 - Local evidence: 805 Rust tests passed (one intentionally ignored), 12 Test Module Python tests passed, Boss UI/Tray Host stage builds passed with controlled Esbirro Qt 6.8.2. These results precede the v1.0.31 release build and are not Fresh Live acceptance.
 - The published v1.0.30 release remains unchanged; full v1.0.31 CI and 11-asset verification precede trigger publication, then Fresh Live and installed-system acceptance.
 
-## Boss 1.0.32 — CAST30 Active/Inactive cross-surface synchronization (candidate)
+## Boss 1.0.32 — CAST30 Active/Inactive and Open cross-surface synchronization (candidate)
 
 - Send committed module state changes from short-lived CLI callers to the persistent Boss event owner; the latter publishes `module.lifecycle` for UI/Launcher/Tray subscribers. The module state in `ui.disabled_modules` remains canonical and distinct from Settings presentation toggles.
 - Handle exited Tray process-group leaders conservatively: accept an orphaned group as quiescent only when kernel `/proc` inspection certifies that every visible member is terminated; unknown identities or live members fail closed.
 - Gates131/132: 810 Rust tests passed, 1 intentionally ignored; 12 Active relay/tray and 25 Boss Settings source contracts passed. The 32-case visibility matrix is a **source specification**, not Live acceptance.
 - Global `tray.enabled`, `launcher.enabled`, per-module surface visibility, locale, normal notifications and telemetry must not be altered by module Active/Inactive changes; hidden surfaces must recover canonical state when restored.
 - Registry remains Test Module 1.2.2 (`ee91d94b1026e7890379c656dbdee2896d00e32b`); CUSTOM V2 remains `c0afe5baa6a58f50166ed12f17a1637a667b4d88`; pinned CUSTOM Classic/Esbirro remains `20488f6818d5e227f043425a682115f614f4bf79`.
-- v1.0.32 release, genuine settings/visibility matrix, GUI end-to-end synchronization and runtime-open tests remain pending. Open behavior is a subsequent separate gate.
+- Gate137 Open projection: Boss UI retains its administrative Open control, enabled only for declared `governor.open` when the module is active and runtime is closed. Launcher/Tray Open remains optional SurfaceContent; object-owned Open actions remain module-declared. `RuntimeRegistry` is the single-flight authority, keyed by module, for `closed`, `opening`, `open`.
+- Gate137: 815 Rust tests passed, 0 failed, 1 intentionally ignored; new tests cover single-module concurrent Open requests from three synthetic callers, independence between different modules, closed/opening/open presentation, and hidden Launcher/Tray without changing canonical state. These are **source tests, not actual GUI clicks or Fresh Live**.
+- v1.0.32 release, genuine Settings/visibility matrix and actual GUI end-to-end Active/Inactive + Open tests remain pending. No release may be accepted before the live triplet is verified.
 
 ## Release policy
 
