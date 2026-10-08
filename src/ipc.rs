@@ -192,10 +192,9 @@ pub fn serve() -> Result<(), String> {
      * Exact replacement removes stale owners and stale
      * feature items left by crashes or older installations.
      */
-    crate::modules::reconcile_installed_module_features()
-        .map_err(|error| format!(
-            "could not reconcile Boss Feature inventory at startup: {error}"
-        ))?;
+    crate::modules::reconcile_installed_module_features().map_err(|error| {
+        format!("could not reconcile Boss Feature inventory at startup: {error}")
+    })?;
 
     /*
      * The Boss owns both IPC surfaces.

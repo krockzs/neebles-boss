@@ -1,11 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::lifecycle_objects::ObjectStateStore;
-use crate::surface_projection::{
-    SurfaceProjection,
-    SurfaceProjectionItem,
-    SurfaceRequirements,
-};
+use crate::surface_projection::{SurfaceProjection, SurfaceProjectionItem, SurfaceRequirements};
 
 /*
  * Generic Boss Surface Content Resolver.
@@ -310,16 +306,13 @@ mod tests {
     fn requirements_survive_projection_into_surface_content() {
         let lifecycle = lifecycle();
 
-        let requirements: SurfaceRequirements =
-            serde_json::from_value(
-                serde_json::json!({
-                    "self": "open",
-                    "modules": {
-                        "module.beta": "active"
-                    }
-                })
-            )
-            .unwrap();
+        let requirements: SurfaceRequirements = serde_json::from_value(serde_json::json!({
+            "self": "open",
+            "modules": {
+                "module.beta": "active"
+            }
+        }))
+        .unwrap();
 
         let mut projection = SurfaceProjection::new();
 
@@ -333,10 +326,7 @@ mod tests {
                     None,
                     None,
                     true,
-                    BTreeMap::from([(
-                        "control".to_string(),
-                        "button".to_string(),
-                    )]),
+                    BTreeMap::from([("control".to_string(), "button".to_string())]),
                     requirements,
                 )
                 .unwrap(),
@@ -353,16 +343,12 @@ mod tests {
 
         assert_eq!(
             requirements.self_state(),
-            Some(
-                crate::surface_projection::SurfaceRequirementState::Open
-            )
+            Some(crate::surface_projection::SurfaceRequirementState::Open)
         );
 
         assert_eq!(
             requirements.modules().get("module.beta"),
-            Some(
-                &crate::surface_projection::SurfaceRequirementState::Active
-            )
+            Some(&crate::surface_projection::SurfaceRequirementState::Active)
         );
     }
     #[test]

@@ -354,11 +354,9 @@ fn async_domestic_command(command: std::process::Command) -> async_process::Comm
 async fn execute_workspace_operation(
     operation: PreparedOperation,
 ) -> Result<ExecutionPayload, String> {
-    let governor_execution_id =
-        operation.execution_id.clone();
+    let governor_execution_id = operation.execution_id.clone();
 
-    let (subject, step) =
-        workspace_operation_identity(&operation)?;
+    let (subject, step) = workspace_operation_identity(&operation)?;
 
     let declaration =
         neebles_backend::domestic_construction::load_module_domestic_construction_declaration(
@@ -412,22 +410,16 @@ async fn execute_workspace_operation(
         neebles_backend::domestic_construction::DomesticConstructionExecution::Persistent => {
             let mut command = command;
 
-            let owns_runtime_lease =
-                runtime_lease.is_some();
+            let owns_runtime_lease = runtime_lease.is_some();
 
-            let runtime_execution_id =
-                if owns_runtime_lease {
-                    Some(
-                        governor_execution_id
-                            .clone()
-                            .ok_or_else(|| {
-                                "persistent domestic runtime requires Governor-owned execution identity"
-                                    .to_string()
-                            })?
-                    )
-                } else {
-                    None
-                };
+            let runtime_execution_id = if owns_runtime_lease {
+                Some(governor_execution_id.clone().ok_or_else(|| {
+                    "persistent domestic runtime requires Governor-owned execution identity"
+                        .to_string()
+                })?)
+            } else {
+                None
+            };
 
             let mut child = command.spawn().map_err(|error| {
                 format!(
@@ -438,60 +430,40 @@ async fn execute_workspace_operation(
 
             let pid = child.id();
 
-            let opening_generation =
-                if let Some(execution_id) =
-                    runtime_execution_id.as_deref()
-                {
-                    match crate::module_ipc::runtime_registry()
-                        .claim_opening_owner(
-                            &subject,
-                            execution_id,
-                            pid,
-                        )
-                    {
-                        Ok(generation) => generation,
+            let opening_generation = if let Some(execution_id) = runtime_execution_id.as_deref() {
+                match crate::module_ipc::runtime_registry().claim_opening_owner(
+                    &subject,
+                    execution_id,
+                    pid,
+                ) {
+                    Ok(generation) => generation,
 
-                        Err(error) => {
-                            let _ = child.kill();
-                            let _ = child.wait();
+                    Err(error) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
 
-                            return Err(format!(
+                        return Err(format!(
                                 "persistent domestic runtime owner registration failed: subject={} step={} error={}",
                                 subject,
                                 step,
                                 error
                             ));
-                        }
                     }
-                } else {
-                    None
-                };
+                }
+            } else {
+                None
+            };
 
             let opening_owner =
-                opening_generation.map(|generation| {
-                    (
-                        subject.clone(),
-                        generation,
-                        pid,
-                    )
-                });
+                opening_generation.map(|generation| (subject.clone(), generation, pid));
 
             std::thread::spawn(move || {
                 let _runtime_lease = runtime_lease;
                 let _ = child.wait();
 
-                if let Some((
-                    module,
-                    generation,
-                    owner_pid,
-                )) = opening_owner
-                {
+                if let Some((module, generation, owner_pid)) = opening_owner {
                     match crate::module_ipc::runtime_registry()
-                        .release_opening_owner(
-                            &module,
-                            generation,
-                            owner_pid,
-                        )
+                        .release_opening_owner(&module, generation, owner_pid)
                     {
                         Ok(true) => {
                             crate::modules::broadcast_surface_module_change(

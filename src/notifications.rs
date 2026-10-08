@@ -328,9 +328,9 @@ where
     F: FnOnce() -> Result<NotificationOutcome, String>,
     A: FnOnce(u32) -> Result<(), String>,
 {
-    let gate = NOTIFICATION_PRESENTATION_GATE
-        .get_or_init(|| Mutex::new(()));
-    let _transaction = gate.lock()
+    let gate = NOTIFICATION_PRESENTATION_GATE.get_or_init(|| Mutex::new(()));
+    let _transaction = gate
+        .lock()
         .map_err(|_| "notification presentation lock poisoned".to_string())?;
 
     if let Some(id) = replace_id {
@@ -350,9 +350,7 @@ where
         }
     };
 
-    if let Err(error) = register_module_notification_owner(
-        id, module, session_id
-    ) {
+    if let Err(error) = register_module_notification_owner(id, module, session_id) {
         crate::notification_presenter::discard_unowned(id);
         return Err(error);
     }
@@ -673,8 +671,8 @@ fn emit_transport(
         return Ok(NotificationOutcome::Suppressed);
     }
 
-    let notification_id = crate::notification_presenter::present(
-        crate::notification_presenter::Presentation {
+    let notification_id =
+        crate::notification_presenter::present(crate::notification_presenter::Presentation {
             severity,
             application: application.to_string(),
             icon: icon.to_string_lossy().into_owned(),
@@ -683,8 +681,7 @@ fn emit_transport(
             message: message.to_string(),
             actions: notification_actions.to_vec(),
             reply: reply.cloned(),
-        },
-    )?;
+        })?;
     Ok(NotificationOutcome::Presented(notification_id))
 }
 
@@ -706,9 +703,13 @@ pub(crate) fn physical_notify_for_presenter(
     }
     let connection = Connection::session()
         .map_err(|error| format!("could not connect to user Notifications D-Bus: {error}"))?;
-    let proxy = Proxy::new(&connection, NOTIFICATIONS_SERVICE, NOTIFICATIONS_PATH,
-        NOTIFICATIONS_INTERFACE)
-        .map_err(|error| format!("could not create user Notifications proxy: {error}"))?;
+    let proxy = Proxy::new(
+        &connection,
+        NOTIFICATIONS_SERVICE,
+        NOTIFICATIONS_PATH,
+        NOTIFICATIONS_INTERFACE,
+    )
+    .map_err(|error| format!("could not create user Notifications proxy: {error}"))?;
 
     let actions = notification_actions_for_freedesktop(notification_actions, reply);
 
@@ -852,9 +853,9 @@ pub(crate) fn physical_notify_for_presenter(
 }
 
 pub fn emit(severity: Severity, title: &str, message: &str) -> Result<(), String> {
-    let gate = NOTIFICATION_PRESENTATION_GATE
-        .get_or_init(|| Mutex::new(()));
-    let _transaction = gate.lock()
+    let gate = NOTIFICATION_PRESENTATION_GATE.get_or_init(|| Mutex::new(()));
+    let _transaction = gate
+        .lock()
         .map_err(|_| "notification presentation lock poisoned".to_string())?;
 
     let icon =
@@ -1095,9 +1096,9 @@ pub fn emit_for_module(
     title: &str,
     message: &str,
 ) -> Result<(), String> {
-    let gate = NOTIFICATION_PRESENTATION_GATE
-        .get_or_init(|| Mutex::new(()));
-    let _transaction = gate.lock()
+    let gate = NOTIFICATION_PRESENTATION_GATE.get_or_init(|| Mutex::new(()));
+    let _transaction = gate
+        .lock()
         .map_err(|_| "notification presentation lock poisoned".to_string())?;
 
     let manifest = modules::installed_module_manifest(module)?;
@@ -1540,15 +1541,14 @@ mod notification_ownership_tests {
     fn productive_owner_registers_presented_id() {
         let notification_id = 4_500_001;
 
-        let outcome =
-            present_owned_for_module_with_activation(
-                "productive-alpha",
-                "session-productive-a",
-                None,
-                || Ok(NotificationOutcome::Presented(notification_id)),
-                |_| Ok(()),
-            )
-            .unwrap();
+        let outcome = present_owned_for_module_with_activation(
+            "productive-alpha",
+            "session-productive-a",
+            None,
+            || Ok(NotificationOutcome::Presented(notification_id)),
+            |_| Ok(()),
+        )
+        .unwrap();
 
         assert_eq!(outcome, NotificationOutcome::Presented(notification_id));
 
@@ -1641,10 +1641,8 @@ mod notification_ownership_tests {
         let old_id = 4_500_011;
         let new_id = 4_500_012;
 
-        register_module_notification_owner(
-            old_id, "productive-rollback", "session-rollback"
-        )
-        .unwrap();
+        register_module_notification_owner(old_id, "productive-rollback", "session-rollback")
+            .unwrap();
 
         let error = present_owned_for_module_with_activation(
             "productive-rollback",

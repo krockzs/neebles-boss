@@ -1,9 +1,5 @@
 use crate::lifecycle::LifecycleContract;
-use crate::surface_projection::{
-    SurfaceProjection,
-    SurfaceProjectionItem,
-    SurfaceRequirements,
-};
+use crate::surface_projection::{SurfaceProjection, SurfaceProjectionItem, SurfaceRequirements};
 
 use serde::Deserialize;
 
@@ -438,33 +434,23 @@ mod tests {
             }"#,
         );
 
-        let projection =
-            load("module.alpha", &path, &lifecycle()).unwrap();
+        let projection = load("module.alpha", &path, &lifecycle()).unwrap();
 
-        let requirements = projection
-            .get("notify.ui")
-            .unwrap()
-            .requirements();
+        let requirements = projection.get("notify.ui").unwrap().requirements();
 
         assert_eq!(
             requirements.self_state(),
-            Some(
-                crate::surface_projection::SurfaceRequirementState::Open
-            )
+            Some(crate::surface_projection::SurfaceRequirementState::Open)
         );
 
         assert_eq!(
             requirements.modules().get("network-core"),
-            Some(
-                &crate::surface_projection::SurfaceRequirementState::Active
-            )
+            Some(&crate::surface_projection::SurfaceRequirementState::Active)
         );
 
         assert_eq!(
             requirements.modules().get("remote-core"),
-            Some(
-                &crate::surface_projection::SurfaceRequirementState::Open
-            )
+            Some(&crate::surface_projection::SurfaceRequirementState::Open)
         );
 
         fs::remove_file(path).unwrap();
@@ -490,8 +476,7 @@ mod tests {
             }"#,
         );
 
-        let error =
-            load("module.alpha", &path, &lifecycle()).unwrap_err();
+        let error = load("module.alpha", &path, &lifecycle()).unwrap_err();
 
         assert!(error.contains("unknown variant"));
 
@@ -520,14 +505,9 @@ mod tests {
             }"#,
         );
 
-        let error =
-            load("module.alpha", &path, &lifecycle()).unwrap_err();
+        let error = load("module.alpha", &path, &lifecycle()).unwrap_err();
 
-        assert!(
-            error.contains(
-                "invalid surface requirement module id 'bad/module'"
-            )
-        );
+        assert!(error.contains("invalid surface requirement module id 'bad/module'"));
 
         fs::remove_file(path).unwrap();
     }
@@ -553,8 +533,7 @@ mod tests {
             }"#,
         );
 
-        let error =
-            load("module.alpha", &path, &lifecycle()).unwrap_err();
+        let error = load("module.alpha", &path, &lifecycle()).unwrap_err();
 
         assert!(error.contains("unknown field"));
 
@@ -571,14 +550,9 @@ mod tests {
             }"#,
         );
 
-        let error =
-            load("module.alpha", &path, &lifecycle()).unwrap_err();
+        let error = load("module.alpha", &path, &lifecycle()).unwrap_err();
 
-        assert!(
-            error.contains(
-                "unsupported surface contract schema 1"
-            )
-        );
+        assert!(error.contains("unsupported surface contract schema 1"));
 
         fs::remove_file(path).unwrap();
     }

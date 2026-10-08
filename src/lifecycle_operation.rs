@@ -279,18 +279,10 @@ mod tests {
     fn preparation_captures_governor_execution_identity() {
         let mut battlefield = battlefield();
 
-        battlefield.insert(
-            "execution",
-            "id",
-            "module.open.41",
-        );
+        battlefield.insert("execution", "id", "module.open.41");
 
-        let prepared =
-            prepare(&operation(), &battlefield).unwrap();
+        let prepared = prepare(&operation(), &battlefield).unwrap();
 
-        assert_eq!(
-            prepared.execution_id.as_deref(),
-            Some("module.open.41")
-        );
+        assert_eq!(prepared.execution_id.as_deref(), Some("module.open.41"));
     }
 }

@@ -1,7 +1,4 @@
-use crate::surface_projection::{
-    SurfaceRequirementState,
-    SurfaceRequirements,
-};
+use crate::surface_projection::{SurfaceRequirementState, SurfaceRequirements};
 
 /*
  * Strict Boss Surface requirement resolver.
@@ -63,21 +60,14 @@ where
 }
 
 pub fn module_open(module_id: &str) -> bool {
-    module_open_with(
-        module_id,
-        module_active,
-        |name| {
-            crate::module_ipc::runtime_registry()
-                .get(name)
-                .map(|runtime| runtime.is_some())
-        },
-    )
+    module_open_with(module_id, module_active, |name| {
+        crate::module_ipc::runtime_registry()
+            .get(name)
+            .map(|runtime| runtime.is_some())
+    })
 }
 
-fn requirement_state_satisfied(
-    module_id: &str,
-    state: SurfaceRequirementState,
-) -> bool {
+fn requirement_state_satisfied(module_id: &str, state: SurfaceRequirementState) -> bool {
     match state {
         SurfaceRequirementState::Active => module_active(module_id),
         SurfaceRequirementState::Open => module_open(module_id),
@@ -107,15 +97,8 @@ where
     true
 }
 
-pub fn requirements_satisfied(
-    owner_module: &str,
-    requirements: &SurfaceRequirements,
-) -> bool {
-    requirements_satisfied_with(
-        owner_module,
-        requirements,
-        requirement_state_satisfied,
-    )
+pub fn requirements_satisfied(owner_module: &str, requirements: &SurfaceRequirements) -> bool {
+    requirements_satisfied_with(owner_module, requirements, requirement_state_satisfied)
 }
 
 #[cfg(test)]
@@ -125,11 +108,7 @@ mod tests {
 
     #[test]
     fn active_requires_installed_and_enabled() {
-        assert!(module_active_with(
-            "module.alpha",
-            |_| Ok(()),
-            |_| Ok(true),
-        ));
+        assert!(module_active_with("module.alpha", |_| Ok(()), |_| Ok(true),));
     }
 
     #[test]
@@ -169,20 +148,12 @@ mod tests {
 
     #[test]
     fn open_accepts_registered_runtime_when_active() {
-        assert!(module_open_with(
-            "module.alpha",
-            |_| true,
-            |_| Ok(true),
-        ));
+        assert!(module_open_with("module.alpha", |_| true, |_| Ok(true),));
     }
 
     #[test]
     fn open_rejects_missing_runtime_when_active() {
-        assert!(!module_open_with(
-            "module.alpha",
-            |_| true,
-            |_| Ok(false),
-        ));
+        assert!(!module_open_with("module.alpha", |_| true, |_| Ok(false),));
     }
 
     #[test]
@@ -220,14 +191,10 @@ mod tests {
         let requirements = SurfaceRequirements::default();
         let queried = Cell::new(false);
 
-        let satisfied = requirements_satisfied_with(
-            "module.owner",
-            &requirements,
-            |_, _| {
-                queried.set(true);
-                false
-            },
-        );
+        let satisfied = requirements_satisfied_with("module.owner", &requirements, |_, _| {
+            queried.set(true);
+            false
+        });
 
         assert!(satisfied);
         assert!(!queried.get());
@@ -239,14 +206,10 @@ mod tests {
             "self": "open"
         }));
 
-        let satisfied = requirements_satisfied_with(
-            "module.owner",
-            &requirements,
-            |module_id, state| {
-                module_id == "module.owner"
-                    && state == SurfaceRequirementState::Open
-            },
-        );
+        let satisfied =
+            requirements_satisfied_with("module.owner", &requirements, |module_id, state| {
+                module_id == "module.owner" && state == SurfaceRequirementState::Open
+            });
 
         assert!(satisfied);
     }
@@ -262,18 +225,15 @@ mod tests {
 
         let cross_module_queried = Cell::new(false);
 
-        let satisfied = requirements_satisfied_with(
-            "module.owner",
-            &requirements,
-            |module_id, _| {
+        let satisfied =
+            requirements_satisfied_with("module.owner", &requirements, |module_id, _| {
                 if module_id == "module.owner" {
                     return false;
                 }
 
                 cross_module_queried.set(true);
                 true
-            },
-        );
+            });
 
         assert!(!satisfied);
         assert!(!cross_module_queried.get());
@@ -293,35 +253,20 @@ mod tests {
 
         let seen = RefCell::new(Vec::new());
 
-        let satisfied = requirements_satisfied_with(
-            "module.owner",
-            &requirements,
-            |module_id, state| {
-                seen.borrow_mut().push((
-                    module_id.to_string(),
-                    state,
-                ));
+        let satisfied =
+            requirements_satisfied_with("module.owner", &requirements, |module_id, state| {
+                seen.borrow_mut().push((module_id.to_string(), state));
                 true
-            },
-        );
+            });
 
         assert!(satisfied);
 
         assert_eq!(
             seen.into_inner(),
             vec![
-                (
-                    "module.owner".to_string(),
-                    SurfaceRequirementState::Active,
-                ),
-                (
-                    "module.beta".to_string(),
-                    SurfaceRequirementState::Open,
-                ),
-                (
-                    "module.gamma".to_string(),
-                    SurfaceRequirementState::Active,
-                ),
+                ("module.owner".to_string(), SurfaceRequirementState::Active,),
+                ("module.beta".to_string(), SurfaceRequirementState::Open,),
+                ("module.gamma".to_string(), SurfaceRequirementState::Active,),
             ]
         );
     }
@@ -335,14 +280,10 @@ mod tests {
             }
         }));
 
-        let satisfied = requirements_satisfied_with(
-            "module.owner",
-            &requirements,
-            |module_id, state| {
-                !(module_id == "module.gamma"
-                    && state == SurfaceRequirementState::Open)
-            },
-        );
+        let satisfied =
+            requirements_satisfied_with("module.owner", &requirements, |module_id, state| {
+                !(module_id == "module.gamma" && state == SurfaceRequirementState::Open)
+            });
 
         assert!(!satisfied);
     }

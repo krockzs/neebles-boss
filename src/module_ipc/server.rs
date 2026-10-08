@@ -675,14 +675,10 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         session_id: session_id.clone(),
     }) {
         if matches!(
-            runtime_registry()
-                .unregister(&module, &session_id),
+            runtime_registry().unregister(&module, &session_id),
             Ok(true)
         ) {
-            crate::modules::broadcast_surface_module_change(
-                &module,
-                "runtime_register_failed",
-            );
+            crate::modules::broadcast_surface_module_change(&module, "runtime_register_failed");
         }
 
         return Err(format!(
@@ -691,10 +687,7 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         ));
     }
 
-    crate::modules::broadcast_surface_module_change(
-        &module,
-        "runtime_ready",
-    );
+    crate::modules::broadcast_surface_module_change(&module, "runtime_ready");
     if let Err(error) = runtime_registry().broadcast_event(
         "module.lifecycle",
         "runtime_ready",
@@ -757,10 +750,7 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
     }
 
     if removed {
-        crate::modules::broadcast_surface_module_change(
-            &module,
-            "runtime_dead",
-        );
+        crate::modules::broadcast_surface_module_change(&module, "runtime_dead");
         if let Err(error) = runtime_registry().broadcast_event(
             "module.lifecycle",
             "runtime_dead",

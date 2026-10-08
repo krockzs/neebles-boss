@@ -14,11 +14,7 @@ pub enum SurfaceRequirementState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct SurfaceRequirements {
-    #[serde(
-        rename = "self",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "self", default, skip_serializing_if = "Option::is_none")]
     self_state: Option<SurfaceRequirementState>,
 
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -55,8 +51,7 @@ impl SurfaceRequirements {
 fn valid_requirement_module_id(value: &str) -> bool {
     !value.is_empty()
         && value.chars().all(|character| {
-            character.is_ascii_alphanumeric()
-                || matches!(character, '-' | '_' | '.')
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
         })
 }
 

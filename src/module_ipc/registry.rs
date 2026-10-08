@@ -83,26 +83,17 @@ impl RuntimeRegistry {
         Self::default()
     }
 
-    pub fn state(
-        &self,
-        module: &str,
-    ) -> Result<ModuleRuntimeState, String> {
+    pub fn state(&self, module: &str) -> Result<ModuleRuntimeState, String> {
         let module = module.trim();
 
         if module.is_empty() {
-            return Err(
-                "runtime state module cannot be empty"
-                    .to_string()
-            );
+            return Err("runtime state module cannot be empty".to_string());
         }
 
         let registry = self
             .inner
             .read()
-            .map_err(|_| {
-                "runtime registry read lock poisoned"
-                    .to_string()
-            })?;
+            .map_err(|_| "runtime registry read lock poisoned".to_string())?;
 
         if registry.runtimes.contains_key(module) {
             return Ok(ModuleRuntimeState::Open);
@@ -115,54 +106,34 @@ impl RuntimeRegistry {
         Ok(ModuleRuntimeState::Closed)
     }
 
-    pub fn begin_opening(
-        &self,
-        module: &str,
-    ) -> Result<(u64, String), String> {
+    pub fn begin_opening(&self, module: &str) -> Result<(u64, String), String> {
         let module = module.trim();
 
         if module.is_empty() {
-            return Err(
-                "runtime opening module cannot be empty"
-                    .to_string()
-            );
+            return Err("runtime opening module cannot be empty".to_string());
         }
 
         let mut registry = self
             .inner
             .write()
-            .map_err(|_| {
-                "runtime registry write lock poisoned"
-                    .to_string()
-            })?;
+            .map_err(|_| "runtime registry write lock poisoned".to_string())?;
 
         if registry.runtimes.contains_key(module) {
-            return Err(format!(
-                "module {} already has an open runtime",
-                module
-            ));
+            return Err(format!("module {} already has an open runtime", module));
         }
 
         if registry.openings.contains_key(module) {
-            return Err(format!(
-                "module {} is already opening",
-                module
-            ));
+            return Err(format!("module {} is already opening", module));
         }
 
         let generation = registry
             .next_opening_generation
             .checked_add(1)
-            .ok_or_else(|| {
-                "runtime opening generation overflow"
-                    .to_string()
-            })?;
+            .ok_or_else(|| "runtime opening generation overflow".to_string())?;
 
-        registry.next_opening_generation =
-            generation;
+        registry.next_opening_generation = generation;
 
-        let execution_id =
-            format!("module.open.{generation}");
+        let execution_id = format!("module.open.{generation}");
 
         registry.openings.insert(
             module.to_string(),
@@ -186,40 +157,26 @@ impl RuntimeRegistry {
         let module = module.trim();
 
         if module.is_empty() {
-            return Err(
-                "runtime opening owner module cannot be empty"
-                    .to_string()
-            );
+            return Err("runtime opening owner module cannot be empty".to_string());
         }
 
         if execution_id.trim().is_empty() {
-            return Err(
-                "runtime opening owner execution id cannot be empty"
-                    .to_string()
-            );
+            return Err("runtime opening owner execution id cannot be empty".to_string());
         }
         if pid == 0 {
-            return Err(
-                "runtime opening owner pid cannot be zero"
-                    .to_string()
-            );
+            return Err("runtime opening owner pid cannot be zero".to_string());
         }
 
         let mut registry = self
             .inner
             .write()
-            .map_err(|_| {
-                "runtime registry write lock poisoned"
-                    .to_string()
-            })?;
+            .map_err(|_| "runtime registry write lock poisoned".to_string())?;
 
         if registry.runtimes.contains_key(module) {
             return Ok(None);
         }
 
-        let Some(opening) =
-            registry.openings.get_mut(module)
-        else {
+        let Some(opening) = registry.openings.get_mut(module) else {
             return Ok(None);
         };
 
@@ -241,45 +198,31 @@ impl RuntimeRegistry {
         Ok(Some(opening.generation))
     }
 
-    pub fn seal_opening(
-        &self,
-        module: &str,
-        generation: u64,
-    ) -> Result<bool, String> {
+    pub fn seal_opening(&self, module: &str, generation: u64) -> Result<bool, String> {
         let module = module.trim();
 
         if module.is_empty() {
-            return Err(
-                "runtime opening module cannot be empty"
-                    .to_string()
-            );
+            return Err("runtime opening module cannot be empty".to_string());
         }
 
         let mut registry = self
             .inner
             .write()
-            .map_err(|_| {
-                "runtime registry write lock poisoned"
-                    .to_string()
-            })?;
+            .map_err(|_| "runtime registry write lock poisoned".to_string())?;
 
         if registry.runtimes.contains_key(module) {
             return Ok(true);
         }
 
         let keep_opening = {
-            let Some(opening) =
-                registry.openings.get_mut(module)
-            else {
+            let Some(opening) = registry.openings.get_mut(module) else {
                 return Ok(false);
             };
 
             if opening.generation != generation {
                 return Err(format!(
                     "module {} opening generation mismatch: expected={} actual={}",
-                    module,
-                    generation,
-                    opening.generation
+                    module, generation, opening.generation
                 ));
             }
 
@@ -304,28 +247,20 @@ impl RuntimeRegistry {
         let module = module.trim();
 
         if module.is_empty() {
-            return Err(
-                "runtime opening owner module cannot be empty"
-                    .to_string()
-            );
+            return Err("runtime opening owner module cannot be empty".to_string());
         }
 
         let mut registry = self
             .inner
             .write()
-            .map_err(|_| {
-                "runtime registry write lock poisoned"
-                    .to_string()
-            })?;
+            .map_err(|_| "runtime registry write lock poisoned".to_string())?;
 
         if registry.runtimes.contains_key(module) {
             return Ok(false);
         }
 
         let should_close = {
-            let Some(opening) =
-                registry.openings.get_mut(module)
-            else {
+            let Some(opening) = registry.openings.get_mut(module) else {
                 return Ok(false);
             };
 
@@ -337,8 +272,7 @@ impl RuntimeRegistry {
                 return Ok(false);
             }
 
-            opening.sealed
-                && opening.owners.is_empty()
+            opening.sealed && opening.owners.is_empty()
         };
 
         if should_close {
@@ -379,10 +313,7 @@ impl RuntimeRegistry {
 
         let module = record.module.clone();
 
-        registry.runtimes.insert(
-            module.clone(),
-            record,
-        );
+        registry.runtimes.insert(module.clone(), record);
 
         registry.openings.remove(&module);
 
@@ -548,11 +479,7 @@ impl RuntimeRegistry {
             .read()
             .map_err(|_| "runtime registry read lock poisoned".to_string())?;
 
-        let mut records = registry
-            .runtimes
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut records = registry.runtimes.values().cloned().collect::<Vec<_>>();
 
         records.sort_by(|left, right| left.module.cmp(&right.module));
 
@@ -610,13 +537,9 @@ mod certification_tests {
     fn canonical_opening_is_single_flight() {
         let registry = RuntimeRegistry::new();
 
-        assert_eq!(
-            registry.state("alpha").unwrap(),
-            ModuleRuntimeState::Closed
-        );
+        assert_eq!(registry.state("alpha").unwrap(), ModuleRuntimeState::Closed);
 
-        let (generation, _execution_id) =
-            registry.begin_opening("alpha").unwrap();
+        let (generation, _execution_id) = registry.begin_opening("alpha").unwrap();
 
         assert_eq!(
             registry.state("alpha").unwrap(),
@@ -625,60 +548,35 @@ mod certification_tests {
 
         let error = registry
             .begin_opening("alpha")
-            .expect_err(
-                "second opening must fail"
-            );
+            .expect_err("second opening must fail");
 
         assert!(error.contains("already opening"));
 
-        assert!(
-            !registry
-                .seal_opening(
-                    "alpha",
-                    generation,
-                )
-                .unwrap()
-        );
+        assert!(!registry.seal_opening("alpha", generation,).unwrap());
 
-        assert_eq!(
-            registry.state("alpha").unwrap(),
-            ModuleRuntimeState::Closed
-        );
+        assert_eq!(registry.state("alpha").unwrap(), ModuleRuntimeState::Closed);
     }
 
     #[test]
     fn runtime_registration_consumes_opening_state() {
         let registry = RuntimeRegistry::new();
 
-        let (generation, _execution_id) =
-            registry.begin_opening("alpha").unwrap();
+        let (generation, _execution_id) = registry.begin_opening("alpha").unwrap();
 
-        let (runtime, _receiver) =
-            record("alpha", "session-a", &[]);
+        let (runtime, _receiver) = record("alpha", "session-a", &[]);
 
         registry.register(runtime).unwrap();
 
-        assert_eq!(
-            registry.state("alpha").unwrap(),
-            ModuleRuntimeState::Open
-        );
+        assert_eq!(registry.state("alpha").unwrap(), ModuleRuntimeState::Open);
 
-        assert!(
-            registry
-                .seal_opening(
-                    "alpha",
-                    generation,
-                )
-                .unwrap()
-        );
+        assert!(registry.seal_opening("alpha", generation,).unwrap());
     }
 
     #[test]
     fn opening_owners_are_generation_bound_and_multi_process_safe() {
         let registry = RuntimeRegistry::new();
 
-        let (first, first_execution_id) =
-            registry.begin_opening("alpha").unwrap();
+        let (first, first_execution_id) = registry.begin_opening("alpha").unwrap();
 
         assert_eq!(
             registry
@@ -694,84 +592,47 @@ mod certification_tests {
             Some(first)
         );
 
-        assert!(
-            registry
-                .seal_opening("alpha", first)
-                .unwrap()
-        );
+        assert!(registry.seal_opening("alpha", first).unwrap());
 
-        assert!(
-            !registry
-                .release_opening_owner(
-                    "alpha",
-                    first,
-                    1001,
-                )
-                .unwrap()
-        );
+        assert!(!registry
+            .release_opening_owner("alpha", first, 1001,)
+            .unwrap());
 
         assert_eq!(
             registry.state("alpha").unwrap(),
             ModuleRuntimeState::Opening
         );
 
-        assert!(
-            registry
-                .release_opening_owner(
-                    "alpha",
-                    first,
-                    1002,
-                )
-                .unwrap()
-        );
+        assert!(registry
+            .release_opening_owner("alpha", first, 1002,)
+            .unwrap());
 
-        assert_eq!(
-            registry.state("alpha").unwrap(),
-            ModuleRuntimeState::Closed
-        );
+        assert_eq!(registry.state("alpha").unwrap(), ModuleRuntimeState::Closed);
 
-        let (second, _second_execution_id) =
-            registry.begin_opening("alpha").unwrap();
+        let (second, _second_execution_id) = registry.begin_opening("alpha").unwrap();
 
         assert_ne!(first, second);
 
-        assert!(
-            !registry
-                .release_opening_owner(
-                    "alpha",
-                    first,
-                    1002,
-                )
-                .unwrap()
-        );
+        assert!(!registry
+            .release_opening_owner("alpha", first, 1002,)
+            .unwrap());
 
         assert_eq!(
             registry.state("alpha").unwrap(),
             ModuleRuntimeState::Opening
         );
 
-        assert!(
-            !registry
-                .seal_opening("alpha", second)
-                .unwrap()
-        );
+        assert!(!registry.seal_opening("alpha", second).unwrap());
     }
     #[test]
     fn foreign_governor_execution_cannot_claim_opening_owner() {
         let registry = RuntimeRegistry::new();
 
-        let (generation, execution_id) =
-            registry.begin_opening("alpha").unwrap();
+        let (generation, execution_id) = registry.begin_opening("alpha").unwrap();
 
         let error = registry
-            .claim_opening_owner(
-                "alpha",
-                "module.notify-demo",
-                1001,
-            )
-            .expect_err(
-                "foreign Governor execution must fail"
-            );
+            .claim_opening_owner("alpha", "module.notify-demo", 1001)
+            .expect_err("foreign Governor execution must fail");
 
         assert!(error.contains("Governor execution"));
 
@@ -782,35 +643,18 @@ mod certification_tests {
 
         assert_eq!(
             registry
-                .claim_opening_owner(
-                    "alpha",
-                    &execution_id,
-                    1001,
-                )
+                .claim_opening_owner("alpha", &execution_id, 1001,)
                 .unwrap(),
             Some(generation)
         );
 
-        assert!(
-            registry
-                .seal_opening("alpha", generation)
-                .unwrap()
-        );
+        assert!(registry.seal_opening("alpha", generation).unwrap());
 
-        assert!(
-            registry
-                .release_opening_owner(
-                    "alpha",
-                    generation,
-                    1001,
-                )
-                .unwrap()
-        );
+        assert!(registry
+            .release_opening_owner("alpha", generation, 1001,)
+            .unwrap());
 
-        assert_eq!(
-            registry.state("alpha").unwrap(),
-            ModuleRuntimeState::Closed
-        );
+        assert_eq!(registry.state("alpha").unwrap(), ModuleRuntimeState::Closed);
     }
     #[test]
     fn targeted_delivery_reaches_only_exact_runtime_session() {

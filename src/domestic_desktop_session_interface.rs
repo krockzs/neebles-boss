@@ -163,23 +163,17 @@ fn desktop_user_manager_graphical_environment(
     desktop_uid: libc::uid_t,
     desktop_gid: libc::gid_t,
 ) -> BTreeMap<String, String> {
-    let runtime_dir =
-        format!("/run/user/{desktop_uid}");
+    let runtime_dir = format!("/run/user/{desktop_uid}");
 
-    let bus_address =
-        format!("unix:path={runtime_dir}/bus");
+    let bus_address = format!("unix:path={runtime_dir}/bus");
 
-    let mut command =
-        Command::new("/usr/bin/systemctl");
+    let mut command = Command::new("/usr/bin/systemctl");
 
     command
         .args(["--user", "show-environment"])
         .env_clear()
         .env("XDG_RUNTIME_DIR", &runtime_dir)
-        .env(
-            "DBUS_SESSION_BUS_ADDRESS",
-            &bus_address,
-        )
+        .env("DBUS_SESSION_BUS_ADDRESS", &bus_address)
         .env("LC_ALL", "C")
         .uid(desktop_uid)
         .gid(desktop_gid);
@@ -194,61 +188,38 @@ fn desktop_user_manager_graphical_environment(
 
     let mut values = BTreeMap::new();
 
-    for line in String::from_utf8_lossy(
-        &output.stdout
-    ).lines() {
-        let Some((key, value)) =
-            line.split_once("=")
-        else {
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((key, value)) = line.split_once("=") else {
             continue;
         };
 
-        if !matches!(
-            key,
-            DISPLAY_KEY
-                | WAYLAND_DISPLAY_KEY
-                | XAUTHORITY_KEY
-        ) {
+        if !matches!(key, DISPLAY_KEY | WAYLAND_DISPLAY_KEY | XAUTHORITY_KEY) {
             continue;
         }
 
         if !value.trim().is_empty() {
-            values.insert(
-                key.to_string(),
-                value.to_string(),
-            );
+            values.insert(key.to_string(), value.to_string());
         }
     }
 
     values
 }
 
-fn discover_runtime_xauthority(
-    desktop_uid: libc::uid_t,
-) -> Option<String> {
-    let runtime_dir =
-        PathBuf::from(
-            format!("/run/user/{desktop_uid}")
-        );
+fn discover_runtime_xauthority(desktop_uid: libc::uid_t) -> Option<String> {
+    let runtime_dir = PathBuf::from(format!("/run/user/{desktop_uid}"));
 
-    let entries =
-        fs::read_dir(&runtime_dir).ok()?;
+    let entries = fs::read_dir(&runtime_dir).ok()?;
 
     let mut candidates = Vec::new();
 
     for entry in entries.flatten() {
-        let name =
-            entry.file_name()
-                .to_string_lossy()
-                .into_owned();
+        let name = entry.file_name().to_string_lossy().into_owned();
 
         if !name.starts_with("xauth_") {
             continue;
         }
 
-        let Ok(file_type) =
-            entry.file_type()
-        else {
+        let Ok(file_type) = entry.file_type() else {
             continue;
         };
 
@@ -256,9 +227,7 @@ fn discover_runtime_xauthority(
             continue;
         }
 
-        let Ok(metadata) =
-            entry.metadata()
-        else {
+        let Ok(metadata) = entry.metadata() else {
             continue;
         };
 
@@ -275,11 +244,7 @@ fn discover_runtime_xauthority(
         return None;
     }
 
-    Some(
-        candidates.remove(0)
-            .to_string_lossy()
-            .into_owned(),
-    )
+    Some(candidates.remove(0).to_string_lossy().into_owned())
 }
 
 fn explicit_identity_inputs(
@@ -291,35 +256,19 @@ fn explicit_identity_inputs(
         ("NEEBLES_DESKTOP_GID".to_string(), desktop_gid.to_string()),
     ]);
 
-    let session_environment =
-        desktop_user_manager_graphical_environment(
-            desktop_uid,
-            desktop_gid,
-        );
+    let session_environment = desktop_user_manager_graphical_environment(desktop_uid, desktop_gid);
 
     for key in [DISPLAY_KEY, WAYLAND_DISPLAY_KEY, XAUTHORITY_KEY] {
-        if let Some(value) =
-            session_environment.get(key)
-        {
+        if let Some(value) = session_environment.get(key) {
             if !value.trim().is_empty() {
-                inputs.insert(
-                    key.to_string(),
-                    value.clone(),
-                );
+                inputs.insert(key.to_string(), value.clone());
             }
         }
     }
 
     if !inputs.contains_key(XAUTHORITY_KEY) {
-        if let Some(value) =
-            discover_runtime_xauthority(
-                desktop_uid
-            )
-        {
-            inputs.insert(
-                XAUTHORITY_KEY.to_string(),
-                value,
-            );
+        if let Some(value) = discover_runtime_xauthority(desktop_uid) {
+            inputs.insert(XAUTHORITY_KEY.to_string(), value);
         }
     }
 

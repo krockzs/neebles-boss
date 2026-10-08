@@ -490,13 +490,7 @@ fn dispatch_module(module: &str, request: ExecutionRequest) -> ExecutionResponse
 
 fn parse_module_governor_action_request(
     request: &ExecutionRequest,
-) -> Result<(
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    bool,
-), String> {
+) -> Result<(String, String, Option<String>, Option<String>, bool), String> {
     if request.args.len() != 5 {
         return Err(
             "Boss module-governor-action requires exactly: <module> <action> <object-id-or-empty> <transition-or-empty> <lifecycle-events-bool>"
@@ -508,35 +502,24 @@ fn parse_module_governor_action_request(
     let action = request.args[1].trim();
 
     if module.is_empty() {
-        return Err(
-            "Boss module-governor-action module cannot be empty"
-                .to_string()
-        );
+        return Err("Boss module-governor-action module cannot be empty".to_string());
     }
 
     if action.is_empty() {
-        return Err(
-            "Boss module-governor-action action cannot be empty"
-                .to_string()
-        );
+        return Err("Boss module-governor-action action cannot be empty".to_string());
     }
 
-    let object_id = request.args[2]
-        .trim();
+    let object_id = request.args[2].trim();
 
-    let transition_id = request.args[3]
-        .trim();
+    let transition_id = request.args[3].trim();
 
-    let lifecycle_events = match request.args[4]
-        .trim()
-    {
+    let lifecycle_events = match request.args[4].trim() {
         "true" => true,
         "false" => false,
 
         _ => {
             return Err(
-                "Boss module-governor-action lifecycle-events must be true or false"
-                    .to_string()
+                "Boss module-governor-action lifecycle-events must be true or false".to_string(),
             );
         }
     };
@@ -558,84 +541,62 @@ fn parse_module_governor_action_request(
     ))
 }
 
-fn dispatch_module_governor_action(
-    request: &ExecutionRequest,
-) -> ExecutionResponse {
-    let (
-        module,
-        action,
-        object_id,
-        transition_id,
-        collect_lifecycle_events,
-    ) = match parse_module_governor_action_request(request) {
-        Ok(value) => value,
+fn dispatch_module_governor_action(request: &ExecutionRequest) -> ExecutionResponse {
+    let (module, action, object_id, transition_id, collect_lifecycle_events) =
+        match parse_module_governor_action_request(request) {
+            Ok(value) => value,
 
-        Err(error) => {
-            return ExecutionResponse::fail(
-                2,
-                "invalid_module_governor_action",
-                error,
-            );
-        }
-    };
-
-    let event_sink =
-        Arc::new(Mutex::new(Vec::<Value>::new()));
-
-    let operation =
-        if collect_lifecycle_events {
-            let sink = Arc::clone(&event_sink);
-
-            let observer_factory:
-                modules::ModuleLifecycleObserverFactory =
-                Arc::new(
-                    move |observed_module, observed_action| {
-                        let observed_module =
-                            observed_module.to_string();
-
-                        let observed_action =
-                            observed_action.to_string();
-
-                        let sink = Arc::clone(&sink);
-
-                        crate::lifecycle_observer::LifecycleObserver::observing(
-                            move |snapshot| {
-                                let envelope = json!({
-                                    "type":
-                                        "lifecycle.communication",
-                                    "module":
-                                        observed_module,
-                                    "action":
-                                        observed_action,
-                                    "communication":
-                                        snapshot.values()
-                                });
-
-                                if let Ok(mut guard) =
-                                    sink.lock()
-                                {
-                                    guard.push(envelope);
-                                }
-                            },
-                        )
-                    },
-                );
-
-            modules::execute_governor_target_observed(
-                &module,
-                &action,
-                object_id.as_deref(),
-                transition_id.as_deref(),
-                &observer_factory,
-            )
-        } else {
-            modules::execute_governor_target(
-                &module,
-                &action,
-                object_id.as_deref(),
-                transition_id.as_deref(),
-            )
+            Err(error) => {
+                return ExecutionResponse::fail(2, "invalid_module_governor_action", error);
+            }
         };
+
+    let event_sink = Arc::new(Mutex::new(Vec::<Value>::new()));
+
+    let operation = if collect_lifecycle_events {
+        let sink = Arc::clone(&event_sink);
+
+        let observer_factory: modules::ModuleLifecycleObserverFactory =
+            Arc::new(move |observed_module, observed_action| {
+                let observed_module = observed_module.to_string();
+
+                let observed_action = observed_action.to_string();
+
+                let sink = Arc::clone(&sink);
+
+                crate::lifecycle_observer::LifecycleObserver::observing(move |snapshot| {
+                    let envelope = json!({
+                        "type":
+                            "lifecycle.communication",
+                        "module":
+                            observed_module,
+                        "action":
+                            observed_action,
+                        "communication":
+                            snapshot.values()
+                    });
+
+                    if let Ok(mut guard) = sink.lock() {
+                        guard.push(envelope);
+                    }
+                })
+            });
+
+        modules::execute_governor_target_observed(
+            &module,
+            &action,
+            object_id.as_deref(),
+            transition_id.as_deref(),
+            &observer_factory,
+        )
+    } else {
+        modules::execute_governor_target(
+            &module,
+            &action,
+            object_id.as_deref(),
+            transition_id.as_deref(),
+        )
+    };
 
     match operation {
         Ok(()) => {
@@ -651,11 +612,7 @@ fn dispatch_module_governor_action(
             })))
         }
 
-        Err(error) => ExecutionResponse::fail(
-            1,
-            "module_governor_action",
-            error,
-        ),
+        Err(error) => ExecutionResponse::fail(1, "module_governor_action", error),
     }
 }
 
@@ -679,14 +636,11 @@ fn dispatch_surface_action(request: &ExecutionRequest) -> ExecutionResponse {
             "action": action
         }))),
 
-        Err(error) =>
-            ExecutionResponse::fail(1, "surface_action", error),
+        Err(error) => ExecutionResponse::fail(1, "surface_action", error),
     }
 }
 
-fn dispatch_surface_model(
-    request: &ExecutionRequest,
-) -> ExecutionResponse {
+fn dispatch_surface_model(request: &ExecutionRequest) -> ExecutionResponse {
     if !request.args.is_empty() {
         return ExecutionResponse::fail(
             2,
@@ -696,15 +650,9 @@ fn dispatch_surface_model(
     }
 
     match modules::installed_modules_presentation_json() {
-        Ok(value) =>
-            ExecutionResponse::ok(Some(value)),
+        Ok(value) => ExecutionResponse::ok(Some(value)),
 
-        Err(error) =>
-            ExecutionResponse::fail(
-                1,
-                "surface_model",
-                error,
-            ),
+        Err(error) => ExecutionResponse::fail(1, "surface_model", error),
     }
 }
 #[cfg(test)]
@@ -714,65 +662,37 @@ mod module_governor_action_dispatch_tests {
     fn request(args: Vec<&str>) -> ExecutionRequest {
         ExecutionRequest {
             target: "boss".to_string(),
-            action:
-                Some("module-governor-action".to_string()),
-            args:
-                args.into_iter()
-                    .map(str::to_string)
-                    .collect(),
-            context:
-                crate::request::ExecutionContext::default(),
+            action: Some("module-governor-action".to_string()),
+            args: args.into_iter().map(str::to_string).collect(),
+            context: crate::request::ExecutionContext::default(),
         }
     }
 
     #[test]
     fn governor_action_transport_preserves_exact_target() {
-        let parsed =
-            parse_module_governor_action_request(
-                &request(vec![
-                    "module.alpha",
-                    "future-action",
-                    "object.alpha",
-                    "future-transition",
-                    "true",
-                ]),
-            )
-            .unwrap();
+        let parsed = parse_module_governor_action_request(&request(vec![
+            "module.alpha",
+            "future-action",
+            "object.alpha",
+            "future-transition",
+            "true",
+        ]))
+        .unwrap();
 
         assert_eq!(parsed.0, "module.alpha");
         assert_eq!(parsed.1, "future-action");
-        assert_eq!(
-            parsed.2.as_deref(),
-            Some("object.alpha")
-        );
-        assert_eq!(
-            parsed.3.as_deref(),
-            Some("future-transition")
-        );
+        assert_eq!(parsed.2.as_deref(), Some("object.alpha"));
+        assert_eq!(parsed.3.as_deref(), Some("future-transition"));
         assert!(parsed.4);
     }
 
     #[test]
     fn governor_action_transport_rejects_ambiguous_shape() {
         for args in [
-            vec![
-                "module.alpha",
-                "open",
-            ],
-            vec![
-                "module.alpha",
-                "open",
-                "",
-                "",
-                "maybe",
-            ],
+            vec!["module.alpha", "open"],
+            vec!["module.alpha", "open", "", "", "maybe"],
         ] {
-            assert!(
-                parse_module_governor_action_request(
-                    &request(args)
-                )
-                .is_err()
-            );
+            assert!(parse_module_governor_action_request(&request(args)).is_err());
         }
     }
 }
@@ -793,19 +713,13 @@ mod surface_action_dispatch_tests {
 
     #[test]
     fn persistent_surface_model_rejects_arguments_before_materialization() {
-        let response =
-            dispatch_surface_model(
-                &request(vec!["unexpected"]),
-            );
+        let response = dispatch_surface_model(&request(vec!["unexpected"]));
 
         assert!(!response.ok);
         assert_eq!(response.code, 2);
 
         assert_eq!(
-            response
-                .error
-                .expect("contract error expected")
-                .kind,
+            response.error.expect("contract error expected").kind,
             "invalid_surface_model_arguments"
         );
     }
@@ -828,10 +742,7 @@ mod surface_action_dispatch_tests {
             assert_eq!(response.code, 2);
 
             let error = response.error.unwrap();
-            assert_eq!(
-                error.kind,
-                "invalid_surface_action_arguments"
-            );
+            assert_eq!(error.kind, "invalid_surface_action_arguments");
         }
     }
 }
@@ -914,11 +825,7 @@ fn dispatch_tray_provider_start(request: &ExecutionRequest) -> ExecutionResponse
     let module = &request.args[0];
 
     if let Err(error) = modules::find_module_dir(module) {
-        return ExecutionResponse::fail(
-            2,
-            "invalid_tray_provider_start_module",
-            error,
-        );
+        return ExecutionResponse::fail(2, "invalid_tray_provider_start_module", error);
     }
 
     match modules::start_tray_provider(module) {
@@ -942,11 +849,7 @@ fn dispatch_tray_provider_stop(request: &ExecutionRequest) -> ExecutionResponse 
     let module = &request.args[0];
 
     if let Err(error) = modules::find_module_dir(module) {
-        return ExecutionResponse::fail(
-            2,
-            "invalid_tray_provider_stop_module",
-            error,
-        );
+        return ExecutionResponse::fail(2, "invalid_tray_provider_stop_module", error);
     }
 
     match modules::stop_tray_provider(module) {
@@ -986,11 +889,7 @@ fn dispatch_module_runtime_deactivate(request: &ExecutionRequest) -> ExecutionRe
     let reason = request.args[1].trim();
 
     if let Err(error) = modules::find_module_dir(module) {
-        return ExecutionResponse::fail(
-            2,
-            "invalid_module_runtime_deactivate_module",
-            error,
-        );
+        return ExecutionResponse::fail(2, "invalid_module_runtime_deactivate_module", error);
     }
 
     if reason.is_empty() {
@@ -1024,10 +923,8 @@ mod persistent_runtime_dispatch_tests {
 
     #[test]
     fn tray_start_rejects_invalid_module_identity_before_runtime_birth() {
-        let response = dispatch_tray_provider_start(&request(
-            "tray-provider-start",
-            &["../escape"],
-        ));
+        let response =
+            dispatch_tray_provider_start(&request("tray-provider-start", &["../escape"]));
 
         assert!(!response.ok);
         assert_eq!(response.code, 2);
@@ -1039,10 +936,7 @@ mod persistent_runtime_dispatch_tests {
 
     #[test]
     fn tray_stop_rejects_invalid_module_identity_before_runtime_probe() {
-        let response = dispatch_tray_provider_stop(&request(
-            "tray-provider-stop",
-            &["../escape"],
-        ));
+        let response = dispatch_tray_provider_stop(&request("tray-provider-stop", &["../escape"]));
 
         assert!(!response.ok);
         assert_eq!(response.code, 2);
@@ -1084,26 +978,19 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
             Err(error) => ExecutionResponse::fail(1, "boss_update_execute", error),
         },
 
-        Some("module-governor-action") =>
-            dispatch_module_governor_action(&request),
+        Some("module-governor-action") => dispatch_module_governor_action(&request),
 
-        Some("surface-model") =>
-            dispatch_surface_model(&request),
+        Some("surface-model") => dispatch_surface_model(&request),
 
-        Some("surface-action") =>
-            dispatch_surface_action(&request),
+        Some("surface-action") => dispatch_surface_action(&request),
 
-        Some("tray-provider-start") =>
-            dispatch_tray_provider_start(&request),
+        Some("tray-provider-start") => dispatch_tray_provider_start(&request),
 
-        Some("tray-provider-stop") =>
-            dispatch_tray_provider_stop(&request),
+        Some("tray-provider-stop") => dispatch_tray_provider_stop(&request),
 
-        Some("tray-provider-reconcile") =>
-            dispatch_tray_provider_reconcile(&request),
+        Some("tray-provider-reconcile") => dispatch_tray_provider_reconcile(&request),
 
-        Some("module-runtime-deactivate") =>
-            dispatch_module_runtime_deactivate(&request),
+        Some("module-runtime-deactivate") => dispatch_module_runtime_deactivate(&request),
 
         Some("domestic-construction-execute") => dispatch_domestic_construction(&request),
 

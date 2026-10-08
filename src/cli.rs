@@ -33,8 +33,10 @@ pub fn run(args: Vec<String>) -> i32 {
         "notifications" => {
             if args.get(1).map(String::as_str) == Some("serve") && args.len() == 2 {
                 result(crate::notification_presenter::serve())
-            } else { fail("usage: neebles notifications serve".to_string()) }
-        },
+            } else {
+                fail("usage: neebles notifications serve".to_string())
+            }
+        }
         "socket" => socket_command(&args[1..]),
         "tray" => tray_command(&args[1..]),
         target => module_command(target, &args[1..]),
@@ -1084,19 +1086,30 @@ fn notify_command(args: &[String]) -> i32 {
     if let Err(error) = crate::notifications::Severity::parse(severity) {
         return fail(error);
     }
-    if std::env::var("NEEBLES_MODULE").ok().is_some_and(|s| !s.trim().is_empty()) {
-        return fail("module runtimes must use governed modules.sock notification messages".to_string());
+    if std::env::var("NEEBLES_MODULE")
+        .ok()
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        return fail(
+            "module runtimes must use governed modules.sock notification messages".to_string(),
+        );
     }
     let request = ExecutionRequest {
         target: "notifications".to_string(),
         action: Some("emit".to_string()),
         args: vec![severity.clone(), title, message],
-        context: ExecutionContext { caller: "cli.notify".to_string() },
+        context: ExecutionContext {
+            caller: "cli.notify".to_string(),
+        },
     };
     match ipc::request(&request) {
         Ok(response) if response.ok => 0,
-        Ok(response) => fail(response.error.map(|error| error.message)
-            .unwrap_or_else(|| "persistent Boss rejected notification".to_string())),
+        Ok(response) => fail(
+            response
+                .error
+                .map(|error| error.message)
+                .unwrap_or_else(|| "persistent Boss rejected notification".to_string()),
+        ),
         Err(error) => fail(error),
     }
 }

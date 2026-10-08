@@ -498,11 +498,7 @@ pub fn installed_module_surface_projection(
      * User preference is whole-module visibility and is
      * materialized independently for each Boss surface.
      */
-    surface_projection_from_module(
-        &module_dir,
-        &manifest,
-        &lifecycle,
-    )
+    surface_projection_from_module(&module_dir, &manifest, &lifecycle)
 }
 
 /*
@@ -546,21 +542,11 @@ fn declared_surface_action_target(
     let data = item.data();
     let mut matches = Vec::<Option<String>>::new();
 
-    if data
-        .get("action")
-        .map(String::as_str)
-        .map(str::trim)
-        == Some(requested_action)
-    {
+    if data.get("action").map(String::as_str).map(str::trim) == Some(requested_action) {
         matches.push(item.transition().map(str::to_string));
     }
 
-    if data
-        .get("action_on")
-        .map(String::as_str)
-        .map(str::trim)
-        == Some(requested_action)
-    {
+    if data.get("action_on").map(String::as_str).map(str::trim) == Some(requested_action) {
         let transition = data
             .get("transition_on")
             .map(String::as_str)
@@ -577,12 +563,7 @@ fn declared_surface_action_target(
         matches.push(Some(transition.to_string()));
     }
 
-    if data
-        .get("action_off")
-        .map(String::as_str)
-        .map(str::trim)
-        == Some(requested_action)
-    {
+    if data.get("action_off").map(String::as_str).map(str::trim) == Some(requested_action) {
         let transition = data
             .get("transition_off")
             .map(String::as_str)
@@ -634,10 +615,7 @@ fn execute_resolved_surface_action_with<Requirements, Execute>(
     execute: Execute,
 ) -> Result<(), String>
 where
-    Requirements: FnOnce(
-        &str,
-        &crate::surface_projection::SurfaceRequirements,
-    ) -> bool,
+    Requirements: FnOnce(&str, &crate::surface_projection::SurfaceRequirements) -> bool,
     Execute: FnOnce(&str, &SurfaceActionTarget) -> Result<(), String>,
 {
     if item.identity().owner_module() != owner {
@@ -649,8 +627,7 @@ where
         ));
     }
 
-    let target =
-        declared_surface_action_target(item, requested_action)?;
+    let target = declared_surface_action_target(item, requested_action)?;
 
     if !requirements_satisfied(owner, item.requirements()) {
         return Err(format!(
@@ -689,8 +666,7 @@ pub fn execute_surface_action(
     let item = content
         .iter()
         .find(|item| {
-            item.identity().owner_module() == owner
-                && item.identity().item_id() == item_id
+            item.identity().owner_module() == owner && item.identity().item_id() == item_id
         })
         .ok_or_else(|| {
             format!(
@@ -744,24 +720,22 @@ mod surface_action_execution_tests {
             lifecycle.objects.insert(object_id.to_string(), object);
         }
 
-        let mut projection =
-            crate::surface_projection::SurfaceProjection::new();
+        let mut projection = crate::surface_projection::SurfaceProjection::new();
 
         projection
             .register_for_lifecycle(
                 &lifecycle,
-                crate::surface_projection::SurfaceProjectionItem
-                    ::with_data_and_requirements(
-                        "config.feature",
-                        "module.alpha",
-                        "ui",
-                        object_id.map(str::to_string),
-                        None,
-                        true,
-                        data,
-                        requirements,
-                    )
-                    .unwrap(),
+                crate::surface_projection::SurfaceProjectionItem::with_data_and_requirements(
+                    "config.feature",
+                    "module.alpha",
+                    "ui",
+                    object_id.map(str::to_string),
+                    None,
+                    true,
+                    data,
+                    requirements,
+                )
+                .unwrap(),
             )
             .unwrap();
 
@@ -775,16 +749,11 @@ mod surface_action_execution_tests {
     fn button_action_is_derived_from_fresh_surface_item() {
         let item = content_item(
             None,
-            BTreeMap::from([(
-                "action".to_string(),
-                "notify-demo".to_string(),
-            )]),
+            BTreeMap::from([("action".to_string(), "notify-demo".to_string())]),
             crate::surface_projection::SurfaceRequirements::default(),
         );
 
-        let target =
-            declared_surface_action_target(&item, "notify-demo")
-                .unwrap();
+        let target = declared_surface_action_target(&item, "notify-demo").unwrap();
 
         assert_eq!(target.action, "notify-demo");
         assert_eq!(target.object_id, None);
@@ -804,35 +773,22 @@ mod surface_action_execution_tests {
             crate::surface_projection::SurfaceRequirements::default(),
         );
 
-        let target =
-            declared_surface_action_target(&item, "feature-on")
-                .unwrap();
+        let target = declared_surface_action_target(&item, "feature-on").unwrap();
 
-        assert_eq!(
-            target.object_id.as_deref(),
-            Some("notify-switch")
-        );
+        assert_eq!(target.object_id.as_deref(), Some("notify-switch"));
 
-        assert_eq!(
-            target.transition_id.as_deref(),
-            Some("feature-on")
-        );
+        assert_eq!(target.transition_id.as_deref(), Some("feature-on"));
     }
 
     #[test]
     fn caller_cannot_invent_surface_action() {
         let item = content_item(
             None,
-            BTreeMap::from([(
-                "action".to_string(),
-                "notify-demo".to_string(),
-            )]),
+            BTreeMap::from([("action".to_string(), "notify-demo".to_string())]),
             crate::surface_projection::SurfaceRequirements::default(),
         );
 
-        let error =
-            declared_surface_action_target(&item, "invented")
-                .unwrap_err();
+        let error = declared_surface_action_target(&item, "invented").unwrap_err();
 
         assert!(error.contains("does not declare action"));
     }
@@ -849,26 +805,18 @@ mod surface_action_execution_tests {
             crate::surface_projection::SurfaceRequirements::default(),
         );
 
-        let error =
-            declared_surface_action_target(&item, "same")
-                .unwrap_err();
+        let error = declared_surface_action_target(&item, "same").unwrap_err();
 
         assert!(error.contains("ambiguous action"));
     }
 
     #[test]
     fn unmet_requirements_block_lifecycle_execution() {
-        let requirements = serde_json::from_value(
-            serde_json::json!({"self": "open"}),
-        )
-        .unwrap();
+        let requirements = serde_json::from_value(serde_json::json!({"self": "open"})).unwrap();
 
         let item = content_item(
             None,
-            BTreeMap::from([(
-                "action".to_string(),
-                "notify-demo".to_string(),
-            )]),
+            BTreeMap::from([("action".to_string(), "notify-demo".to_string())]),
             requirements,
         );
 
@@ -910,14 +858,8 @@ mod surface_action_execution_tests {
             |owner, target| {
                 assert_eq!(owner, "module.alpha");
                 assert_eq!(target.action, "feature-on");
-                assert_eq!(
-                    target.object_id.as_deref(),
-                    Some("notify-switch")
-                );
-                assert_eq!(
-                    target.transition_id.as_deref(),
-                    Some("feature-on")
-                );
+                assert_eq!(target.object_id.as_deref(), Some("notify-switch"));
+                assert_eq!(target.transition_id.as_deref(), Some("feature-on"));
 
                 executed.set(true);
                 Ok(())
@@ -955,16 +897,14 @@ fn surface_presentation_label(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        let label = module_strings
-            .get(label_key)
-            .ok_or_else(|| {
-                format!(
-                    "module {} Surface item {} declares missing translation key {}",
-                    item.identity().owner_module(),
-                    item.identity().item_id(),
-                    label_key
-                )
-            })?;
+        let label = module_strings.get(label_key).ok_or_else(|| {
+            format!(
+                "module {} Surface item {} declares missing translation key {}",
+                item.identity().owner_module(),
+                item.identity().item_id(),
+                label_key
+            )
+        })?;
 
         if label.trim().is_empty() {
             return Err(format!(
@@ -978,14 +918,13 @@ fn surface_presentation_label(
         return Ok(Some(label.clone()));
     }
 
-    Ok(
-        item.data()
-            .get("label")
-            .map(String::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    )
+    Ok(item
+        .data()
+        .get("label")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
 }
 
 fn surface_content_item_json(
@@ -994,14 +933,12 @@ fn surface_content_item_json(
     module_strings: &BTreeMap<String, String>,
 ) -> Result<Value, String> {
     let active = match item.object_id() {
-        Some(object_id) if states.contains(object_id) =>
-            item.canonical_active(states)?,
+        Some(object_id) if states.contains(object_id) => item.canonical_active(states)?,
 
         _ => None,
     };
 
-    let label =
-        surface_presentation_label(item, module_strings)?;
+    let label = surface_presentation_label(item, module_strings)?;
 
     Ok(json!({
         "owner_module":
@@ -1041,59 +978,48 @@ mod surface_content_json_contract_tests {
 
     #[test]
     fn productive_surface_json_preserves_typed_requirements() {
-        let requirements:
-            crate::surface_projection::SurfaceRequirements =
-            serde_json::from_value(
-                serde_json::json!({
-                    "self": "open",
-                    "modules": {
-                        "module.beta": "active"
-                    }
-                })
-            )
+        let requirements: crate::surface_projection::SurfaceRequirements =
+            serde_json::from_value(serde_json::json!({
+                "self": "open",
+                "modules": {
+                    "module.beta": "active"
+                }
+            }))
             .unwrap();
 
-        let lifecycle =
-            crate::lifecycle::LifecycleContract::default();
+        let lifecycle = crate::lifecycle::LifecycleContract::default();
 
-        let mut projection =
-            crate::surface_projection::SurfaceProjection::new();
+        let mut projection = crate::surface_projection::SurfaceProjection::new();
 
         projection
             .register_for_lifecycle(
                 &lifecycle,
-                crate::surface_projection::SurfaceProjectionItem
-                    ::with_data_and_requirements(
-                        "notify.ui",
-                        "module.alpha",
-                        "ui",
-                        None,
-                        None,
-                        true,
-                        std::collections::BTreeMap::from([(
-                            "control".to_string(),
-                            "button".to_string(),
-                        )]),
-                        requirements,
-                    )
-                    .unwrap(),
+                crate::surface_projection::SurfaceProjectionItem::with_data_and_requirements(
+                    "notify.ui",
+                    "module.alpha",
+                    "ui",
+                    None,
+                    None,
+                    true,
+                    std::collections::BTreeMap::from([(
+                        "control".to_string(),
+                        "button".to_string(),
+                    )]),
+                    requirements,
+                )
+                .unwrap(),
             )
             .unwrap();
 
-        let content =
-            crate::surface_content::resolve_all(&projection);
+        let content = crate::surface_content::resolve_all(&projection);
 
-        let states =
-            crate::lifecycle_objects::ObjectStateStore::new();
+        let states = crate::lifecycle_objects::ObjectStateStore::new();
 
         let value =
             surface_content_item_json(&content[0], &states, &std::collections::BTreeMap::new())
                 .unwrap();
 
-        assert_eq!(
-            value["require"]["self"],
-            serde_json::json!("open")
-        );
+        assert_eq!(value["require"]["self"], serde_json::json!("open"));
 
         assert_eq!(
             value["require"]["modules"]["module.beta"],
@@ -1103,11 +1029,9 @@ mod surface_content_json_contract_tests {
 
     #[test]
     fn productive_surface_json_preserves_empty_requirements() {
-        let lifecycle =
-            crate::lifecycle::LifecycleContract::default();
+        let lifecycle = crate::lifecycle::LifecycleContract::default();
 
-        let mut projection =
-            crate::surface_projection::SurfaceProjection::new();
+        let mut projection = crate::surface_projection::SurfaceProjection::new();
 
         projection
             .register_for_lifecycle(
@@ -1128,28 +1052,21 @@ mod surface_content_json_contract_tests {
             )
             .unwrap();
 
-        let content =
-            crate::surface_content::resolve_all(&projection);
+        let content = crate::surface_content::resolve_all(&projection);
 
-        let states =
-            crate::lifecycle_objects::ObjectStateStore::new();
+        let states = crate::lifecycle_objects::ObjectStateStore::new();
 
         let value =
             surface_content_item_json(&content[0], &states, &std::collections::BTreeMap::new())
                 .unwrap();
 
-        assert_eq!(
-            value["require"],
-            serde_json::json!({})
-        );
+        assert_eq!(value["require"], serde_json::json!({}));
     }
     #[test]
     fn productive_surface_json_materializes_owner_scoped_label() {
-        let lifecycle =
-            crate::lifecycle::LifecycleContract::default();
+        let lifecycle = crate::lifecycle::LifecycleContract::default();
 
-        let mut projection =
-            crate::surface_projection::SurfaceProjection::new();
+        let mut projection = crate::surface_projection::SurfaceProjection::new();
 
         projection
             .register_for_lifecycle(
@@ -1162,44 +1079,24 @@ mod surface_content_json_contract_tests {
                     None,
                     true,
                     std::collections::BTreeMap::from([
-                        (
-                            "control".to_string(),
-                            "button".to_string(),
-                        ),
-                        (
-                            "label_key".to_string(),
-                            "surface.open".to_string(),
-                        ),
+                        ("control".to_string(), "button".to_string()),
+                        ("label_key".to_string(), "surface.open".to_string()),
                     ]),
                 )
                 .unwrap(),
             )
             .unwrap();
 
-        let content =
-            crate::surface_content::resolve_all(&projection);
+        let content = crate::surface_content::resolve_all(&projection);
 
-        let states =
-            crate::lifecycle_objects::ObjectStateStore::new();
+        let states = crate::lifecycle_objects::ObjectStateStore::new();
 
         let strings =
-            std::collections::BTreeMap::from([(
-                "surface.open".to_string(),
-                "Abrir".to_string(),
-            )]);
+            std::collections::BTreeMap::from([("surface.open".to_string(), "Abrir".to_string())]);
 
-        let value =
-            surface_content_item_json(
-                &content[0],
-                &states,
-                &strings,
-            )
-            .unwrap();
+        let value = surface_content_item_json(&content[0], &states, &strings).unwrap();
 
-        assert_eq!(
-            value["label"],
-            serde_json::json!("Abrir")
-        );
+        assert_eq!(value["label"], serde_json::json!("Abrir"));
 
         assert_eq!(
             value["data"]["label_key"],
@@ -1209,11 +1106,9 @@ mod surface_content_json_contract_tests {
 
     #[test]
     fn productive_surface_json_rejects_missing_owner_translation() {
-        let lifecycle =
-            crate::lifecycle::LifecycleContract::default();
+        let lifecycle = crate::lifecycle::LifecycleContract::default();
 
-        let mut projection =
-            crate::surface_projection::SurfaceProjection::new();
+        let mut projection = crate::surface_projection::SurfaceProjection::new();
 
         projection
             .register_for_lifecycle(
@@ -1225,30 +1120,22 @@ mod surface_content_json_contract_tests {
                     None,
                     None,
                     true,
-                    std::collections::BTreeMap::from([
-                        (
-                            "label_key".to_string(),
-                            "surface.missing".to_string(),
-                        ),
-                    ]),
+                    std::collections::BTreeMap::from([(
+                        "label_key".to_string(),
+                        "surface.missing".to_string(),
+                    )]),
                 )
                 .unwrap(),
             )
             .unwrap();
 
-        let content =
-            crate::surface_content::resolve_all(&projection);
+        let content = crate::surface_content::resolve_all(&projection);
 
-        let states =
-            crate::lifecycle_objects::ObjectStateStore::new();
+        let states = crate::lifecycle_objects::ObjectStateStore::new();
 
         let error =
-            surface_content_item_json(
-                &content[0],
-                &states,
-                &std::collections::BTreeMap::new(),
-            )
-            .unwrap_err();
+            surface_content_item_json(&content[0], &states, &std::collections::BTreeMap::new())
+                .unwrap_err();
 
         assert!(error.contains("missing translation key"));
     }
@@ -1881,96 +1768,59 @@ fn execute_governor_target_with_observer(
         .map(|factory| factory(name, action))
         .unwrap_or_else(crate::lifecycle_observer::LifecycleObserver::none);
 
-    let canonical_open =
-        action == "open";
+    let canonical_open = action == "open";
 
-    let (
-        opening_generation,
-        lifecycle_execution_id,
-    ) = if canonical_open {
+    let (opening_generation, lifecycle_execution_id) = if canonical_open {
         if !crate::surface_requirement_resolver::module_active(name) {
-            return Err(format!(
-                "module {} is not active and cannot open",
-                name
-            ));
+            return Err(format!("module {} is not active and cannot open", name));
         }
 
         let (generation, execution_id) =
-            crate::module_ipc::runtime_registry()
-                .begin_opening(name)?;
+            crate::module_ipc::runtime_registry().begin_opening(name)?;
 
-        broadcast_surface_module_change(
-            name,
-            "runtime_opening",
-        );
+        broadcast_surface_module_change(name, "runtime_opening");
 
         (Some(generation), execution_id)
     } else {
         (None, format!("module.{action}"))
     };
 
-    let execution =
-        match lifecycle_runtime
-            .execute_target_blocking_observed(
-                name,
-                &lifecycle_execution_id,
-                &lifecycle,
-                action,
-                object_id,
-                transition_id,
-                std::collections::BTreeMap::new(),
-                observer,
-            )
-        {
-            Ok(execution) => execution,
+    let execution = match lifecycle_runtime.execute_target_blocking_observed(
+        name,
+        &lifecycle_execution_id,
+        &lifecycle,
+        action,
+        object_id,
+        transition_id,
+        std::collections::BTreeMap::new(),
+        observer,
+    ) {
+        Ok(execution) => execution,
 
-            Err(error) => {
-                if let Some(generation) =
-                    opening_generation
-                {
-                    match crate::module_ipc::runtime_registry()
-                        .seal_opening(
-                            name,
-                            generation,
-                        )
-                    {
-                        Ok(false) => {
-                            broadcast_surface_module_change(
-                                name,
-                                "runtime_open_failed",
-                            );
-                        }
+        Err(error) => {
+            if let Some(generation) = opening_generation {
+                match crate::module_ipc::runtime_registry().seal_opening(name, generation) {
+                    Ok(false) => {
+                        broadcast_surface_module_change(name, "runtime_open_failed");
+                    }
 
-                        Ok(true) => {}
+                    Ok(true) => {}
 
-                        Err(seal_error) => {
-                            return Err(format!(
-                                "{}; opening seal failed: {}",
-                                error,
-                                seal_error
-                            ));
-                        }
+                    Err(seal_error) => {
+                        return Err(format!("{}; opening seal failed: {}", error, seal_error));
                     }
                 }
-
-                return Err(error);
             }
-        };
 
-    if let Some(generation) =
-        opening_generation
-    {
+            return Err(error);
+        }
+    };
+
+    if let Some(generation) = opening_generation {
         if execution.is_none() {
-            let _ = crate::module_ipc::runtime_registry()
-                .seal_opening(
-                    name,
-                    generation,
-                )?;
+            let _ = crate::module_ipc::runtime_registry().seal_opening(name, generation)?;
 
-            broadcast_surface_module_change(
-                name,
-                "runtime_open_failed",
-            );
+            broadcast_surface_module_change(name, "runtime_open_failed");
 
             return Err(format!(
                 "module {} does not declare canonical Governor open binding",
@@ -1978,22 +1828,13 @@ fn execute_governor_target_with_observer(
             ));
         }
 
-        let opening_alive =
-            crate::module_ipc::runtime_registry()
-                .seal_opening(
-                    name,
-                    generation,
-                )?;
+        let opening_alive = crate::module_ipc::runtime_registry().seal_opening(name, generation)?;
 
         if !opening_alive
-            && crate::module_ipc::runtime_registry()
-                .state(name)?
+            && crate::module_ipc::runtime_registry().state(name)?
                 != crate::module_ipc::registry::ModuleRuntimeState::Open
         {
-            broadcast_surface_module_change(
-                name,
-                "runtime_open_failed",
-            );
+            broadcast_surface_module_change(name, "runtime_open_failed");
 
             return Err(format!(
                 "module {} open transition completed without a live modules.runtime owner",
@@ -2166,11 +2007,9 @@ fn install_require_tree(
         );
 
         let feature_reconciliation =
-            installed_module_all_surface_content(&module_id)
-                .and_then(|content| {
-                    config::reconcile_module_features(&module_id, &content)
-                        .map(|_| ())
-                });
+            installed_module_all_surface_content(&module_id).and_then(|content| {
+                config::reconcile_module_features(&module_id, &content).map(|_| ())
+            });
 
         if let Err(error) = feature_reconciliation {
             return Err(require_install_failure(
@@ -3662,8 +3501,7 @@ fn feature_startup_transaction_directory(name: &str) -> bool {
         || name.starts_with(".neebles-failed-")
 }
 
-fn installed_feature_inventory(
-) -> Result<config::FeatureInventory, String> {
+fn installed_feature_inventory() -> Result<config::FeatureInventory, String> {
     let root = modules_root();
     let mut inventory = config::FeatureInventory::new();
     let mut owners = BTreeMap::<String, PathBuf>::new();
@@ -3672,15 +3510,15 @@ fn installed_feature_inventory(
         return Ok(inventory);
     }
 
-    for entry in fs::read_dir(&root)
-        .map_err(|error| format!(
+    for entry in fs::read_dir(&root).map_err(|error| {
+        format!(
             "could not read {} while rebuilding Boss Features: {error}",
             root.display()
-        ))?
-    {
-        let entry = entry.map_err(|error| format!(
-            "could not read module directory entry while rebuilding Boss Features: {error}"
-        ))?;
+        )
+    })? {
+        let entry = entry.map_err(|error| {
+            format!("could not read module directory entry while rebuilding Boss Features: {error}")
+        })?;
 
         let path = entry.path();
 
@@ -3709,10 +3547,7 @@ fn installed_feature_inventory(
             )
         })?;
 
-        if let Some(previous) = owners.insert(
-            manifest.name.clone(),
-            path.clone(),
-        ) {
+        if let Some(previous) = owners.insert(manifest.name.clone(), path.clone()) {
             return Err(format!(
                 "duplicate installed module identity {} while rebuilding Boss Features: {} and {}",
                 manifest.name,
@@ -3721,38 +3556,23 @@ fn installed_feature_inventory(
             ));
         }
 
-        let lifecycle =
-            lifecycle_contract_from_module(&path, &manifest)?;
+        let lifecycle = lifecycle_contract_from_module(&path, &manifest)?;
 
-        let projection =
-            surface_projection_from_module(
-                &path,
-                &manifest,
-                &lifecycle,
-            )?;
+        let projection = surface_projection_from_module(&path, &manifest, &lifecycle)?;
 
-        let content =
-            crate::surface_content::resolve_all(&projection);
+        let content = crate::surface_content::resolve_all(&projection);
 
-        let canonical =
-            config::canonical_module_features(
-                &manifest.name,
-                &content,
-            )?;
+        let canonical = config::canonical_module_features(&manifest.name, &content)?;
 
         if !canonical.is_empty() {
-            inventory.insert(
-                manifest.name.clone(),
-                canonical,
-            );
+            inventory.insert(manifest.name.clone(), canonical);
         }
     }
 
     Ok(inventory)
 }
 
-pub fn reconcile_installed_module_features(
-) -> Result<config::FeatureInventory, String> {
+pub fn reconcile_installed_module_features() -> Result<config::FeatureInventory, String> {
     let canonical = installed_feature_inventory()?;
 
     config::replace_feature_inventory(&canonical)?;
@@ -3778,9 +3598,7 @@ mod startup_feature_inventory_tests {
             ".neebles-failed-features-update-test-module-1"
         ));
 
-        assert!(!feature_startup_transaction_directory(
-            "test-module"
-        ));
+        assert!(!feature_startup_transaction_directory("test-module"));
     }
 }
 fn materialize_surface_requirements_with<Satisfied>(
@@ -3788,35 +3606,23 @@ fn materialize_surface_requirements_with<Satisfied>(
     mut satisfied: Satisfied,
 ) -> Result<(), String>
 where
-    Satisfied: FnMut(
-        &str,
-        &crate::surface_projection::SurfaceRequirements,
-    ) -> bool,
+    Satisfied: FnMut(&str, &crate::surface_projection::SurfaceRequirements) -> bool,
 {
     let modules = value
         .as_array_mut()
-        .ok_or_else(|| {
-            "installed module presentation model must be an array"
-                .to_string()
-        })?;
+        .ok_or_else(|| "installed module presentation model must be an array".to_string())?;
 
     for module in modules.iter_mut() {
         let module_object = module
             .as_object_mut()
-            .ok_or_else(|| {
-                "installed module presentation entry must be an object"
-                    .to_string()
-            })?;
+            .ok_or_else(|| "installed module presentation entry must be an object".to_string())?;
 
         let module_name = module_object
             .get("name")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                "installed module presentation entry has no module name"
-                    .to_string()
-            })?
+            .ok_or_else(|| "installed module presentation entry has no module name".to_string())?
             .to_string();
 
         let content = module_object
@@ -3830,14 +3636,12 @@ where
             })?;
 
         for item in content.iter_mut() {
-            let item_object = item
-                .as_object_mut()
-                .ok_or_else(|| {
-                    format!(
-                        "installed module {} contains a non-object SurfaceContent item",
-                        module_name
-                    )
-                })?;
+            let item_object = item.as_object_mut().ok_or_else(|| {
+                format!(
+                    "installed module {} contains a non-object SurfaceContent item",
+                    module_name
+                )
+            })?;
 
             let item_id = item_object
                 .get("item_id")
@@ -3850,20 +3654,13 @@ where
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    format!(
-                        "SurfaceContent item {} has no owner module",
-                        item_id
-                    )
-                })?
+                .ok_or_else(|| format!("SurfaceContent item {} has no owner module", item_id))?
                 .to_string();
 
             if owner != module_name {
                 return Err(format!(
                     "SurfaceContent owner mismatch: module={} item={} owner={}",
-                    module_name,
-                    item_id,
-                    owner
+                    module_name, item_id, owner
                 ));
             }
 
@@ -3872,19 +3669,15 @@ where
                 .cloned()
                 .unwrap_or_else(|| json!({}));
 
-            let requirements:
-                crate::surface_projection::SurfaceRequirements =
-                serde_json::from_value(require_value)
-                    .map_err(|error| {
-                        format!(
-                            "invalid Surface requirements for {}:{}: {error}",
-                            owner,
-                            item_id
-                        )
-                    })?;
+            let requirements: crate::surface_projection::SurfaceRequirements =
+                serde_json::from_value(require_value).map_err(|error| {
+                    format!(
+                        "invalid Surface requirements for {}:{}: {error}",
+                        owner, item_id
+                    )
+                })?;
 
-            let requirements_met =
-                satisfied(&owner, &requirements);
+            let requirements_met = satisfied(&owner, &requirements);
 
             item_object.insert(
                 "requirements_met".to_string(),
@@ -3901,37 +3694,23 @@ fn materialize_runtime_presentation_with<State>(
     mut state: State,
 ) -> Result<(), String>
 where
-    State: FnMut(
-        &str,
-    ) -> Result<
-        crate::module_ipc::registry::ModuleRuntimeState,
-        String,
-    >,
+    State: FnMut(&str) -> Result<crate::module_ipc::registry::ModuleRuntimeState, String>,
 {
     let modules = value
         .as_array_mut()
-        .ok_or_else(|| {
-            "runtime presentation model must be an array"
-                .to_string()
-        })?;
+        .ok_or_else(|| "runtime presentation model must be an array".to_string())?;
 
     for module in modules.iter_mut() {
         let object = module
             .as_object_mut()
-            .ok_or_else(|| {
-                "runtime presentation entry must be an object"
-                    .to_string()
-            })?;
+            .ok_or_else(|| "runtime presentation entry must be an object".to_string())?;
 
         let name = object
             .get("name")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                "runtime presentation module has no name"
-                    .to_string()
-            })?
+            .ok_or_else(|| "runtime presentation module has no name".to_string())?
             .to_string();
 
         let runtime_state = state(&name)?;
@@ -3942,41 +3721,24 @@ where
             .unwrap_or(false);
 
         let open_available =
-            enabled
-            && runtime_state
-                == crate::module_ipc::registry::ModuleRuntimeState::Closed;
+            enabled && runtime_state == crate::module_ipc::registry::ModuleRuntimeState::Closed;
 
         object.insert(
             "runtime_state".to_string(),
-            Value::String(
-                runtime_state.as_str().to_string()
-            ),
+            Value::String(runtime_state.as_str().to_string()),
         );
 
-        object.insert(
-            "open_available".to_string(),
-            Value::Bool(open_available),
-        );
+        object.insert("open_available".to_string(), Value::Bool(open_available));
 
         let content = object
             .get_mut("surface_content")
             .and_then(Value::as_array_mut)
-            .ok_or_else(|| {
-                format!(
-                    "module {} has no SurfaceContent array",
-                    name
-                )
-            })?;
+            .ok_or_else(|| format!("module {} has no SurfaceContent array", name))?;
 
         for item in content.iter_mut() {
             let item_object = item
                 .as_object_mut()
-                .ok_or_else(|| {
-                    format!(
-                        "module {} has invalid SurfaceContent",
-                        name
-                    )
-                })?;
+                .ok_or_else(|| format!("module {} has invalid SurfaceContent", name))?;
 
             let requirements_met = item_object
                 .get("requirements_met")
@@ -3991,10 +3753,7 @@ where
                 .map(str::trim)
                 == Some("open");
 
-            let action_available =
-                requirements_met
-                && (!canonical_open_action
-                    || open_available);
+            let action_available = requirements_met && (!canonical_open_action || open_available);
 
             item_object.insert(
                 "action_available".to_string(),
@@ -4038,37 +3797,21 @@ mod surface_presentation_model_tests {
 
         let mut queried = Vec::<String>::new();
 
-        materialize_surface_requirements_with(
-            &mut value,
-            |owner, requirements| {
-                queried.push(owner.to_string());
+        materialize_surface_requirements_with(&mut value, |owner, requirements| {
+            queried.push(owner.to_string());
 
-                requirements.self_state()
-                    == Some(
-                        crate::surface_projection::SurfaceRequirementState::Active
-                    )
-            },
-        )
+            requirements.self_state()
+                == Some(crate::surface_projection::SurfaceRequirementState::Active)
+        })
         .unwrap();
 
-        let content = value[0]["surface_content"]
-            .as_array()
-            .unwrap();
+        let content = value[0]["surface_content"].as_array().unwrap();
 
-        assert_eq!(
-            content[0]["requirements_met"],
-            json!(true)
-        );
+        assert_eq!(content[0]["requirements_met"], json!(true));
 
-        assert_eq!(
-            content[1]["requirements_met"],
-            json!(false)
-        );
+        assert_eq!(content[1]["requirements_met"], json!(false));
 
-        assert_eq!(
-            content[0]["require"]["self"],
-            json!("active")
-        );
+        assert_eq!(content[0]["require"]["self"], json!("active"));
 
         assert_eq!(
             content[1]["require"]["modules"]["module.beta"],
@@ -4077,10 +3820,7 @@ mod surface_presentation_model_tests {
 
         assert_eq!(
             queried,
-            vec![
-                "module.alpha".to_string(),
-                "module.alpha".to_string(),
-            ]
+            vec!["module.alpha".to_string(), "module.alpha".to_string(),]
         );
     }
 
@@ -4101,15 +3841,11 @@ mod surface_presentation_model_tests {
 
         let mut queried = false;
 
-        let error =
-            materialize_surface_requirements_with(
-                &mut value,
-                |_, _| {
-                    queried = true;
-                    true
-                },
-            )
-            .unwrap_err();
+        let error = materialize_surface_requirements_with(&mut value, |_, _| {
+            queried = true;
+            true
+        })
+        .unwrap_err();
 
         assert!(!queried);
         assert!(error.contains("owner mismatch"));
@@ -4118,11 +3854,9 @@ mod surface_presentation_model_tests {
 pub fn installed_modules_json() -> Result<Value, String> {
     let mut result = Vec::new();
 
-    let boss_config =
-        config::load_or_initialize()?;
+    let boss_config = config::load_or_initialize()?;
 
-    let requested_language =
-        boss_config.language.clone();
+    let requested_language = boss_config.language.clone();
 
     let root = modules_root();
     if !root.exists() {
@@ -4143,11 +3877,7 @@ pub fn installed_modules_json() -> Result<Value, String> {
         }
         let manifest = read_manifest(&manifest_path)?;
 
-        let module_strings =
-            load_module_strings(
-                &entry.path(),
-                &requested_language,
-            )?;
+        let module_strings = load_module_strings(&entry.path(), &requested_language)?;
 
         let lifecycle = installed_module_lifecycle_contract(&manifest.name)?;
 
@@ -4164,54 +3894,34 @@ pub fn installed_modules_json() -> Result<Value, String> {
          * Launcher, Tray and future Boss surfaces
          * consume the exact same canonical material.
          */
-        let declared_surface_content =
-            installed_module_all_surface_content(
-                &manifest.name
-            )?;
+        let declared_surface_content = installed_module_all_surface_content(&manifest.name)?;
 
-        let tray_default =
-            declared_surface_content
-                .iter()
-                .any(|item| {
-                    item.surface() == "tray"
-                        && item.visible()
-                });
+        let tray_default = declared_surface_content
+            .iter()
+            .any(|item| item.surface() == "tray" && item.visible());
 
-        let launcher_default =
-            declared_surface_content
-                .iter()
-                .any(|item| {
-                    item.surface() == "launcher"
-                        && item.visible()
-                });
+        let launcher_default = declared_surface_content
+            .iter()
+            .any(|item| item.surface() == "launcher" && item.visible());
 
-        let tray_visible =
-            config::effective_surface_module_visibility(
-                &boss_config,
-                "tray",
-                &manifest.name,
-                tray_default,
-            )?;
+        let tray_visible = config::effective_surface_module_visibility(
+            &boss_config,
+            "tray",
+            &manifest.name,
+            tray_default,
+        )?;
 
-        let launcher_visible =
-            config::effective_surface_module_visibility(
-                &boss_config,
-                "launcher",
-                &manifest.name,
-                launcher_default,
-            )?;
+        let launcher_visible = config::effective_surface_module_visibility(
+            &boss_config,
+            "launcher",
+            &manifest.name,
+            launcher_default,
+        )?;
 
-        let surface_content =
-            declared_surface_content
-                .iter()
-                .map(|item| {
-                    surface_content_item_json(
-                        item,
-                        &object_states,
-                        &module_strings,
-                    )
-                })
-                .collect::<Result<Vec<_>, String>>()?;
+        let surface_content = declared_surface_content
+            .iter()
+            .map(|item| surface_content_item_json(item, &object_states, &module_strings))
+            .collect::<Result<Vec<_>, String>>()?;
 
         let mut item = json!({
             "name": manifest.name,
@@ -4261,23 +3971,13 @@ pub fn installed_modules_json() -> Result<Value, String> {
 pub fn installed_modules_presentation_json() -> Result<Value, String> {
     let mut value = installed_modules_json()?;
 
-    materialize_surface_requirements_with(
-        &mut value,
-        |owner, requirements| {
-            crate::surface_requirement_resolver::requirements_satisfied(
-                owner,
-                requirements,
-            )
-        },
-    )?;
+    materialize_surface_requirements_with(&mut value, |owner, requirements| {
+        crate::surface_requirement_resolver::requirements_satisfied(owner, requirements)
+    })?;
 
-    materialize_runtime_presentation_with(
-        &mut value,
-        |module| {
-            crate::module_ipc::runtime_registry()
-                .state(module)
-        },
-    )?;
+    materialize_runtime_presentation_with(&mut value, |module| {
+        crate::module_ipc::runtime_registry().state(module)
+    })?;
 
     Ok(value)
 }
@@ -4967,16 +4667,13 @@ fn synchronize_feature_inventory_after_update_rollback(
     state: LiveUpdateRollbackState,
 ) -> Result<(), String> {
     match state {
-        LiveUpdateRollbackState::PreviousRestored
-        | LiveUpdateRollbackState::NewPreserved => {
+        LiveUpdateRollbackState::PreviousRestored | LiveUpdateRollbackState::NewPreserved => {
             let content = installed_module_all_surface_content(name)?;
 
-            config::reconcile_module_features(name, &content)
-                .map(|_| ())
+            config::reconcile_module_features(name, &content).map(|_| ())
         }
 
-        LiveUpdateRollbackState::NoActiveModule =>
-            config::remove_module_features(name).map(|_| ()),
+        LiveUpdateRollbackState::NoActiveModule => config::remove_module_features(name).map(|_| ()),
     }
 }
 
@@ -4997,15 +4694,12 @@ fn format_live_update_failure_with_binding(
         }
     };
 
-    match synchronize_feature_inventory_after_update_rollback(
-        name,
-        rollback.state,
-    ) {
+    match synchronize_feature_inventory_after_update_rollback(name, rollback.state) {
         Ok(()) => base,
 
-        Err(error) => format!(
-            "{base}; CRITICAL: feature inventory synchronization also failed: {error}"
-        ),
+        Err(error) => {
+            format!("{base}; CRITICAL: feature inventory synchronization also failed: {error}")
+        }
     }
 }
 
@@ -5391,32 +5085,22 @@ fn update_with_observer(
         ));
     }
 
-    let feature_reconciliation =
-        installed_module_all_surface_content(name)
-            .and_then(|content| {
-                config::reconcile_module_features(name, &content)
-                    .map(|_| ())
-            });
+    let feature_reconciliation = installed_module_all_surface_content(name)
+        .and_then(|content| config::reconcile_module_features(name, &content).map(|_| ()));
 
     if let Err(feature_error) = feature_reconciliation {
         let failed_update_path = root.join(format!(
             ".neebles-failed-features-update-{name}-{transaction}"
         ));
 
-        let rollback =
-            rollback_live_update_paths(
-                &current_path,
-                &backup_path,
-                &failed_update_path,
-            );
+        let rollback = rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
 
-        let binding_sync =
-            synchronize_activated_material_binding_after_update_rollback(
-                material_binding_update,
-                &material_root,
-                name,
-                rollback.state,
-            );
+        let binding_sync = synchronize_activated_material_binding_after_update_rollback(
+            material_binding_update,
+            &material_root,
+            name,
+            rollback.state,
+        );
 
         return Err(format_live_update_failure_with_binding(
             name,
@@ -5597,11 +5281,8 @@ pub fn set_enabled(name: &str, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn read_module_language_manifest(
-    module_dir: &Path,
-) -> Result<ModuleLanguageManifest, String> {
-    let manifest_path =
-        module_dir.join("languages").join("manifest.json");
+fn read_module_language_manifest(module_dir: &Path) -> Result<ModuleLanguageManifest, String> {
+    let manifest_path = module_dir.join("languages").join("manifest.json");
 
     let raw = fs::read_to_string(&manifest_path).map_err(|error| {
         format!(
@@ -5627,24 +5308,17 @@ fn selected_module_language_entry(
     if let Some(language) = manifest
         .languages
         .iter()
-        .find(|language| {
-            languages::normalize_locale(&language.code)
-                == requested
-        })
+        .find(|language| languages::normalize_locale(&language.code) == requested)
     {
         return Ok(language.clone());
     }
 
-    let normalized_default =
-        languages::normalize_locale(manifest.default.trim());
+    let normalized_default = languages::normalize_locale(manifest.default.trim());
 
     manifest
         .languages
         .iter()
-        .find(|language| {
-            languages::normalize_locale(&language.code)
-                == normalized_default
-        })
+        .find(|language| languages::normalize_locale(&language.code) == normalized_default)
         .cloned()
         .ok_or_else(|| {
             format!(
@@ -5676,28 +5350,21 @@ fn module_language_file_path(
         ));
     }
 
-    let relative =
-        Path::new("languages").join(relative);
+    let relative = Path::new("languages").join(relative);
 
-    let relative_text =
-        relative.to_string_lossy();
+    let relative_text = relative.to_string_lossy();
 
-    let resolved = resolve_module_file(
-        module_dir,
-        relative_text.as_ref(),
-        "language file",
-    )?;
+    let resolved = resolve_module_file(module_dir, relative_text.as_ref(), "language file")?;
 
-    let language_root =
-        module_dir
-            .join("languages")
-            .canonicalize()
-            .map_err(|error| {
-                format!(
-                    "could not resolve module languages directory {}: {error}",
-                    module_dir.join("languages").display()
-                )
-            })?;
+    let language_root = module_dir
+        .join("languages")
+        .canonicalize()
+        .map_err(|error| {
+            format!(
+                "could not resolve module languages directory {}: {error}",
+                module_dir.join("languages").display()
+            )
+        })?;
 
     if !resolved.starts_with(&language_root) {
         return Err(format!(
@@ -5714,14 +5381,11 @@ fn load_module_strings(
 ) -> Result<BTreeMap<String, String>, String> {
     validate_module_language_contract(module_dir)?;
 
-    let manifest =
-        read_module_language_manifest(module_dir)?;
+    let manifest = read_module_language_manifest(module_dir)?;
 
-    let language =
-        selected_module_language_entry(&manifest, requested)?;
+    let language = selected_module_language_entry(&manifest, requested)?;
 
-    let path =
-        module_language_file_path(module_dir, &language)?;
+    let path = module_language_file_path(module_dir, &language)?;
 
     let raw = fs::read_to_string(&path).map_err(|error| {
         format!(
@@ -5730,30 +5394,16 @@ fn load_module_strings(
         )
     })?;
 
-    serde_json::from_str(&raw).map_err(|error| {
-        format!(
-            "invalid module language file {}: {error}",
-            path.display()
-        )
-    })
+    serde_json::from_str(&raw)
+        .map_err(|error| format!("invalid module language file {}: {error}", path.display()))
 }
 
-fn resolve_module_language(
-    module_dir: &Path,
-    requested: &str,
-) -> Result<String, String> {
+fn resolve_module_language(module_dir: &Path, requested: &str) -> Result<String, String> {
     validate_module_language_contract(module_dir)?;
 
-    let manifest =
-        read_module_language_manifest(module_dir)?;
+    let manifest = read_module_language_manifest(module_dir)?;
 
-    Ok(
-        selected_module_language_entry(
-            &manifest,
-            requested,
-        )?
-        .code
-    )
+    Ok(selected_module_language_entry(&manifest, requested)?.code)
 }
 #[cfg(test)]
 mod module_language_presentation_tests {
@@ -5814,44 +5464,34 @@ mod module_language_presentation_tests {
 
     #[test]
     fn module_strings_use_requested_language_and_default_fallback() {
-        let path =
-            temporary_language_module("selection");
+        let path = temporary_language_module("selection");
 
         write_valid_language_contract(&path);
 
-        let english =
-            load_module_strings(&path, "en-US").unwrap();
+        let english = load_module_strings(&path, "en-US").unwrap();
 
         assert_eq!(
             english.get("surface.open").map(String::as_str),
             Some("Open")
         );
 
-        let fallback =
-            load_module_strings(&path, "fr_FR").unwrap();
+        let fallback = load_module_strings(&path, "fr_FR").unwrap();
 
         assert_eq!(
             fallback.get("surface.open").map(String::as_str),
             Some("Abrir")
         );
 
-        assert_eq!(
-            resolve_module_language(&path, "en-US").unwrap(),
-            "en_US"
-        );
+        assert_eq!(resolve_module_language(&path, "en-US").unwrap(), "en_US");
 
-        assert_eq!(
-            resolve_module_language(&path, "fr_FR").unwrap(),
-            "es_CL"
-        );
+        assert_eq!(resolve_module_language(&path, "fr_FR").unwrap(), "es_CL");
 
         fs::remove_dir_all(path).unwrap();
     }
 
     #[test]
     fn module_language_file_cannot_escape_languages_directory() {
-        let path =
-            temporary_language_module("escape");
+        let path = temporary_language_module("escape");
 
         fs::write(
             path.join("languages/manifest.json"),
@@ -5878,13 +5518,9 @@ mod module_language_presentation_tests {
         )
         .unwrap();
 
-        let error =
-            validate_module_language_contract(&path).unwrap_err();
+        let error = validate_module_language_contract(&path).unwrap_err();
 
-        assert!(
-            error.contains("invalid path")
-                || error.contains("escapes languages directory")
-        );
+        assert!(error.contains("invalid path") || error.contains("escapes languages directory"));
 
         fs::remove_dir_all(path).unwrap();
     }
@@ -6059,24 +5695,21 @@ fn validate_module_language_contract(module_dir: &Path) -> Result<(), String> {
             ));
         }
 
-        let language_path =
-            module_language_file_path(module_dir, language)?;
+        let language_path = module_language_file_path(module_dir, language)?;
 
-        let language_raw =
-            fs::read_to_string(&language_path).map_err(|error| {
-                format!(
-                    "could not read module language file {}: {error}",
-                    language_path.display()
-                )
-            })?;
+        let language_raw = fs::read_to_string(&language_path).map_err(|error| {
+            format!(
+                "could not read module language file {}: {error}",
+                language_path.display()
+            )
+        })?;
 
-        let _: BTreeMap<String, String> =
-            serde_json::from_str(&language_raw).map_err(|error| {
-                format!(
-                    "invalid module language file {}: {error}",
-                    language_path.display()
-                )
-            })?;
+        let _: BTreeMap<String, String> = serde_json::from_str(&language_raw).map_err(|error| {
+            format!(
+                "invalid module language file {}: {error}",
+                language_path.display()
+            )
+        })?;
     }
 
     let default = manifest.default.trim();

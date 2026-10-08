@@ -1,6 +1,6 @@
-use crate::{languages, modules, settings};
 use crate::surface_content::SurfaceContentItem;
 use crate::surface_projection::SurfaceRequirements;
+use crate::{languages, modules, settings};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -10,8 +10,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub type FeatureInventory =
-    BTreeMap<String, BTreeMap<String, SurfaceRequirements>>;
+pub type FeatureInventory = BTreeMap<String, BTreeMap<String, SurfaceRequirements>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BossConfig {
@@ -251,10 +250,7 @@ fn string_map(value: &BTreeMap<String, String>) -> Result<String, String> {
         .map_err(|error| format!("could not serialize Boss String: {error}"))
 }
 
-fn surface_module_visibility(
-    local: &Value,
-    path: &str,
-) -> Result<BTreeMap<String, bool>, String> {
+fn surface_module_visibility(local: &Value, path: &str) -> Result<BTreeMap<String, bool>, String> {
     let Some(value) = local_string(local, path)? else {
         return Ok(BTreeMap::new());
     };
@@ -267,15 +263,9 @@ fn surface_module_visibility(
     })
 }
 
-fn string_surface_module_visibility(
-    value: &BTreeMap<String, bool>,
-) -> Result<String, String> {
+fn string_surface_module_visibility(value: &BTreeMap<String, bool>) -> Result<String, String> {
     serde_json::to_string(value)
-        .map_err(|error| {
-            format!(
-                "could not serialize Boss surface module visibility: {error}"
-            )
-        })
+        .map_err(|error| format!("could not serialize Boss surface module visibility: {error}"))
 }
 fn surface_item_visibility(
     local: &Value,
@@ -314,20 +304,13 @@ fn feature_inventory(local: &Value) -> Result<FeatureInventory, String> {
         return Ok(BTreeMap::new());
     };
 
-    serde_json::from_str(&value).map_err(|error| {
-        format!(
-            "Boss setting features contains invalid String data: {error}"
-        )
-    })
+    serde_json::from_str(&value)
+        .map_err(|error| format!("Boss setting features contains invalid String data: {error}"))
 }
 
-fn string_feature_inventory(
-    value: &FeatureInventory,
-) -> Result<String, String> {
+fn string_feature_inventory(value: &FeatureInventory) -> Result<String, String> {
     serde_json::to_string(value)
-        .map_err(|error| format!(
-            "could not serialize Boss feature inventory: {error}"
-        ))
+        .map_err(|error| format!("could not serialize Boss feature inventory: {error}"))
 }
 
 fn write_setting(path: &str, value: String) -> Result<String, String> {
@@ -437,13 +420,8 @@ pub(crate) fn canonical_module_features(
     Ok(canonical)
 }
 
-fn write_feature_inventory(
-    features: &FeatureInventory,
-) -> Result<BossConfig, String> {
-    write_setting(
-        "features",
-        string_feature_inventory(features)?,
-    )?;
+fn write_feature_inventory(features: &FeatureInventory) -> Result<BossConfig, String> {
+    write_setting("features", string_feature_inventory(features)?)?;
 
     load_or_initialize()
 }
@@ -464,9 +442,7 @@ pub(crate) fn replace_feature_inventory(
 ) -> Result<BossConfig, String> {
     let config = load_or_initialize()?;
 
-    let Some(replacement) =
-        feature_inventory_replacement(&config.features, canonical)
-    else {
+    let Some(replacement) = feature_inventory_replacement(&config.features, canonical) else {
         return Ok(config);
     };
 
@@ -525,29 +501,16 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
 
         disabled_modules: boss_list(&local, "ui.disabled_modules")?,
 
-        tray_module_visibility:
-            surface_module_visibility(
-                &local,
-                "tray.module_visibility",
-            )?,
+        tray_module_visibility: surface_module_visibility(&local, "tray.module_visibility")?,
 
-        launcher_module_visibility:
-            surface_module_visibility(
-                &local,
-                "launcher.module_visibility",
-            )?,
+        launcher_module_visibility: surface_module_visibility(
+            &local,
+            "launcher.module_visibility",
+        )?,
 
-        tray_item_visibility:
-            surface_item_visibility(
-                &local,
-                "tray.item_visibility",
-            )?,
+        tray_item_visibility: surface_item_visibility(&local, "tray.item_visibility")?,
 
-        launcher_item_visibility:
-            surface_item_visibility(
-                &local,
-                "launcher.item_visibility",
-            )?,
+        launcher_item_visibility: surface_item_visibility(&local, "launcher.item_visibility")?,
 
         module_update_notifications: boss_map(&local, "ui.module_update_notifications")?,
     })
@@ -623,15 +586,11 @@ pub fn module_enabled(name: &str) -> Result<bool, String> {
     Ok(!modules.iter().any(|item| item == name))
 }
 
-fn surface_module_visibility_path(
-    surface: &str,
-) -> Result<String, String> {
+fn surface_module_visibility_path(surface: &str) -> Result<String, String> {
     match surface {
-        "tray" =>
-            Ok("tray.module_visibility".to_string()),
+        "tray" => Ok("tray.module_visibility".to_string()),
 
-        "launcher" =>
-            Ok("launcher.module_visibility".to_string()),
+        "launcher" => Ok("launcher.module_visibility".to_string()),
 
         _ => Err(format!(
             "unknown surface module visibility surface: {surface}"
@@ -655,50 +614,27 @@ pub fn set_surface_module_visibility(
     module: &str,
     visible: bool,
 ) -> Result<BossConfig, String> {
-    let path =
-        surface_module_visibility_path(surface)?;
+    let path = surface_module_visibility_path(surface)?;
 
-    let legacy_path =
-        surface_item_visibility_path(surface)?;
+    let legacy_path = surface_item_visibility_path(surface)?;
 
     let local = local_settings()?;
 
-    let mut visibility =
-        surface_module_visibility(
-            &local,
-            &path,
-        )?;
+    let mut visibility = surface_module_visibility(&local, &path)?;
 
-    visibility.insert(
-        module.to_string(),
-        visible,
-    );
+    visibility.insert(module.to_string(), visible);
 
-    write_setting(
-        &path,
-        string_surface_module_visibility(
-            &visibility
-        )?,
-    )?;
+    write_setting(&path, string_surface_module_visibility(&visibility)?)?;
 
     /*
      * Once this new whole-module switch is touched,
      * the legacy per-item state for this module/surface
      * is retired.
      */
-    let mut legacy =
-        surface_item_visibility(
-            &local,
-            legacy_path,
-        )?;
+    let mut legacy = surface_item_visibility(&local, legacy_path)?;
 
     if legacy.remove(module).is_some() {
-        write_setting(
-            legacy_path,
-            string_surface_item_visibility(
-                &legacy
-            )?,
-        )?;
+        write_setting(legacy_path, string_surface_item_visibility(&legacy)?)?;
     }
 
     load_or_initialize()
@@ -710,28 +646,22 @@ pub fn effective_surface_module_visibility(
     module: &str,
     declared_default: bool,
 ) -> Result<bool, String> {
-    let (module_visibility, legacy_visibility) =
-        match surface {
-            "tray" => (
-                &config.tray_module_visibility,
-                &config.tray_item_visibility,
-            ),
+    let (module_visibility, legacy_visibility) = match surface {
+        "tray" => (&config.tray_module_visibility, &config.tray_item_visibility),
 
-            "launcher" => (
-                &config.launcher_module_visibility,
-                &config.launcher_item_visibility,
-            ),
+        "launcher" => (
+            &config.launcher_module_visibility,
+            &config.launcher_item_visibility,
+        ),
 
-            _ => {
-                return Err(format!(
-                    "unknown surface module visibility surface: {surface}"
-                ));
-            }
-        };
+        _ => {
+            return Err(format!(
+                "unknown surface module visibility surface: {surface}"
+            ));
+        }
+    };
 
-    if let Some(visible) =
-        module_visibility.get(module)
-    {
+    if let Some(visible) = module_visibility.get(module) {
         return Ok(*visible);
     }
 
@@ -740,14 +670,9 @@ pub fn effective_surface_module_visibility(
      * any visible old item means the module is visible;
      * all old items false means the module is hidden.
      */
-    if let Some(items) =
-        legacy_visibility.get(module)
-    {
+    if let Some(items) = legacy_visibility.get(module) {
         if !items.is_empty() {
-            return Ok(
-                items.values()
-                    .any(|visible| *visible)
-            );
+            return Ok(items.values().any(|visible| *visible));
         }
     }
 
@@ -773,37 +698,20 @@ pub fn module_has_user_state(name: &str) -> Result<bool, String> {
 
     let disabled = boss_list(&local, "ui.disabled_modules")?;
 
-    let tray_module_visibility =
-        surface_module_visibility(
-            &local,
-            "tray.module_visibility",
-        )?;
+    let tray_module_visibility = surface_module_visibility(&local, "tray.module_visibility")?;
 
     let launcher_module_visibility =
-        surface_module_visibility(
-            &local,
-            "launcher.module_visibility",
-        )?;
+        surface_module_visibility(&local, "launcher.module_visibility")?;
 
-    let tray_legacy_visibility =
-        surface_item_visibility(
-            &local,
-            "tray.item_visibility",
-        )?;
+    let tray_legacy_visibility = surface_item_visibility(&local, "tray.item_visibility")?;
 
-    let launcher_legacy_visibility =
-        surface_item_visibility(
-            &local,
-            "launcher.item_visibility",
-        )?;
+    let launcher_legacy_visibility = surface_item_visibility(&local, "launcher.item_visibility")?;
 
-    Ok(
-        disabled.iter().any(|item| item == name)
+    Ok(disabled.iter().any(|item| item == name)
         || tray_module_visibility.contains_key(name)
         || launcher_module_visibility.contains_key(name)
         || tray_legacy_visibility.contains_key(name)
-        || launcher_legacy_visibility.contains_key(name)
-    )
+        || launcher_legacy_visibility.contains_key(name))
 }
 
 pub fn remove_module_transient_state(name: &str) -> Result<BossConfig, String> {
@@ -830,10 +738,7 @@ pub fn remove_module_transient_state(name: &str) -> Result<BossConfig, String> {
             .map_err(|error| format!("could not serialize Boss module object states: {error}"))?,
     )?;
 
-    write_setting(
-        "features",
-        string_feature_inventory(&features)?,
-    )?;
+    write_setting("features", string_feature_inventory(&features)?)?;
 
     load_or_initialize()
 }
@@ -843,29 +748,14 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
 
     let mut disabled = boss_list(&local, "ui.disabled_modules")?;
 
-    let mut tray_module_visibility =
-        surface_module_visibility(
-            &local,
-            "tray.module_visibility",
-        )?;
+    let mut tray_module_visibility = surface_module_visibility(&local, "tray.module_visibility")?;
 
     let mut launcher_module_visibility =
-        surface_module_visibility(
-            &local,
-            "launcher.module_visibility",
-        )?;
+        surface_module_visibility(&local, "launcher.module_visibility")?;
 
-    let mut tray_visibility =
-        surface_item_visibility(
-            &local,
-            "tray.item_visibility",
-        )?;
+    let mut tray_visibility = surface_item_visibility(&local, "tray.item_visibility")?;
 
-    let mut launcher_visibility =
-        surface_item_visibility(
-            &local,
-            "launcher.item_visibility",
-        )?;
+    let mut launcher_visibility = surface_item_visibility(&local, "launcher.item_visibility")?;
 
     let mut notifications = boss_map(&local, "ui.module_update_notifications")?;
 
@@ -887,30 +777,22 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
 
     write_setting(
         "tray.module_visibility",
-        string_surface_module_visibility(
-            &tray_module_visibility
-        )?,
+        string_surface_module_visibility(&tray_module_visibility)?,
     )?;
 
     write_setting(
         "launcher.module_visibility",
-        string_surface_module_visibility(
-            &launcher_module_visibility
-        )?,
+        string_surface_module_visibility(&launcher_module_visibility)?,
     )?;
 
     write_setting(
         "tray.item_visibility",
-        string_surface_item_visibility(
-            &tray_visibility
-        )?,
+        string_surface_item_visibility(&tray_visibility)?,
     )?;
 
     write_setting(
         "launcher.item_visibility",
-        string_surface_item_visibility(
-            &launcher_visibility
-        )?,
+        string_surface_item_visibility(&launcher_visibility)?,
     )?;
 
     write_setting(
@@ -924,10 +806,7 @@ pub fn remove_module_state(name: &str) -> Result<BossConfig, String> {
             .map_err(|error| format!("could not serialize Boss module object states: {error}"))?,
     )?;
 
-    write_setting(
-        "features",
-        string_feature_inventory(&features)?,
-    )?;
+    write_setting("features", string_feature_inventory(&features)?)?;
 
     load_or_initialize()
 }
@@ -1121,8 +1000,7 @@ mod surface_module_visibility_tests {
 
     fn config_with_visibility(
         module_visibility: BTreeMap<String, bool>,
-        legacy_visibility:
-            BTreeMap<String, BTreeMap<String, bool>>,
+        legacy_visibility: BTreeMap<String, BTreeMap<String, bool>>,
     ) -> BossConfig {
         BossConfig {
             language: "es_CL".to_string(),
@@ -1133,122 +1011,57 @@ mod surface_module_visibility_tests {
             modules: BTreeMap::new(),
             features: BTreeMap::new(),
             disabled_modules: Vec::new(),
-            tray_module_visibility:
-                module_visibility,
-            launcher_module_visibility:
-                BTreeMap::new(),
-            tray_item_visibility:
-                legacy_visibility,
-            launcher_item_visibility:
-                BTreeMap::new(),
-            module_update_notifications:
-                BTreeMap::new(),
+            tray_module_visibility: module_visibility,
+            launcher_module_visibility: BTreeMap::new(),
+            tray_item_visibility: legacy_visibility,
+            launcher_item_visibility: BTreeMap::new(),
+            module_update_notifications: BTreeMap::new(),
         }
     }
 
     #[test]
     fn module_visibility_override_beats_legacy_items() {
-        let mut module_visibility =
-            BTreeMap::new();
+        let mut module_visibility = BTreeMap::new();
 
-        module_visibility.insert(
-            "demo".to_string(),
-            false,
-        );
+        module_visibility.insert("demo".to_string(), false);
 
         let mut items = BTreeMap::new();
 
-        items.insert(
-            "open".to_string(),
-            true,
-        );
+        items.insert("open".to_string(), true);
 
         let mut legacy = BTreeMap::new();
 
-        legacy.insert(
-            "demo".to_string(),
-            items,
-        );
+        legacy.insert("demo".to_string(), items);
 
-        let config = config_with_visibility(
-            module_visibility,
-            legacy,
-        );
+        let config = config_with_visibility(module_visibility, legacy);
 
-        assert!(
-            !effective_surface_module_visibility(
-                &config,
-                "tray",
-                "demo",
-                true,
-            )
-            .unwrap()
-        );
+        assert!(!effective_surface_module_visibility(&config, "tray", "demo", true,).unwrap());
     }
 
     #[test]
     fn legacy_items_collapse_to_whole_module_visibility() {
         let mut items = BTreeMap::new();
 
-        items.insert(
-            "open".to_string(),
-            false,
-        );
+        items.insert("open".to_string(), false);
 
-        items.insert(
-            "other".to_string(),
-            true,
-        );
+        items.insert("other".to_string(), true);
 
         let mut legacy = BTreeMap::new();
 
-        legacy.insert(
-            "demo".to_string(),
-            items,
-        );
+        legacy.insert("demo".to_string(), items);
 
-        let config = config_with_visibility(
-            BTreeMap::new(),
-            legacy,
-        );
+        let config = config_with_visibility(BTreeMap::new(), legacy);
 
-        assert!(
-            effective_surface_module_visibility(
-                &config,
-                "tray",
-                "demo",
-                false,
-            )
-            .unwrap()
-        );
+        assert!(effective_surface_module_visibility(&config, "tray", "demo", false,).unwrap());
     }
 
     #[test]
     fn absent_user_state_preserves_declared_default() {
-        let config = config_with_visibility(
-            BTreeMap::new(),
-            BTreeMap::new(),
-        );
+        let config = config_with_visibility(BTreeMap::new(), BTreeMap::new());
 
-        assert!(
-            effective_surface_module_visibility(
-                &config,
-                "tray",
-                "demo",
-                true,
-            )
-            .unwrap()
-        );
+        assert!(effective_surface_module_visibility(&config, "tray", "demo", true,).unwrap());
 
-        assert!(
-            !effective_surface_module_visibility(
-                &config,
-                "tray",
-                "demo",
-                false,
-            )
-            .unwrap()
-        );
+        assert!(!effective_surface_module_visibility(&config, "tray", "demo", false,).unwrap());
     }
 }
 
@@ -1314,9 +1127,7 @@ mod feature_materialization_tests {
 
     use crate::lifecycle::LifecycleContract;
     use crate::surface_projection::{
-        SurfaceProjection,
-        SurfaceProjectionItem,
-        SurfaceRequirementState,
+        SurfaceProjection, SurfaceProjectionItem, SurfaceRequirementState,
     };
 
     #[test]
@@ -1331,18 +1142,16 @@ mod feature_materialization_tests {
 
     #[test]
     fn feature_inventory_string_round_trip_preserves_requirements() {
-        let expected: FeatureInventory = serde_json::from_value(
-            serde_json::json!({
-                "module.alpha": {
-                    "notify.button": {
-                        "self": "active",
-                        "modules": {
-                            "module.beta": "open"
-                        }
+        let expected: FeatureInventory = serde_json::from_value(serde_json::json!({
+            "module.alpha": {
+                "notify.button": {
+                    "self": "active",
+                    "modules": {
+                        "module.beta": "open"
                     }
                 }
-            })
-        )
+            }
+        }))
         .unwrap();
 
         let encoded = string_feature_inventory(&expected).unwrap();
@@ -1350,23 +1159,18 @@ mod feature_materialization_tests {
             "features": encoded
         });
 
-        assert_eq!(
-            feature_inventory(&local).unwrap(),
-            expected
-        );
+        assert_eq!(feature_inventory(&local).unwrap(), expected);
     }
 
     #[test]
     fn feature_materialization_keeps_only_ui_surface_items() {
         let lifecycle = LifecycleContract::default();
-        let requirements: SurfaceRequirements = serde_json::from_value(
-            serde_json::json!({
-                "self": "open",
-                "modules": {
-                    "module.beta": "active"
-                }
-            })
-        )
+        let requirements: SurfaceRequirements = serde_json::from_value(serde_json::json!({
+            "self": "open",
+            "modules": {
+                "module.beta": "active"
+            }
+        }))
         .unwrap();
 
         let mut projection = SurfaceProjection::new();
@@ -1381,10 +1185,7 @@ mod feature_materialization_tests {
                     None,
                     None,
                     true,
-                    BTreeMap::from([(
-                        "control".to_string(),
-                        "button".to_string(),
-                    )]),
+                    BTreeMap::from([("control".to_string(), "button".to_string())]),
                     requirements,
                 )
                 .unwrap(),
@@ -1401,28 +1202,21 @@ mod feature_materialization_tests {
                     None,
                     None,
                     true,
-                    BTreeMap::from([(
-                        "control".to_string(),
-                        "button".to_string(),
-                    )]),
+                    BTreeMap::from([("control".to_string(), "button".to_string())]),
                 )
                 .unwrap(),
             )
             .unwrap();
 
         let content = crate::surface_content::resolve_all(&projection);
-        let canonical =
-            canonical_module_features("module.alpha", &content).unwrap();
+        let canonical = canonical_module_features("module.alpha", &content).unwrap();
 
         assert_eq!(canonical.len(), 1);
         assert!(!canonical.contains_key("open.launcher"));
 
         let require = canonical.get("notify.button").unwrap();
 
-        assert_eq!(
-            require.self_state(),
-            Some(SurfaceRequirementState::Open)
-        );
+        assert_eq!(require.self_state(), Some(SurfaceRequirementState::Open));
 
         assert_eq!(
             require.modules().get("module.beta"),
@@ -1445,10 +1239,7 @@ mod feature_materialization_tests {
                     None,
                     None,
                     true,
-                    BTreeMap::from([(
-                        "control".to_string(),
-                        "button".to_string(),
-                    )]),
+                    BTreeMap::from([("control".to_string(), "button".to_string())]),
                 )
                 .unwrap(),
             )
@@ -1456,9 +1247,7 @@ mod feature_materialization_tests {
 
         let content = crate::surface_content::resolve_all(&projection);
 
-        let error =
-            canonical_module_features("module.alpha", &content)
-                .unwrap_err();
+        let error = canonical_module_features("module.alpha", &content).unwrap_err();
 
         assert!(error.contains("does not match module"));
     }
@@ -1466,24 +1255,15 @@ mod feature_materialization_tests {
     #[test]
     fn exact_feature_inventory_replacement_drops_ghost_owner() {
         let current: FeatureInventory = BTreeMap::from([
-            (
-                "module.alpha".to_string(),
-                BTreeMap::new(),
-            ),
-            (
-                "ghost.module".to_string(),
-                BTreeMap::new(),
-            ),
+            ("module.alpha".to_string(), BTreeMap::new()),
+            ("ghost.module".to_string(), BTreeMap::new()),
         ]);
 
-        let canonical: FeatureInventory = BTreeMap::from([(
-            "module.alpha".to_string(),
-            BTreeMap::new(),
-        )]);
+        let canonical: FeatureInventory =
+            BTreeMap::from([("module.alpha".to_string(), BTreeMap::new())]);
 
-        let replacement =
-            feature_inventory_replacement(&current, &canonical)
-                .expect("different inventories must replace exactly");
+        let replacement = feature_inventory_replacement(&current, &canonical)
+            .expect("different inventories must replace exactly");
 
         assert_eq!(replacement, canonical);
         assert!(!replacement.contains_key("ghost.module"));
