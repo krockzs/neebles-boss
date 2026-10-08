@@ -1,0 +1,9 @@
+N.E.E.B.L.E.S. Boss v1.0.31
+Authorized CAST30 post-Fresh-Live repair release trigger.
+Certified source commit: 0750546ca6f0eca7ab5e423f5469f4bac683ce1c
+Test Module 1.2.2 commit: ee91d94b1026e7890379c656dbdee2896d00e32b
+CUSTOM V2 material and Construction revision: c0afe5baa6a58f50166ed12f17a1637a667b4d88
+Pinned controlled CUSTOM classic/Esbirro: 20488f6818d5e227f043425a682115f614f4bf79
+Gate124: cargo 805 passed, 0 failed, 1 intentionally ignored.
+Gate125: 21 exact source files committed and pushed.
+This trigger authorizes v1.0.31 ONLY after controlled CI build, stage certification and verification of exactly 11 release assets.
