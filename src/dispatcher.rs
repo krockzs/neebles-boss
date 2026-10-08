@@ -640,6 +640,94 @@ fn dispatch_surface_action(request: &ExecutionRequest) -> ExecutionResponse {
     }
 }
 
+fn valid_module_surface_event_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+}
+
+fn dispatch_module_surface_changed(request: &ExecutionRequest) -> ExecutionResponse {
+    if request.args.len() != 2
+        || !valid_module_surface_event_token(&request.args[0])
+        || !valid_module_surface_event_token(&request.args[1])
+    {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_module_surface_change",
+            "module-surface-changed requires exactly: <module-id> <reason-token>",
+        );
+    }
+
+    let name = &request.args[0];
+    let reason = &request.args[1];
+
+    /* A caller cannot assert a false enabled/disabled state. */
+    if reason == "enabled" || reason == "disabled" {
+        let actual = match config::module_enabled(name) {
+            Ok(actual) => actual,
+            Err(error) => return ExecutionResponse::fail(1, "module_state_read", error),
+        };
+        if actual != (reason == "enabled") {
+            return ExecutionResponse::fail(
+                1,
+                "module_state_mismatch",
+                format!("module '{name}' is not canonically {reason}"),
+            );
+        }
+    }
+
+    crate::ipc::broadcast_event(
+        "module.lifecycle",
+        "state_changed",
+        json!({"module": name, "reason": reason}),
+    );
+
+    ExecutionResponse::ok(Some(json!({"module": name, "reason": reason})))
+}
+
+#[cfg(test)]
+mod module_surface_relay_contract_tests {
+    use super::*;
+    use crate::request::ExecutionContext;
+
+    fn request(args: &[&str]) -> ExecutionRequest {
+        ExecutionRequest {
+            target: "boss".to_string(),
+            action: Some("module-surface-changed".to_string()),
+            args: args.iter().map(|value| value.to_string()).collect(),
+            context: ExecutionContext::default(),
+        }
+    }
+
+    #[test]
+    fn rejects_bad_tokens_and_wrong_arity() {
+        for args in [
+            &[][..],
+            &["module"][..],
+            &["../escape", "disabled"][..],
+            &["module", "bad reason"][..],
+            &["module", "ok", "extra"][..],
+        ] {
+            let response = dispatch_module_surface_changed(&request(args));
+            assert!(!response.ok);
+            assert_eq!(response.code, 2);
+        }
+    }
+
+    #[test]
+    fn valid_future_action_is_not_hardcoded_to_test_module() {
+        let response =
+            dispatch_module_surface_changed(&request(&["module.future", "runtime_open_failed"]));
+        assert!(response.ok);
+        assert_eq!(
+            response.result.unwrap()["module"].as_str(),
+            Some("module.future")
+        );
+    }
+}
+
 fn dispatch_surface_model(request: &ExecutionRequest) -> ExecutionResponse {
     if !request.args.is_empty() {
         return ExecutionResponse::fail(
@@ -979,6 +1067,8 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
         },
 
         Some("module-governor-action") => dispatch_module_governor_action(&request),
+
+        Some("module-surface-changed") => dispatch_module_surface_changed(&request),
 
         Some("surface-model") => dispatch_surface_model(&request),
 

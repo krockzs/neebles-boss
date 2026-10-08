@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
     neebles-launcher-events
-    VERSION 1.0.31
+    VERSION 1.0.32
     LANGUAGES CXX
 )
 

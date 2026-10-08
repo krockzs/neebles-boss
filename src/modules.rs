@@ -1657,14 +1657,41 @@ fn publish_require_candidate(
 }
 
 pub(crate) fn broadcast_surface_module_change(name: &str, reason: &str) {
-    crate::ipc::broadcast_event(
-        "module.lifecycle",
-        "state_changed",
-        serde_json::json!({
-            "module": name,
-            "reason": reason
-        }),
-    );
+    /*
+     * Module operations run in a short-lived CLI process. Its process-local
+     * subscriber registry is NOT the registry owned by persistent Boss.
+     * Route a refresh notification through the existing authenticated
+     * Boss IPC socket. The persistent process reads canonical state and
+     * emits to its real desktop subscribers; no client owns state.
+     *
+     * A lost notification must not roll back a committed module operation.
+     * It is reported, and surfaces can still recover from canonical reads.
+     */
+    let response = crate::ipc::request(&crate::request::ExecutionRequest {
+        target: "boss".to_string(),
+        action: Some("module-surface-changed".to_string()),
+        args: vec![name.to_string(), reason.to_string()],
+        context: crate::request::ExecutionContext {
+            caller: "module-state-publication".to_string(),
+        },
+    });
+
+    match response {
+        Ok(response) if response.ok => {}
+        Ok(response) => {
+            let detail = response.error
+                .map(|error| error.message)
+                .unwrap_or_else(|| format!("Boss returned code {}", response.code));
+            eprintln!(
+                "N.E.E.B.L.E.S.: committed module '{}' change '{}' but persistent surface relay failed: {}",
+                name, reason, detail
+            );
+        }
+        Err(error) => eprintln!(
+            "N.E.E.B.L.E.S.: committed module '{}' change '{}' but persistent surface relay is unreachable: {}",
+            name, reason, error
+        ),
+    }
 }
 
 fn module_governor_lifecycle_runtime(
@@ -2943,6 +2970,101 @@ fn write_tray_runtime_marker(name: &str, identity: ProcessIdentity) -> Result<()
     })
 }
 
+/*
+ * Parse the kernel proc stat fields AFTER the parenthesized comm field.
+ * state = field 3 and pgrp = field 5 (tail offsets 0 and 2).
+ * Unlike splitting the entire /proc line, this handles spaces/parentheses
+ * in the process name correctly.
+ */
+fn tray_proc_group_state(stat: &str) -> Result<(u32, char), String> {
+    let end_comm = stat.rfind(')').ok_or("missing proc comm terminator")?;
+    let fields: Vec<&str> = stat[end_comm + 1..].split_whitespace().collect();
+    let state = fields
+        .first()
+        .and_then(|value| value.chars().next())
+        .ok_or("missing proc state")?;
+    let pgrp = fields
+        .get(2)
+        .ok_or("missing proc pgrp")?
+        .parse::<u32>()
+        .map_err(|error| format!("invalid proc pgrp: {error}"))?;
+    Ok((pgrp, state))
+}
+
+fn tray_process_group_zombies_only(process_group: u32) -> Result<bool, String> {
+    let mut found = false;
+    let entries = fs::read_dir("/proc").map_err(|error| {
+        format!("could not inspect /proc for tray group {process_group}: {error}")
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!("could not enumerate /proc for tray group {process_group}: {error}")
+        })?;
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let path = entry.path().join("stat");
+        let stat = match fs::read_to_string(&path) {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "cannot certify tray group {process_group}: unreadable process {pid}: {error}"
+                ))
+            }
+        };
+        let (pgrp, state) = tray_proc_group_state(&stat).map_err(|error| {
+            format!("cannot certify tray group {process_group}: process {pid}: {error}")
+        })?;
+        if pgrp != process_group {
+            continue;
+        }
+        found = true;
+        if state != 'Z' && state != 'X' && state != 'x' {
+            return Ok(false);
+        }
+    }
+
+    /* A positive kill(-pgid,0) with no visible members is UNKNOWN. */
+    if !found {
+        return Err(format!(
+            "cannot certify tray group {process_group}: group exists but no members were visible"
+        ));
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tray_proc_group_lifetime_regressions {
+    use super::tray_proc_group_state;
+
+    #[test]
+    fn parses_zombie_group_with_parentheses_and_spaces_in_comm() {
+        assert_eq!(
+            tray_proc_group_state("4675 (tray worker (child)) Z 1 4674 4674 0 0").unwrap(),
+            (4674, 'Z')
+        );
+    }
+
+    #[test]
+    fn distinguishes_running_child_from_zombie() {
+        assert_eq!(
+            tray_proc_group_state("4676 (tray worker) S 1 4674 4674 0 0").unwrap(),
+            (4674, 'S')
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_proc_identity() {
+        assert!(tray_proc_group_state("4675 (tray worker) Z 1").is_err());
+    }
+}
+
 fn tray_process_group_exists(process_group: u32) -> Result<bool, String> {
     if process_group <= 1 || process_group > libc::pid_t::MAX as u32 {
         return Err(format!(
@@ -2990,6 +3112,18 @@ fn tray_runtime_group_alive(identity: ProcessIdentity) -> Result<bool, String> {
 
         None => {
             if group_exists {
+                /*
+                 * After leader reaping, kill(-pgid, 0) also sees zombies.
+                 * Zombies have no execution capacity. Accept quiescence
+                 * ONLY when a complete /proc scan finds group members and
+                 * every one is a terminated zombie/dead process. Any live
+                 * member, unreadable stat or uncertain scan stays fail-closed.
+                 * No signal is ever sent without the authenticated leader.
+                 */
+                if tray_process_group_zombies_only(identity.pid)? {
+                    return Ok(false);
+                }
+
                 return Err(format!(
                     "tray runtime process group {} remains live after its authenticated leader exited; ownership is unknown",
                     identity.pid

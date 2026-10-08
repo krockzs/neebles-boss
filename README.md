@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.31 (release preparation)**
-**Published release status:** **Boss v1.0.30 is published; v1.0.31 is not yet released**
-**Current integration status (2026-10-08):** Boss v1.0.30 is published. CAST30 post-Fresh-Live source repairs are being staged as v1.0.31: persistent runtime shutdown/unregister synchronization, Boss UI failure diagnostics, Tray Host QML fixes and Installed-switch availability. Test Module v1.2.2 and CUSTOM V2 revision c0afe5baa6a58f50166ed12f17a1637a667b4d88 are published. Local Rust/Python and controlled Qt stage checks have passed for the patches; the v1.0.31 full CI release, updated installation and Fresh Live / installed-system acceptance remain pending.
+**Current source line:** **1.0.32 (release preparation)**
+**Published release status:** **Boss v1.0.31 is published; v1.0.32 is not yet released**
+**Current integration status (2026-10-08):** Boss v1.0.31 is published with 11 release assets. CAST30 Fresh Live isolated a transient Tray process-group shutdown failure and a process-local `module.lifecycle` notification that was not reaching persistent Boss subscribers. v1.0.32 source repairs relay successful state changes through persistent Boss and fail closed unless orphaned Tray group members are certifiably terminated. Gates 131/132 passed 810 Rust tests (one intentionally ignored) and 25 Active/Settings source contracts. Test Module v1.2.2 (`ee91d94b1026e7890379c656dbdee2896d00e32b`) and CUSTOM V2 (`c0afe5baa6a58f50166ed12f17a1637a667b4d88`) remain pinned and unchanged. **No v1.0.32 release or installed Live/GUI synchronization acceptance is claimed.**
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -1167,21 +1167,30 @@ The recorded Gate 75 passed 665 Boss main tests, 120 library tests,
 - Local evidence: 805 Rust tests passed (one intentionally ignored), 12 Test Module Python tests passed, Boss UI/Tray Host stage builds passed with controlled Esbirro Qt 6.8.2. These results precede the v1.0.31 release build and are not Fresh Live acceptance.
 - The published v1.0.30 release remains unchanged; full v1.0.31 CI and 11-asset verification precede trigger publication, then Fresh Live and installed-system acceptance.
 
+## Boss 1.0.32 — CAST30 Active/Inactive cross-surface synchronization (candidate)
+
+- Send committed module state changes from short-lived CLI callers to the persistent Boss event owner; the latter publishes `module.lifecycle` for UI/Launcher/Tray subscribers. The module state in `ui.disabled_modules` remains canonical and distinct from Settings presentation toggles.
+- Handle exited Tray process-group leaders conservatively: accept an orphaned group as quiescent only when kernel `/proc` inspection certifies that every visible member is terminated; unknown identities or live members fail closed.
+- Gates131/132: 810 Rust tests passed, 1 intentionally ignored; 12 Active relay/tray and 25 Boss Settings source contracts passed. The 32-case visibility matrix is a **source specification**, not Live acceptance.
+- Global `tray.enabled`, `launcher.enabled`, per-module surface visibility, locale, normal notifications and telemetry must not be altered by module Active/Inactive changes; hidden surfaces must recover canonical state when restored.
+- Registry remains Test Module 1.2.2 (`ee91d94b1026e7890379c656dbdee2896d00e32b`); CUSTOM V2 remains `c0afe5baa6a58f50166ed12f17a1637a667b4d88`; pinned CUSTOM Classic/Esbirro remains `20488f6818d5e227f043425a682115f614f4bf79`.
+- v1.0.32 release, genuine settings/visibility matrix, GUI end-to-end synchronization and runtime-open tests remain pending. Open behavior is a subsequent separate gate.
+
 ## Release policy
 
-Boss v1.0.30 was published and is immutable. Boss v1.0.31 is the next
-patch release; all previously published workflow, notes and trigger files
-must remain unchanged. The v1.0.31 release trigger must be created only
-after source, packaging and controlled CI readiness gates are GREEN.
+Boss v1.0.31 was published and is immutable. Boss v1.0.32 is the next
+patch release; all previously published workflows, notes, triggers and
+release assets remain unchanged. The v1.0.32 release trigger is authorized
+only after source, packaging and controlled CI readiness gates are GREEN.
 
 Release prerequisites:
 
-1. All current product-facing Cargo, CMake, C++, QML and Plasma metadata versions agree on 1.0.31.
+1. All current product-facing Cargo, CMake, C++, QML and Plasma metadata versions agree on 1.0.32.
 2. The two CAST30 Presenter source/service files are tracked and packaged.
 3. `scripts/check-release-version.py` and the controlled release pipeline pass.
 4. Installer, reinstall, rollback, and non-graphical Critical Update of the user-session Presenter are certified.
 5. The pinned CUSTOM classic/Esbirro Qt 6.8.2 world and Rust 1.98.1 produce and certify all 11 release assets.
-6. Only then create/push release/trigger-v1.0.31 and verify GitHub Release assets.
+6. Only then create/push release/trigger-v1.0.32 and verify GitHub Release assets.
 7. Perform Fresh Live and installed-system acceptance as separate gates.
 
 Do not claim a published version on the basis of Cargo.toml or a prepared workflow.
