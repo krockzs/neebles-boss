@@ -66,43 +66,43 @@ checks = [
 
     forbid(
         "ui/client/bosscontroller.cpp",
-        "module-visibility",
+        'QStringLiteral("module-visibility")',
         "Boss UI controller has no legacy module visibility command",
     ),
 
     require(
         "ui/client/bosscontroller.h",
-        "setSurfaceItemVisibility",
+        "setSurfaceModuleVisibility",
         "Boss UI exposes projection-item visibility mutation",
     ),
 
     require(
         "ui/client/bosscontroller.cpp",
-        'QStringLiteral("surface-item-visibility")',
+        'QStringLiteral("surface-module-visibility")',
         "Boss UI writes projection-item visibility through canonical CLI",
     ),
 
     require(
         "ui/client/qml/Main.qml",
-        'root.surfaceConfigItems("tray")',
+        'root.surfaceConfigModules("tray")',
         "Boss Config dynamically enumerates Tray projection items",
     ),
 
     require(
         "ui/client/qml/Main.qml",
-        'root.surfaceConfigItems("launcher")',
+        'root.surfaceConfigModules("launcher")',
         "Boss Config dynamically enumerates Launcher projection items",
     ),
 
     require(
         "ui/client/qml/Main.qml",
-        "modelData.item.item_id",
+        "modelData.moduleName",
         "Boss Config identifies visibility by projection item id",
     ),
 
     require(
         "ui/client/qml/Main.qml",
-        "modelData.item.visible",
+        "modelData.visible",
         "Boss Config reads effective projection visibility",
     ),
 
@@ -263,6 +263,53 @@ checks = [
     ),
 ]
 
+
+
+# Boss 1.0.29+ governed visibility is module-scoped inside each
+# presentation surface, while Config -> Features remains item-scoped.
+# Do not regress to the retired per-item settings authority.
+checks.extend([
+    require(
+        "src/config.rs",
+        "pub fn set_surface_module_visibility(",
+        "Boss persists visibility by module and surface",
+    ),
+    require(
+        "src/config.rs",
+        "pub fn effective_surface_module_visibility(",
+        "Boss resolves effective visibility from canonical config",
+    ),
+    require(
+        "src/config.rs",
+        "legacy.remove(module)",
+        "Boss retires old per-item state when whole-module switch is written",
+    ),
+    require(
+        "src/cli.rs",
+        'Some("surface-module-visibility")',
+        "Boss exposes the canonical surface-module-visibility CLI verb",
+    ),
+    require(
+        "src/modules.rs",
+        '"surface_visibility": {',
+        "Installed module model exports effective surface visibility",
+    ),
+    require(
+        "ui/client/qml/Main.qml",
+        "boss.setSurfaceModuleVisibility(",
+        "Config sends module/surface visibility to canonical controller",
+    ),
+    require(
+        "ui/client/qml/Main.qml",
+        'root.surfaceConfigItems("ui")',
+        "Feature configuration retains item-scoped surfaces",
+    ),
+    require(
+        "client/launcher/contents/ui/main.qml",
+        "module.surface_visibility.launcher",
+        "Launcher honors whole-module visibility in canonical surface model",
+    ),
+])
 
 if not all(checks):
     print()
