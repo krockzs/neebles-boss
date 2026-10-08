@@ -1,6 +1,7 @@
 #include "bosscontroller.h"
 
 #include <QCoreApplication>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -201,7 +202,8 @@ QByteArray BossController::run(
     const QStringList &arguments,
     bool privileged,
     int timeoutMs,
-    bool *ok
+    bool *ok,
+    QString *diagnostic
 )
 {
     QProcess process;
@@ -504,11 +506,28 @@ QByteArray BossController::run(
     if (ok)
         *ok = success;
 
+    if (diagnostic)
+        diagnostic->clear();
+
     if (!success) {
-        const QString error =
+        QString error =
             QString::fromUtf8(
                 process.readAllStandardError()
             ).trimmed();
+
+        if (error.isEmpty()) {
+            if (!started) {
+                error = process.errorString();
+            } else if (!finished) {
+                error = QStringLiteral("Boss command timed out");
+            } else {
+                error = QStringLiteral("Boss command exited with code %1")
+                    .arg(process.exitCode());
+            }
+        }
+
+        if (diagnostic)
+            *diagnostic = error;
 
         if (!error.isEmpty())
             setStatusText(error);
@@ -2429,6 +2448,7 @@ void BossController::runModuleOperation(
     setBusy(true);
 
     bool ok = false;
+    QString diagnostic;
 
     run(
         {
@@ -2438,20 +2458,29 @@ void BossController::runModuleOperation(
         },
         privileged,
         600000,
-        &ok
-    );
-
-    setStatusText(
-        ok
-        ? text(
-            QStringLiteral("common.ok")
-        )
-        : text(
-            QStringLiteral("common.error")
-        )
+        &ok,
+        &diagnostic
     );
 
     loadModules();
+
+    if (ok) {
+        setStatusText(text(QStringLiteral("common.ok")));
+    } else {
+        const QString details = diagnostic.isEmpty()
+            ? QStringLiteral("command failed without stderr")
+            : diagnostic;
+
+        const QString message =
+            QStringLiteral("N.E.E.B.L.E.S.: modules %1 %2 failed: %3")
+                .arg(operation)
+                .arg(name)
+                .arg(details);
+
+        // Preserve the exact failing transaction in the session journal.
+        qWarning().noquote() << message;
+        setStatusText(message);
+    }
 
     setBusy(false);
 }

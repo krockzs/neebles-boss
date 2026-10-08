@@ -2478,6 +2478,97 @@ fn request_runtime_shutdown(name: &str, reason: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn wait_for_module_runtime_unregistration_with<F>(
+    name: &str,
+    timeout: std::time::Duration,
+    interval: std::time::Duration,
+    mut is_registered: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Result<bool, String>,
+{
+    let deadline = std::time::Instant::now() + timeout;
+
+    loop {
+        if !is_registered()? {
+            return Ok(());
+        }
+
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+
+        if remaining.is_zero() {
+            return Err(format!(
+                "module '{}' runtime is still registered after deactivation",
+                name
+            ));
+        }
+
+        std::thread::sleep(std::cmp::min(interval, remaining));
+    }
+}
+
+#[cfg(test)]
+mod runtime_deactivation_quiescence_tests {
+    use super::wait_for_module_runtime_unregistration_with;
+    use std::time::Duration;
+
+    #[test]
+    fn already_unregistered_is_accepted_immediately() {
+        let mut polls = 0;
+        wait_for_module_runtime_unregistration_with(
+            "alpha",
+            Duration::ZERO,
+            Duration::from_millis(1),
+            || {
+                polls += 1;
+                Ok(false)
+            },
+        )
+        .unwrap();
+        assert_eq!(polls, 1);
+    }
+
+    #[test]
+    fn delayed_server_unregister_is_accepted_without_removing_registration() {
+        let mut polls = 0;
+        wait_for_module_runtime_unregistration_with(
+            "alpha",
+            Duration::from_millis(200),
+            Duration::from_millis(1),
+            || {
+                polls += 1;
+                Ok(polls < 4)
+            },
+        )
+        .unwrap();
+        assert_eq!(polls, 4);
+    }
+
+    #[test]
+    fn still_registered_is_rejected_fail_closed() {
+        let error = wait_for_module_runtime_unregistration_with(
+            "alpha",
+            Duration::ZERO,
+            Duration::from_millis(1),
+            || Ok(true),
+        )
+        .unwrap_err();
+        assert!(error.contains("still registered after deactivation"));
+    }
+
+    #[test]
+    fn registry_read_error_is_not_suppressed() {
+        let error = wait_for_module_runtime_unregistration_with(
+            "alpha",
+            Duration::from_millis(100),
+            Duration::from_millis(1),
+            || Err("registry lock poisoned".to_string()),
+        )
+        .unwrap_err();
+        assert_eq!(error, "registry lock poisoned");
+    }
+}
+
 pub fn deactivate_runtime_resources_local(name: &str, reason: &str) -> Result<(), String> {
     /*
      * Persistent Boss runtime authority owns Module IPC RuntimeRegistry
@@ -2487,12 +2578,22 @@ pub fn deactivate_runtime_resources_local(name: &str, reason: &str) -> Result<()
 
     stop_tray_provider(name)?;
 
-    if crate::module_ipc::runtime_registry().get(name)?.is_some() {
-        return Err(format!(
-            "module '{}' runtime is still registered after deactivation",
-            name
-        ));
-    }
+    /*
+     * Module IPC disconnect/unregister is processed by the server thread.
+     * Even after the authenticated process exits, that thread may not yet
+     * have removed its exact session from the registry. Do not report a
+     * false disable failure solely because the first read races teardown.
+     *
+     * Never clear the registry here: the owning server must authenticate
+     * and remove its own session. A truly live or newly registered runtime
+     * remains a hard blocker after the bounded grace period.
+     */
+    wait_for_module_runtime_unregistration_with(
+        name,
+        std::time::Duration::from_secs(2),
+        std::time::Duration::from_millis(50),
+        || Ok(crate::module_ipc::runtime_registry().get(name)?.is_some()),
+    )?;
 
     if probe_tray_provider_identity(name)?.is_some() {
         return Err(format!(

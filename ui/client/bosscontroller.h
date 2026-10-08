@@ -111,7 +111,7 @@ private:
     QString authorizationPath() const;
     QStringList runtimeAuthorityArguments() const;
     QString authoritySupplyPath() const;
-    QByteArray run(const QStringList &arguments, bool privileged, int timeoutMs, bool *ok = nullptr);
+    QByteArray run(const QStringList &arguments, bool privileged, int timeoutMs, bool *ok = nullptr, QString *diagnostic = nullptr);
     QVariant parseJson(const QByteArray &data) const;
     void loadConfig();
     void loadLanguages();

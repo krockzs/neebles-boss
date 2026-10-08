@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.30 (release preparation)**
-**Published release status:** **must be verified from the GitHub Release and its assets; 1.0.30 is not yet published**
-**Current integration status (2026-10-08):** CAST30 B3A/B3B/B4/B5 are CLOSED/GREEN at source level. Boss 1.0.30 is being prepared, not yet certified as a release. Persistent Governor, single-flight Open, per-module visibility and desktop Notification Presenter integration are source-complete; controlled Qt/Rust release build, Critical Update user-service activation, publication, Fresh Live and installed-system acceptance remain pending.
+**Current source line:** **1.0.31 (release preparation)**
+**Published release status:** **Boss v1.0.30 is published; v1.0.31 is not yet released**
+**Current integration status (2026-10-08):** Boss v1.0.30 is published. CAST30 post-Fresh-Live source repairs are being staged as v1.0.31: persistent runtime shutdown/unregister synchronization, Boss UI failure diagnostics, Tray Host QML fixes and Installed-switch availability. Test Module v1.2.2 and CUSTOM V2 revision c0afe5baa6a58f50166ed12f17a1637a667b4d88 are published. Local Rust/Python and controlled Qt stage checks have passed for the patches; the v1.0.31 full CI release, updated installation and Fresh Live / installed-system acceptance remain pending.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -1156,19 +1156,32 @@ The recorded Gate 75 passed 665 Boss main tests, 120 library tests,
 15 ownership tests, 3 Presenter tests and 13 domesticacion tests
 (1 intentionally ignored). This does not imply installed-system acceptance.
 
+## Boss 1.0.31 — CAST30 post-Fresh-Live repairs (candidate)
+
+- Synchronize persistent runtime shutdown with RuntimeRegistry deregistration before disabling a module; preserve fail-closed behavior if cleanup fails.
+- Retain diagnostic errors from the Boss UI operation transport rather than replacing them with a generic failure.
+- Repair Tray Host selected-module QML scope and absolute icon URLs.
+- Permit Installed -> Uninstall while a module runtime is running; Boss still owns lifecycle, dependency checks and the shutdown transaction.
+- Consume Test Module v1.2.2 (commit `ee91d94b1026e7890379c656dbdee2896d00e32b`), including asynchronous `notification_closed` IPC handling.
+- CUSTOM V2 source truth: `c0afe5baa6a58f50166ed12f17a1637a667b4d88`, with module-material manifest version 1.2.2 and Construction fetch/checkout bound to the same module commit.
+- Local evidence: 805 Rust tests passed (one intentionally ignored), 12 Test Module Python tests passed, Boss UI/Tray Host stage builds passed with controlled Esbirro Qt 6.8.2. These results precede the v1.0.31 release build and are not Fresh Live acceptance.
+- The published v1.0.30 release remains unchanged; full v1.0.31 CI and 11-asset verification precede trigger publication, then Fresh Live and installed-system acceptance.
+
 ## Release policy
 
-Boss 1.0.30 is in release preparation. Historical CAST29 references above
-and historical release workflow/notes files remain preserved.
+Boss v1.0.30 was published and is immutable. Boss v1.0.31 is the next
+patch release; all previously published workflow, notes and trigger files
+must remain unchanged. The v1.0.31 release trigger must be created only
+after source, packaging and controlled CI readiness gates are GREEN.
 
 Release prerequisites:
 
-1. All current product-facing Cargo, CMake, C++, QML and Plasma metadata versions agree on 1.0.30.
+1. All current product-facing Cargo, CMake, C++, QML and Plasma metadata versions agree on 1.0.31.
 2. The two CAST30 Presenter source/service files are tracked and packaged.
 3. `scripts/check-release-version.py` and the controlled release pipeline pass.
 4. Installer, reinstall, rollback, and non-graphical Critical Update of the user-session Presenter are certified.
 5. The pinned CUSTOM classic/Esbirro Qt 6.8.2 world and Rust 1.98.1 produce and certify all 11 release assets.
-6. Only then create/push release/trigger-v1.0.30 and verify GitHub Release assets.
+6. Only then create/push release/trigger-v1.0.31 and verify GitHub Release assets.
 7. Perform Fresh Live and installed-system acceptance as separate gates.
 
 Do not claim a published version on the basis of Cargo.toml or a prepared workflow.

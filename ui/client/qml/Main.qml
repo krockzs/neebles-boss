@@ -2020,7 +2020,6 @@ ApplicationWindow {
                                                 enabled:
                                                     typeof boss !== "undefined"
                                                     && !boss.busy
-                                                    && !modelData.running
 
                                                 onClicked: {
 if (

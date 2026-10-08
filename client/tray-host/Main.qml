@@ -477,8 +477,7 @@ Window {
                                 Image {
                                     source:
                                         modelData.icon
-                                        ? "file://"
-                                            + modelData.icon
+                                        ? modelData.icon
                                         : ""
 
                                     width: 25
@@ -576,45 +575,47 @@ Window {
                     }
 
                     RowLayout {
+                        id: selectedModuleRow
+
                         property var selectedModuleData:
                             root.selectedModuleObject()
 
                         Layout.fillWidth: true
 
                         visible:
-                            selectedModuleData !== null
+                            selectedModuleRow.selectedModuleData !== null
 
                         Label {
                             Layout.fillWidth: true
 
                             text:
-                                selectedModuleData
-                                && selectedModuleData.enabled
+                                selectedModuleRow.selectedModuleData
+                                && selectedModuleRow.selectedModuleData.enabled
                                 ? root.t("modules.active")
                                 : root.t("modules.inactive")
 
                             color:
-                                selectedModuleData
-                                && selectedModuleData.enabled
+                                selectedModuleRow.selectedModuleData
+                                && selectedModuleRow.selectedModuleData.enabled
                                 ? "#A78BFA"
                                 : "#71717A"
                         }
 
                         NeeblesSwitch {
                             checked:
-                                !!selectedModuleData
-                                && !!selectedModuleData.enabled
+                                !!selectedModuleRow.selectedModuleData
+                                && !!selectedModuleRow.selectedModuleData.enabled
 
                             checkable: false
 
                             enabled:
-                                !!selectedModuleData
+                                !!selectedModuleRow.selectedModuleData
                                 && !bossCommands.busy
 
                             onClicked: {
                                 bossCommands.setModuleEnabled(
-                                    selectedModuleData.name,
-                                    !selectedModuleData.enabled
+                                    selectedModuleRow.selectedModuleData.name,
+                                    !selectedModuleRow.selectedModuleData.enabled
                                 )
                             }
                         }
