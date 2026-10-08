@@ -1,0 +1,9 @@
+N.E.E.B.L.E.S. Boss v1.0.33
+CAST30 controlled release workflow authorization (NOT Fresh Live acceptance).
+Authorized Boss source commit: 70f255a245911136cdb6a0a2a7b1c118daee2ad6
+Test Module v1.2.3 source commit: 308fbf186aa9dc2a2201862f993809799a987fd0
+CUSTOM V2 material/Construction source: d7fa0452fb3e16db85de71e2c7fc6d041fa0a3e5
+CUSTOM Classic/Esbirro CI authority: 20488f6818d5e227f043425a682115f614f4bf79
+Gate155R: 18 source SHA256 guards, 815 Rust tests passed, 0 failed, 1 ignored.
+Required: controlled Qt/Esbirro build, staged executable certification, exactly 11 release assets.
+Still pending after published CI success: Fresh Live Active/Inactive 12-way, Open/Close, Settings and visual acceptance.
