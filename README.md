@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.32 (release preparation)**
-**Published release status:** **Boss v1.0.31 is published; v1.0.32 is not yet released**
-**Current integration status (2026-10-08):** Boss v1.0.31 is published with 11 release assets. CAST30 Fresh Live isolated a transient Tray process-group shutdown failure and a process-local `module.lifecycle` notification that was not reaching persistent Boss subscribers. v1.0.32 source repairs relay successful state changes through persistent Boss and fail closed unless orphaned Tray group members are certifiably terminated. Gates 131/132 passed 810 Rust tests (one intentionally ignored) and 25 Active/Settings source contracts. Test Module v1.2.2 (`ee91d94b1026e7890379c656dbdee2896d00e32b`) and CUSTOM V2 (`c0afe5baa6a58f50166ed12f17a1637a667b4d88`) remain pinned and unchanged. **No v1.0.32 release or installed Live/GUI synchronization acceptance is claimed.**
+**Current source line:** **1.0.33 (CAST30 repair source staging)**
+**Published release status:** **Boss v1.0.32 is published; v1.0.33 not released**
+**Current integration status (2026-10-08):** Boss v1.0.32 published (11 assets), but Fresh Live exposed an Open runtime session that stayed registered after the module window closed and unreliable/late Active visual synchronization. Source-only repairs are staged in v1.0.33: Test Module 1.2.3 closes/unregisters its owned window session, Boss broadcasts committed Active state earlier and hardens Launcher callbacks/refresh, Boss UI aligns Notify right, and Launcher uses a larger, scrollable five-column module layout. Test Module source is `308fbf186aa9dc2a2201862f993809799a987fd0`; CUSTOM V2 source is `d7fa0452fb3e16db85de71e2c7fc6d041fa0a3e5`; CUSTOM Classic/Esbirro build pin remains `20488f6818d5e227f043425a682115f614f4bf79`. **No v1.0.33 release or Fresh Live triplet acceptance is claimed.**
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 

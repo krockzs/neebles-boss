@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Window
 import QtQuick.Controls as QQC2
 import org.kde.plasma.plasmoid
 import org.kde.plasma.components as PlasmaComponents3
@@ -13,7 +14,11 @@ PlasmoidItem {
     property var installedModules: []
     property var strings: ({})
     property var callbacks: ({})
-    property string bossVersion: "1.0.32"
+    property var pendingActions: ({})
+    property bool refreshBusy: false
+    property bool refreshAgain: false
+    property string commandError: ""
+    property string bossVersion: "1.0.33"
 
     component NeeblesSwitch: QQC2.Switch {
         id: control
@@ -102,9 +107,56 @@ PlasmoidItem {
         return /^[A-Za-z0-9._-]+$/.test(value)
     }
 
+    // Commands are keyed by the DataSource source string. Never overwrite
+    // an in-flight callback for that same command: that loses completions.
     function exec(command, callback) {
+        if (callbacks[command] !== undefined)
+            return false
         callbacks[command] = callback
         runner.connectSource(command)
+        return true
+    }
+
+    function actionError(data) {
+        if (!data)
+            return ""
+        const code = data["exit code"] !== undefined
+                     ? data["exit code"] : data.exitCode
+        const failure = code !== undefined && Number(code) !== 0
+        const stderr = data.stderr ? String(data.stderr).trim() : ""
+        return failure ? (stderr || "exit code: " + String(code)) : ""
+    }
+
+    // Pending controls are per module. Opening module A must never block B.
+    function modulePending(moduleName) {
+        return pendingActions[moduleName] === true
+    }
+
+    function setModulePending(moduleName, value) {
+        const next = Object.assign({}, pendingActions)
+        if (value)
+            next[moduleName] = true
+        else
+            delete next[moduleName]
+        pendingActions = next
+    }
+
+    // Called from root, never from an asynchronous delegate closure.
+    function runModuleAction(command, moduleName) {
+        if (modulePending(moduleName))
+            return
+        setModulePending(moduleName, true)
+        commandError = ""
+        if (!exec(command, function(_stdout, data) {
+            setModulePending(moduleName, false)
+            commandError = actionError(data)
+            if (commandError.length > 0)
+                console.warn("N.E.E.B.L.E.S. Launcher action failed:", commandError)
+            refresh()
+        })) {
+            setModulePending(moduleName, false)
+            refresh()
+        }
     }
 
     function launcherContent(module) {
@@ -203,39 +255,53 @@ PlasmoidItem {
             + " "
             + shellArg(action)
     }
-    function refresh() {
+    function loadStaticData() {
         exec("/opt/neebles/client/bin/neebles --version", function(output) {
-            const value = output.trim()
-            const match = value.match(/([0-9]+\.[0-9]+\.[0-9]+)/)
-
+            const match = output.trim().match(/([0-9]+\.[0-9]+\.[0-9]+)/)
             if (match)
                 bossVersion = match[1]
         })
-
         exec("/opt/neebles/client/bin/neebles i18n dump", function(output) {
             try {
                 strings = JSON.parse(output)
             } catch (e) {
-                strings = ({})
+                console.warn("N.E.E.B.L.E.S. Launcher i18n refresh error:", String(e))
             }
         })
+    }
 
-        exec("/opt/neebles/client/bin/neebles boss surface-model", function(output) {
+    // Collapse overlapping event/poll requests into one canonical refresh
+    // followed by one more read when events arrive during that read.
+    function refresh() {
+        if (refreshBusy) {
+            refreshAgain = true
+            return
+        }
+        refreshBusy = true
+        if (!exec("/opt/neebles/client/bin/neebles boss surface-model", function(output, data) {
             try {
+                const error = actionError(data)
+                if (error.length > 0)
+                    throw new Error(error)
                 const installed = JSON.parse(output)
-
-                installedModules =
-                    Array.isArray(installed)
-                    ? installed
-                    : []
-
+                if (!Array.isArray(installed))
+                    throw new Error("Surface model is not an array")
+                installedModules = installed
                 applyModuleFilter()
             } catch (e) {
-                installedModules = []
-                modules = []
+                // Never erase a valid model because one refresh failed.
+                console.warn("N.E.E.B.L.E.S. Launcher canonical refresh failed:", String(e))
+            } finally {
+                refreshBusy = false
+                if (refreshAgain) {
+                    refreshAgain = false
+                    refresh()
+                }
             }
-        })
-
+        })) {
+            refreshBusy = false
+            refreshAgain = true
+        }
     }
 
     function t(key) {
@@ -247,7 +313,18 @@ PlasmoidItem {
             refresh()
     }
 
-    Component.onCompleted: refresh()
+    Component.onCompleted: {
+        loadStaticData()
+        refresh()
+    }
+
+    // Recover canonical state even if Plasma misses an event subscription.
+    Timer {
+        interval: 800
+        repeat: true
+        running: root.expanded && bossEvents.launcherEnabled
+        onTriggered: root.refresh()
+    }
 
     Plasma5Support.DataSource {
         id: runner
@@ -255,12 +332,18 @@ PlasmoidItem {
 
         onNewData: function(sourceName, data) {
             const callback = root.callbacks[sourceName]
-
-            if (callback)
-                callback(data.stdout || "")
-
+            // Clean up first: an exception in user QML must not leak a source.
             delete root.callbacks[sourceName]
             disconnectSource(sourceName)
+            if (callback) {
+                try {
+                    callback(data.stdout || "", data)
+                } catch (e) {
+                    console.warn("N.E.E.B.L.E.S. Launcher callback:", String(e))
+                    root.pendingActions = ({})
+                    root.refreshBusy = false
+                }
+            }
         }
     }
 
@@ -287,15 +370,12 @@ PlasmoidItem {
     fullRepresentation: Item {
         id: panel
 
-        implicitWidth: 350
-
-        implicitHeight: Math.min(
-            470,
-            Math.max(
-                250,
-                178 + Math.max(58, moduleList.contentHeight)
-            )
-        )
+        // Give declared module controls the main share of the popup.
+        // The list remains scrollable; Open Boss stays below it.
+        // At most 25% wider than Gate148; double the original 470px height.
+        // On a shorter display Plasma uses the available screen height.
+        implicitWidth: 512
+        implicitHeight: Math.min(940, Math.max(340, Screen.availableHeight - 72))
 
         /*
          * Halo exterior.
@@ -394,7 +474,7 @@ PlasmoidItem {
             Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: 54
+                Layout.minimumHeight: 150
 
                 ListView {
                     id: moduleList
@@ -409,278 +489,253 @@ PlasmoidItem {
                     boundsBehavior: Flickable.StopAtBounds
 
                     delegate: Rectangle {
+                        id: moduleRow
+
                         required property var modelData
 
-                        property var launcherButtons:
-                            root.launcherActionButtons(
-                                modelData
-                            )
+                        // Keep the two mandatory identity columns. The three
+                        // action slots do not create undeclared module actions.
+                        readonly property var declaredButtons:
+                            root.launcherActionButtons(modelData)
+                        readonly property var declaredSwitches:
+                            root.launcherStateSwitches(modelData)
+                        readonly property var declaredOpen:
+                            declaredButtons.find(function(item) {
+                                return item.data && item.data.action === "open"
+                            }) || null
+                        readonly property var remainingButtons:
+                            declaredButtons.filter(function(item) {
+                                return item !== declaredOpen
+                            })
+                        readonly property int extraCount:
+                            remainingButtons.length + declaredSwitches.length
 
-                        property var launcherSwitches:
-                            root.launcherStateSwitches(
-                                modelData
-                            )
-
-                        width:
-                            ListView.view.width
-
-                        height:
-                            48
-                            + launcherButtons.length * 36
-                            + launcherSwitches.length * 34
-
+                        width: ListView.view.width
+                        height: Math.max(58, 14 + extraCount * 30)
                         radius: 8
                         color: "#09090D"
-
                         border.width: 1
+                        border.color: modelData.enabled ? "#4C1D95" : "#3F3F46"
 
-                        border.color:
-                            modelData.enabled
-                            ? "#4C1D95"
-                            : "#3F3F46"
-
-                        ColumnLayout {
+                        RowLayout {
                             anchors.fill: parent
-                            anchors.margins: 7
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            anchors.topMargin: 6
+                            anchors.bottomMargin: 6
+                            spacing: 7
 
-                            spacing: 6
+                            // Column 1 — mandatory module icon.
+                            Image {
+                                Layout.preferredWidth: 36
+                                Layout.preferredHeight: 36
+                                Layout.alignment: Qt.AlignVCenter
+                                source: moduleRow.modelData.icon
+                                        && moduleRow.modelData.icon.length > 0
+                                        ? moduleRow.modelData.icon
+                                        : "../images/neebles-boss-launcher-icon.png"
+                                fillMode: Image.PreserveAspectFit
+                                smooth: true
+                            }
 
-                            RowLayout {
+                            // Column 2 — mandatory name, up to two lines.
+                            Text {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 28
+                                Layout.minimumWidth: 110
+                                Layout.alignment: Qt.AlignVCenter
+                                text: moduleRow.modelData.name
+                                wrapMode: Text.Wrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                                color: moduleRow.modelData.enabled
+                                       ? "#F5F3FF" : "#71717A"
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
 
-                                spacing: 7
-
-                                Text {
-                                    Layout.fillWidth: true
-
-                                    text: modelData.name
-
-                                    color:
-                                        modelData.enabled
-                                        ? "#F5F3FF"
-                                        : "#71717A"
-
-                                    font.pixelSize: 13
-                                    font.bold: true
-
-                                    elide: Text.ElideRight
-                                }
+                            // Column 3 — existing administrative Active control.
+                            Item {
+                                Layout.preferredWidth: 76
+                                Layout.fillHeight: true
 
                                 PlasmaComponents3.Button {
                                     id: stateButton
-
-                                    Layout.preferredWidth: 64
-                                    Layout.preferredHeight: 28
-
-                                    text:
-                                        modelData.enabled
-                                        ? root.t(
-                                            "common.disable"
-                                        )
-                                        : root.t(
-                                            "common.enable"
-                                        )
-
-                                    enabled:
-                                        root.safeModuleId(
-                                            modelData.name
-                                        )
-
+                                    anchors.centerIn: parent
+                                    width: 76
+                                    height: 29
+                                    text: moduleRow.modelData.enabled
+                                          ? root.t("common.disable")
+                                          : root.t("common.enable")
+                                    enabled: !root.modulePending(moduleRow.modelData.name)
+                                             && root.safeModuleId(moduleRow.modelData.name)
                                     hoverEnabled: true
 
                                     background: Rectangle {
                                         radius: 7
-
-                                        color:
-                                            stateButton.down
-                                            ? "#1B1027"
-                                            : stateButton.hovered
-                                              ? "#211331"
-                                              : "#110B19"
-
+                                        color: stateButton.down ? "#1B1027"
+                                               : stateButton.hovered ? "#211331" : "#110B19"
                                         border.width: 2
-
-                                        border.color:
-                                            modelData.enabled
-                                            ? "#A855F7"
-                                            : "#22D3EE"
+                                        border.color: moduleRow.modelData.enabled
+                                                      ? "#A855F7" : "#22D3EE"
                                     }
-
                                     contentItem: Text {
                                         text: stateButton.text
-
-                                        color:
-                                            modelData.enabled
-                                            ? "#D8B4FE"
-                                            : "#67E8F9"
-
-                                        font.pixelSize: 12
+                                        color: moduleRow.modelData.enabled
+                                               ? "#D8B4FE" : "#67E8F9"
+                                        font.pixelSize: 11
                                         font.bold: true
-
-                                        horizontalAlignment:
-                                            Text.AlignHCenter
-
-                                        verticalAlignment:
-                                            Text.AlignVCenter
+                                        elide: Text.ElideRight
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
                                     }
-
                                     onClicked: {
-                                        const verb =
-                                            modelData.enabled
-                                            ? "disable"
-                                            : "enable"
-
-                                        root.exec(
+                                        const verb = moduleRow.modelData.enabled
+                                                     ? "disable" : "enable"
+                                        root.runModuleAction(
                                             "/opt/neebles/client/bin/neebles modules "
-                                            + verb
-                                            + " "
-                                            + root.shellArg(
-                                                modelData.name
-                                            ),
-                                            function() {
-                                                root.refresh()
-                                            }
+                                            + verb + " "
+                                            + root.shellArg(moduleRow.modelData.name),
+                                            moduleRow.modelData.name
                                         )
                                     }
                                 }
                             }
 
-                            Repeater {
-                                model:
-                                    launcherButtons
+                            // Column 4 — Open exists only when module declares it.
+                            Item {
+                                Layout.preferredWidth: 74
+                                Layout.fillHeight: true
 
-                                delegate: PlasmaComponents3.Button {
-                                    required property var modelData
-
-                                    property var surfaceItem:
-                                        modelData
-
-                                    property var surfaceData:
-                                        surfaceItem.data
-                                        ? surfaceItem.data
-                                        : ({})
-
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 30
-
-                                    text:
-                                        surfaceItem.label
-
-                                    enabled:
-                                        surfaceItem.action_available
-                                        === true
-
+                                PlasmaComponents3.Button {
+                                    id: declaredOpenButton
+                                    anchors.centerIn: parent
+                                    width: 74
+                                    height: 29
+                                    visible: moduleRow.declaredOpen !== null
+                                    text: moduleRow.declaredOpen
+                                          ? moduleRow.declaredOpen.label : ""
+                                    enabled: moduleRow.declaredOpen !== null
+                                             && !root.modulePending(moduleRow.modelData.name)
+                                             && moduleRow.declaredOpen.action_available === true
                                     hoverEnabled: true
-
+                                    QQC2.ToolTip.visible: hovered && visible
+                                    QQC2.ToolTip.text: text
                                     background: Rectangle {
                                         radius: 7
-
-                                        color:
-                                            parent.down
-                                            ? "#0B1220"
-                                            : parent.hovered
-                                              ? "#172033"
-                                              : "#10131A"
-
-                                        border.width:
-                                            parent.activeFocus
-                                            ? 3
-                                            : 2
-
-                                        border.color:
-                                            parent.hovered
-                                            || parent.activeFocus
-                                            ? "#67E8F9"
-                                            : "#22D3EE"
+                                        color: declaredOpenButton.down ? "#0B1220"
+                                               : declaredOpenButton.hovered ? "#172033" : "#10131A"
+                                        border.width: 2
+                                        border.color: "#22D3EE"
                                     }
-
                                     contentItem: Text {
-                                        text: parent.text
+                                        text: declaredOpenButton.text
                                         color: "#67E8F9"
-
                                         font.pixelSize: 11
                                         font.bold: true
-
-                                        horizontalAlignment:
-                                            Text.AlignHCenter
-
-                                        verticalAlignment:
-                                            Text.AlignVCenter
+                                        elide: Text.ElideRight
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
                                     }
-
                                     onClicked: {
-                                        root.exec(
-                                            root.surfaceActionCommand(
-                                                surfaceItem.owner_module,
-                                                surfaceItem.item_id,
-                                                surfaceData.action
-                                            ),
-                                            function() {
-                                                root.refresh()
-                                            }
-                                        )
+                                        const item = moduleRow.declaredOpen
+                                        if (item) {
+                                            root.runModuleAction(
+                                                root.surfaceActionCommand(
+                                                    item.owner_module,
+                                                    item.item_id,
+                                                    item.data.action
+                                                ),
+                                                item.owner_module
+                                            )
+                                        }
                                     }
                                 }
                             }
 
-                            Repeater {
-                                model:
-                                    launcherSwitches
+                            // Column 5 — reserved optional module-owned controls.
+                            // Multiple declared controls stack vertically here;
+                            // none are discarded and the ListView remains scrollable.
+                            Item {
+                                Layout.preferredWidth: 76
+                                Layout.fillHeight: true
 
-                                delegate: RowLayout {
-                                    required property var modelData
+                                Column {
+                                    anchors.centerIn: parent
+                                    width: parent.width
+                                    spacing: 4
 
-                                    property var surfaceItem:
-                                        modelData
+                                    Repeater {
+                                        model: moduleRow.remainingButtons
 
-                                    property var surfaceData:
-                                        surfaceItem.data
-                                        ? surfaceItem.data
-                                        : ({})
-
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 28
-
-                                    Text {
-                                        Layout.fillWidth: true
-
-                                        text:
-                                            surfaceItem.label
-
-                                        color: "#A78BFA"
-                                        font.pixelSize: 11
-
-                                        elide:
-                                            Text.ElideRight
+                                        delegate: PlasmaComponents3.Button {
+                                            id: extraButton
+                                            required property var modelData
+                                            readonly property var item: modelData
+                                            width: 76
+                                            height: 26
+                                            text: item.label
+                                            enabled: !root.modulePending(item.owner_module)
+                                                     && item.action_available === true
+                                            hoverEnabled: true
+                                            QQC2.ToolTip.visible: hovered
+                                            QQC2.ToolTip.text: text
+                                            background: Rectangle {
+                                                radius: 6
+                                                color: extraButton.hovered ? "#172033" : "#10131A"
+                                                border.width: 1
+                                                border.color: "#22D3EE"
+                                            }
+                                            contentItem: Text {
+                                                text: extraButton.text
+                                                font.pixelSize: 10
+                                                color: "#67E8F9"
+                                                elide: Text.ElideRight
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                            onClicked: {
+                                                root.runModuleAction(
+                                                    root.surfaceActionCommand(
+                                                        item.owner_module,
+                                                        item.item_id,
+                                                        item.data.action
+                                                    ),
+                                                    item.owner_module
+                                                )
+                                            }
+                                        }
                                     }
 
-                                    NeeblesSwitch {
-                                        checked:
-                                            !!surfaceItem.active
+                                    Repeater {
+                                        model: moduleRow.declaredSwitches
 
-                                        checkable: false
+                                        delegate: Item {
+                                            required property var modelData
+                                            readonly property var item: modelData
+                                            width: 76
+                                            height: 26
 
-                                        enabled:
-                                            surfaceItem.requirements_met
-                                            === true
-
-                                        onClicked: {
-                                            const turnOn =
-                                                !surfaceItem.active
-
-                                            root.exec(
-                                                root.surfaceActionCommand(
-                                                    surfaceItem.owner_module,
-                                                    surfaceItem.item_id,
-                                                    turnOn
-                                                    ? surfaceData.action_on
-                                                    : surfaceData.action_off
-                                                ),
-                                                function() {
-                                                    root.refresh()
+                                            NeeblesSwitch {
+                                                anchors.centerIn: parent
+                                                checked: !!item.active
+                                                checkable: false
+                                                enabled: !root.modulePending(item.owner_module)
+                                                         && item.requirements_met === true
+                                                QQC2.ToolTip.visible: hovered
+                                                QQC2.ToolTip.text: item.label
+                                                onClicked: {
+                                                    const data = item.data || ({})
+                                                    const turnOn = !item.active
+                                                    root.runModuleAction(
+                                                        root.surfaceActionCommand(
+                                                            item.owner_module,
+                                                            item.item_id,
+                                                            turnOn ? data.action_on : data.action_off
+                                                        ),
+                                                        item.owner_module
+                                                    )
                                                 }
-                                            )
+                                            }
                                         }
                                     }
                                 }
@@ -726,8 +781,9 @@ PlasmoidItem {
             PlasmaComponents3.Button {
                 id: openBossButton
 
-                Layout.fillWidth: true
-                Layout.preferredHeight: 42
+                Layout.preferredWidth: 175
+                Layout.preferredHeight: 32
+                Layout.alignment: Qt.AlignHCenter
 
                 text:
                     root.t(

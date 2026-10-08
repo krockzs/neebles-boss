@@ -5548,6 +5548,7 @@ fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
         deactivate_module(name, "disabled")?;
 
         config::set_module_enabled(name, false)?;
+        broadcast_surface_module_change(name, "disabled");
 
         if previous {
             if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
@@ -5568,6 +5569,7 @@ fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
     }
 
     config::set_module_enabled(name, true)?;
+    broadcast_surface_module_change(name, "enabled");
 
     if let Err(error) = request_persistent_tray_start(name) {
         /*
@@ -5575,7 +5577,9 @@ fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
          * Boss saying "enabled" when the declared
          * tray lifecycle could not be started.
          */
-        let _ = config::set_module_enabled(name, false);
+        if config::set_module_enabled(name, false).is_ok() {
+            broadcast_surface_module_change(name, "disabled");
+        }
 
         return Err(error);
     }
@@ -5587,6 +5591,9 @@ fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
             let tray_cleanup = request_persistent_tray_stop(name);
 
             let config_cleanup = config::set_module_enabled(name, false);
+            if config_cleanup.is_ok() {
+                broadcast_surface_module_change(name, "disabled");
+            }
 
             let tray_text = match tray_cleanup {
                 Ok(_) => "tray compensation completed".to_string(),

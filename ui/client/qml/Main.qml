@@ -1543,6 +1543,12 @@ ApplicationWindow {
                                         mipmap: true
                                     }
 
+                                    Item {
+                                        visible:
+                                            surfaceData.control === "button"
+                                        Layout.fillWidth: true
+                                    }
+
                                     Button {
                                         id: featureActionButton
 
@@ -1558,7 +1564,7 @@ ApplicationWindow {
                                             )
                                         Layout.preferredHeight: 34
                                         Layout.alignment:
-                                            Qt.AlignLeft
+                                            Qt.AlignRight
                                             | Qt.AlignVCenter
 
                                         text:
