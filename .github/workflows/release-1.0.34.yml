@@ -260,3 +260,11 @@ jobs:
           test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 11
 
           python3 -c 'from pathlib import Path; expected={"neebles-backend","neebles-ui","neebles-installer","neebles-auth-agent","client-data.tar.gz","install.sh","neebles-runtime-resolve","boss-runtime.tar.gz","critical-update-manifest.json","bootstrap.json","SHA256SUMS"}; actual={p.name for p in Path("dist").iterdir() if p.is_file()}; actual==expected or (_ for _ in ()).throw(RuntimeError("dist asset mismatch: "+repr(sorted(actual))))'
+
+      - name: Preserve certified Boss 1.0.34 candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: neebles-boss-1.0.34-candidate
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
