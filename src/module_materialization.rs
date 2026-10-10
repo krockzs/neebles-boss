@@ -769,6 +769,52 @@ fn verify_staging_exact(staging: &Path, material_entries: &[MaterialEntry]) -> R
     Ok(())
 }
 
+/// Recheck the entire composed House against both authenticated manifests.
+/// Shared directory paths must have identical declarations; no extra paths pass.
+pub fn verify_composed_runtime_rootfs(
+    rootfs: &Path,
+    essential: &MaterialLayer,
+    module: &MaterialRecipe,
+) -> Result<(), String> {
+    let mut combined = BTreeMap::<PathBuf, &MaterialEntry>::new();
+    for layer in [&essential.entries, &module.entries] {
+        for (relative, entry) in rootfs_material_entries(layer)? {
+            if let Some(previous) = combined.get(&relative) {
+                if previous.kind != entry.kind
+                    && !matches!(
+                        (previous.kind.as_str(), entry.kind.as_str()),
+                        ("directory", "dir") | ("dir", "directory")
+                    )
+                    || previous.mode != entry.mode
+                    || previous.size != entry.size
+                    || previous.sha256 != entry.sha256
+                    || previous.target != entry.target
+                {
+                    return Err(format!(
+                        "incompatible shared material entry: {}",
+                        relative.display()
+                    ));
+                }
+            } else {
+                combined.insert(relative, entry);
+            }
+        }
+    }
+    let actual = collect_tree(rootfs)?;
+    let expected = combined.keys().cloned().collect::<BTreeSet<_>>();
+    if actual != expected {
+        return Err(format!(
+            "composed rootfs membership mismatch: missing={:?} unexpected={:?}",
+            expected.difference(&actual).collect::<Vec<_>>(),
+            actual.difference(&expected).collect::<Vec<_>>()
+        ));
+    }
+    for (relative, entry) in combined {
+        verify_material_entry(rootfs, &relative, entry)?;
+    }
+    Ok(())
+}
+
 fn identical_material_path(source: &Path, destination: &Path) -> Result<bool, String> {
     let source_metadata = fs::symlink_metadata(source).map_err(|error| {
         format!(

@@ -1,4 +1,5 @@
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Read;
@@ -11,7 +12,9 @@ use neebles_backend::domestic_construction::DomesticConstructionDeclaration;
 use neebles_backend::module_material::{
     parse_material_layer, parse_material_recipe, valid_module_id, PackageRequirement,
 };
-use neebles_backend::module_material_binding::MaterialBindingInput;
+use neebles_backend::module_material_binding::{
+    MaterialBindingInput, MaterialBindingV3Input, PreparedMaterialBinding, RootfsBindingInput,
+};
 
 const CUSTOM_REPOSITORY: &str = "krockzs/neebles-custom";
 const CUSTOM_REPOSITORY_GIT: &str = "https://github.com/krockzs/neebles-custom.git";
@@ -31,6 +34,44 @@ pub(crate) struct PreparedModulePackages {
     pub(crate) report: ModulePreinstallReport,
     pub(crate) binding_input: MaterialBindingInput,
     pub(crate) material_root: PathBuf,
+    // Explicit binding format. A future multi-recipe downloader supplies V3;
+    // an old V2 recipe is never silently interpreted as N independent recipes.
+    pub(crate) binding_format: CandidateBindingFormat,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum CandidateBindingFormat {
+    LegacyV2,
+    MultiRootfsV3(Vec<RootfsBindingInput>),
+}
+
+impl PreparedModulePackages {
+    pub(crate) fn prepare_binding(&self) -> Result<PreparedMaterialBinding, String> {
+        match &self.binding_format {
+            CandidateBindingFormat::LegacyV2 => {
+                neebles_backend::module_material_binding::prepare_material_binding(
+                    &self.material_root,
+                    self.binding_input.clone(),
+                )
+            }
+            CandidateBindingFormat::MultiRootfsV3(rootfs) => {
+                let old = &self.binding_input;
+                neebles_backend::module_material_binding::prepare_material_binding_v3(
+                    &self.material_root,
+                    MaterialBindingV3Input {
+                        module: old.module.clone(),
+                        version: old.version.clone(),
+                        custom_revision: old.custom_revision.clone(),
+                        essential_packages_payload: old.essential_packages_payload.clone(),
+                        essential_manifest_payload: old.essential_manifest_payload.clone(),
+                        runtime_manifest_payload: old.runtime_manifest_payload.clone(),
+                        construction_payload: old.construction_payload.clone(),
+                        rootfs: rootfs.clone(),
+                    },
+                )
+            }
+        }
+    }
 }
 
 fn resolve_custom_revision() -> Result<String, String> {
@@ -321,12 +362,118 @@ fn ensure_package_requirements(
     Ok((reused, downloaded))
 }
 
-pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePackages, String> {
+/// Fail closed while a declaration cannot yet be mapped to independently
+/// authenticated CUSTOM V2 package recipes. Every identity is module-declared.
+fn validate_preinstall_rootfs_recipe_contract(
+    declaration: &DomesticConstructionDeclaration,
+) -> Result<(), String> {
+    match declaration.rootfs.as_slice() {
+        [ _only ] => Ok(()),
+        others => Err(format!(
+            "preinstall cannot authenticate independent rootfs recipes yet: subject={} declared={}; publish multi-rootfs material bindings before enabling this declaration",
+            declaration.subject,
+            others.iter().map(|rootfs| rootfs.id.as_str()).collect::<Vec<_>>().join(",")
+        )),
+    }
+}
+
+/// CUSTOM recipe layout is structural; only module and rootfs names come from
+/// the authenticated Construction declaration. No rootfs name is reserved.
+fn rootfs_recipe_paths(module: &str, rootfs: &str) -> Result<(String, String), String> {
+    if !valid_module_id(module) || !valid_module_id(rootfs) {
+        return Err("invalid module/rootfs recipe path identity".to_string());
+    }
+    let stem = format!("runtime/manifests/modules/rootfs/{module}/{rootfs}");
+    Ok((
+        format!("{stem}.packages.tsv"),
+        format!("{stem}.manifest.json"),
+    ))
+}
+
+/// Read the complete recipe set at one pinned CUSTOM revision and authenticate
+/// every identity before any package download or publication.
+fn fetch_rootfs_recipes(
+    revision: &str,
+    module: &str,
+    version: &str,
+    construction_payload: &[u8],
+) -> Result<
+    (
+        Vec<RootfsBindingInput>,
+        BTreeMap<String, neebles_backend::module_material::MaterialRecipe>,
+    ),
+    String,
+> {
+    let construction_text = std::str::from_utf8(construction_payload)
+        .map_err(|error| format!("Construction is not UTF-8: {error}"))?;
+    let declaration = DomesticConstructionDeclaration::parse(construction_text)?;
+    if declaration.subject != module || declaration.rootfs.is_empty() {
+        return Err("Construction does not declare rootfs for this module".to_string());
+    }
+    let mut rootfs = Vec::with_capacity(declaration.rootfs.len());
+    for entry in &declaration.rootfs {
+        let (packages_path, manifest_path) = rootfs_recipe_paths(module, &entry.id)?;
+        rootfs.push(RootfsBindingInput {
+            id: entry.id.clone(),
+            packages_payload: fetch_remote_bytes(revision, &packages_path, 30)?,
+            manifest_payload: fetch_remote_bytes(revision, &manifest_path, 30)?,
+        });
+    }
+    let recipes = neebles_backend::module_material_binding::validate_construction_rootfs_binding(
+        module,
+        version,
+        construction_payload,
+        &rootfs,
+    )?;
+    Ok((rootfs, recipes))
+}
+
+/// Shared pool filenames must have one SHA authority across Essentials and
+/// every declared rootfs, including recipes not yet materialized.
+fn unique_rootfs_packages(
+    essentials: &[PackageRequirement],
+    recipes: &BTreeMap<String, neebles_backend::module_material::MaterialRecipe>,
+) -> Result<Vec<PackageRequirement>, String> {
+    let essential_names: std::collections::BTreeSet<&str> =
+        essentials.iter().map(|p| p.filename.as_str()).collect();
+    let mut names: BTreeMap<String, String> = BTreeMap::new();
+    for recipe in recipes.values() {
+        for requirement in &recipe.packages {
+            if essential_names.contains(requirement.filename.as_str()) {
+                return Err(format!(
+                    "rootfs package repeats Essential: {}",
+                    requirement.filename
+                ));
+            }
+            if let Some(previous) =
+                names.insert(requirement.filename.clone(), requirement.sha256.clone())
+            {
+                if previous != requirement.sha256 {
+                    return Err(format!(
+                        "conflicting rootfs package SHA256: {}",
+                        requirement.filename
+                    ));
+                }
+            }
+        }
+    }
+    Ok(names
+        .into_iter()
+        .map(|(filename, sha256)| PackageRequirement { filename, sha256 })
+        .collect())
+}
+
+pub(crate) fn ensure_module_packages_for_candidate(
+    module_id: &str,
+    candidate_version: &str,
+) -> Result<PreparedModulePackages, String> {
     if !valid_module_id(module_id) {
         return Err(format!("invalid module id for preinstall: {module_id}"));
     }
 
-    let installed = crate::modules::installed_module_manifest(module_id)?;
+    if candidate_version.trim().is_empty() {
+        return Err("preinstall candidate version cannot be empty".to_string());
+    }
 
     let revision = resolve_custom_revision()?;
 
@@ -348,36 +495,6 @@ pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePa
     let essential_layer =
         parse_material_layer("Essential", essentials_text, &essentials_manifest_payload)?;
 
-    let packages_path = format!("runtime/manifests/modules/{module_id}.packages.tsv");
-    let manifest_path = format!("runtime/manifests/modules/{module_id}.manifest.json");
-
-    let packages_payload = fetch_remote_bytes(&revision, &packages_path, 30)?;
-
-    let packages_text = std::str::from_utf8(&packages_payload)
-        .map_err(|error| format!("module package selector is not UTF-8: {error}"))?;
-
-    let manifest_payload = fetch_remote_bytes(&revision, &manifest_path, 30)?;
-
-    let recipe = parse_material_recipe(
-        module_id,
-        &installed.version,
-        packages_text,
-        &manifest_payload,
-    )?;
-
-    for requirement in &recipe.packages {
-        if essential_layer
-            .packages
-            .iter()
-            .any(|essential| essential.filename.as_str() == requirement.filename.as_str())
-        {
-            return Err(format!(
-                "module package delta repeats Essential package: {}",
-                requirement.filename
-            ));
-        }
-    }
-
     let runtime_manifest_payload =
         fetch_remote_bytes(&revision, "runtime/modules/domestic-runtime.json", 30)?;
 
@@ -396,6 +513,18 @@ pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePa
         ));
     }
 
+    // Every nonempty declared rootfs set uses one authenticated V3 contract,
+    // including a module that declares exactly one environment. The identity
+    // and cardinality come exclusively from Construction, never from Boss.
+    // No legacy recipe fallback: a missing V3 recipe fails before publication.
+    let (rootfs_bindings, recipes) = fetch_rootfs_recipes(
+        &revision,
+        module_id,
+        candidate_version,
+        &construction_payload,
+    )?;
+    let requirements = unique_rootfs_packages(&essential_layer.packages, &recipes)?;
+
     let territory =
         neebles_backend::module_material_territory::resolve_module_material_territory()?;
 
@@ -410,17 +539,17 @@ pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePa
         &revision,
         &territory.package_pool,
         "runtime/modules/packages",
-        &recipe.packages,
+        &requirements,
     )?;
 
     let binding_input = MaterialBindingInput {
         module: module_id.to_string(),
-        version: installed.version.clone(),
+        version: candidate_version.to_string(),
         custom_revision: revision.clone(),
         essential_packages_payload: essentials_payload,
         essential_manifest_payload: essentials_manifest_payload,
-        module_packages_payload: packages_payload,
-        module_manifest_payload: manifest_payload,
+        module_packages_payload: Vec::new(),
+        module_manifest_payload: Vec::new(),
         runtime_manifest_payload: runtime_manifest_payload.clone(),
         construction_payload: construction_payload.clone(),
     };
@@ -429,13 +558,320 @@ pub(crate) fn ensure_module_packages(module_id: &str) -> Result<PreparedModulePa
         report: ModulePreinstallReport {
             module: module_id.to_string(),
             custom_revision: revision,
-            required: essential_layer.packages.len() + recipe.packages.len(),
+            required: essential_layer.packages.len() + requirements.len(),
             reused: essential_reused + module_reused,
             downloaded: essential_downloaded + module_downloaded,
         },
         binding_input,
         material_root: territory.material_root,
+        binding_format: CandidateBindingFormat::MultiRootfsV3(rootfs_bindings),
     })
+}
+
+/// Stage every explicitly declared environment inside the unpublished module
+/// candidate. The enclosing install/update transaction owns publication and
+/// cleanup; a failure here must never publish a partially built module.
+pub(crate) fn stage_declared_rootfs(
+    prepared: &PreparedModulePackages,
+    candidate_directory: &Path,
+) -> Result<(), String> {
+    let input = &prepared.binding_input;
+    let construction_raw = std::str::from_utf8(&input.construction_payload)
+        .map_err(|e| format!("Construction is not UTF-8: {e}"))?;
+    let declaration = DomesticConstructionDeclaration::parse(construction_raw)?;
+    if declaration.subject != input.module || declaration.rootfs.is_empty() {
+        return Err("staged rootfs Construction identity/membership mismatch".to_string());
+    }
+    let essential_selector = std::str::from_utf8(&input.essential_packages_payload)
+        .map_err(|e| format!("Essential selector is not UTF-8: {e}"))?;
+    let essential = parse_material_layer(
+        "Essential",
+        essential_selector,
+        &input.essential_manifest_payload,
+    )?;
+
+    // Authenticate the entire closed recipe set before creating even the first
+    // rootfs. No inferred default ID and no best-effort partial installation.
+    let recipes: BTreeMap<String, neebles_backend::module_material::MaterialRecipe> =
+        match &prepared.binding_format {
+            CandidateBindingFormat::LegacyV2 => {
+                validate_preinstall_rootfs_recipe_contract(&declaration)?;
+                let module_selector = std::str::from_utf8(&input.module_packages_payload)
+                    .map_err(|e| format!("module selector is not UTF-8: {e}"))?;
+                let recipe = parse_material_recipe(
+                    &input.module,
+                    &input.version,
+                    module_selector,
+                    &input.module_manifest_payload,
+                )?;
+                BTreeMap::from([(declaration.rootfs[0].id.clone(), recipe)])
+            }
+            CandidateBindingFormat::MultiRootfsV3(rootfs) => {
+                neebles_backend::module_material_binding::validate_construction_rootfs_binding(
+                    &input.module,
+                    &input.version,
+                    &input.construction_payload,
+                    rootfs,
+                )?
+            }
+        };
+
+    let territory =
+        neebles_backend::module_material_territory::resolve_module_material_territory()?;
+    stage_authenticated_rootfs_set(
+        candidate_directory,
+        &declaration,
+        &recipes,
+        &essential,
+        &territory.essential_package_pool,
+        &territory.package_pool,
+        &input.runtime_manifest_payload,
+    )
+}
+
+/// Recheck the exact authenticated physical set at the transaction boundary.
+/// This closes the window between staging and module publication/deactivation.
+pub(crate) fn verify_candidate_rootfs_before_publication(
+    prepared: &PreparedModulePackages,
+    candidate_directory: &Path,
+) -> Result<(), String> {
+    let input = &prepared.binding_input;
+    let raw = std::str::from_utf8(&input.construction_payload)
+        .map_err(|e| format!("Construction is not UTF-8: {e}"))?;
+    let declaration = DomesticConstructionDeclaration::parse(raw)?;
+    if declaration.subject != input.module || declaration.rootfs.is_empty() {
+        return Err("prepublication rootfs Construction identity mismatch".into());
+    }
+    match &prepared.binding_format {
+        CandidateBindingFormat::LegacyV2 => {
+            validate_preinstall_rootfs_recipe_contract(&declaration)?;
+        }
+        CandidateBindingFormat::MultiRootfsV3(rootfs) => {
+            neebles_backend::module_material_binding::validate_construction_rootfs_binding(
+                &input.module,
+                &input.version,
+                &input.construction_payload,
+                rootfs,
+            )?;
+        }
+    }
+    verify_staged_rootfs_inventory(
+        candidate_directory,
+        &declaration,
+        &input.runtime_manifest_payload,
+    )?;
+    let essential_selector = std::str::from_utf8(&input.essential_packages_payload)
+        .map_err(|e| format!("Essential selector is not UTF-8: {e}"))?;
+    let essential = parse_material_layer(
+        "Essential",
+        essential_selector,
+        &input.essential_manifest_payload,
+    )?;
+    let recipes = match &prepared.binding_format {
+        CandidateBindingFormat::LegacyV2 => {
+            let selector = std::str::from_utf8(&input.module_packages_payload)
+                .map_err(|e| format!("module selector is not UTF-8: {e}"))?;
+            let recipe = parse_material_recipe(
+                &input.module,
+                &input.version,
+                selector,
+                &input.module_manifest_payload,
+            )?;
+            BTreeMap::from([(declaration.rootfs[0].id.clone(), recipe)])
+        }
+        CandidateBindingFormat::MultiRootfsV3(rootfs) => {
+            neebles_backend::module_material_binding::validate_construction_rootfs_binding(
+                &input.module,
+                &input.version,
+                &input.construction_payload,
+                rootfs,
+            )?
+        }
+    };
+    for entry in &declaration.rootfs {
+        let recipe = recipes
+            .get(&entry.id)
+            .ok_or_else(|| format!("missing authenticated rootfs recipe: {}", entry.id))?;
+        neebles_backend::module_materialization::verify_composed_runtime_rootfs(
+            &candidate_directory
+                .join("rootfs")
+                .join(&entry.id)
+                .join("rootfs"),
+            &essential,
+            recipe,
+        )?;
+    }
+    Ok(())
+}
+
+/// Stage the entire authenticated set or remove only the environments created
+/// by this invocation. No partial rootfs set is returned as a successful candidate.
+fn stage_authenticated_rootfs_set(
+    candidate_directory: &Path,
+    declaration: &DomesticConstructionDeclaration,
+    recipes: &BTreeMap<String, neebles_backend::module_material::MaterialRecipe>,
+    essential: &neebles_backend::module_material::MaterialLayer,
+    essential_pool: &Path,
+    module_pool: &Path,
+    runtime_manifest_payload: &[u8],
+) -> Result<(), String> {
+    let territory = candidate_directory.join("rootfs");
+    // Reject altered candidate parents and unexpected recipes before writing.
+    let candidate_metadata = fs::symlink_metadata(candidate_directory)
+        .map_err(|error| format!("invalid rootfs candidate: {error}"))?;
+    if !candidate_metadata.file_type().is_dir() {
+        return Err("rootfs candidate must be a real directory".to_string());
+    }
+    match fs::symlink_metadata(&territory) {
+        Ok(metadata) if !metadata.file_type().is_dir() => {
+            return Err("rootfs territory must be a real directory".to_string())
+        }
+        Ok(_) => (),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+        Err(error) => return Err(format!("cannot inspect rootfs territory: {error}")),
+    }
+    let declared: std::collections::BTreeSet<&str> = declaration
+        .rootfs
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect();
+    if declared.len() != declaration.rootfs.len()
+        || declared.len() != recipes.len()
+        || recipes.keys().any(|id| !declared.contains(id.as_str()))
+    {
+        return Err("rootfs staging requires exact declared recipe membership".to_string());
+    }
+    // Refuse collisions up front; never remove anything predating this call.
+    for entry in &declaration.rootfs {
+        if !recipes.contains_key(&entry.id) {
+            return Err(format!("missing authenticated rootfs recipe: {}", entry.id));
+        }
+        if fs::symlink_metadata(territory.join(&entry.id)).is_ok() {
+            return Err(format!("rootfs candidate already exists: {}", entry.id));
+        }
+    }
+    let mut created: Vec<PathBuf> = Vec::new();
+    for entry in &declaration.rootfs {
+        let recipe = recipes.get(&entry.id).expect("checked before staging");
+        match neebles_backend::module_persistent_rootfs::prepare_persistent_rootfs(
+            candidate_directory,
+            &entry.id,
+            essential,
+            essential_pool,
+            recipe,
+            module_pool,
+            runtime_manifest_payload,
+        ) {
+            Ok(built) => {
+                created.push(territory.join(&entry.id));
+                eprintln!(
+                    "N.E.E.B.L.E.S.: staged rootfs '{}' at {}",
+                    entry.id,
+                    built.rootfs_path.display()
+                );
+            }
+            Err(error) => {
+                let mut cleanup_errors = Vec::new();
+                for path in created.iter().rev() {
+                    if let Err(cleanup) = fs::remove_dir_all(path) {
+                        cleanup_errors.push(format!("{}: {cleanup}", path.display()));
+                    }
+                }
+                if !cleanup_errors.is_empty() {
+                    return Err(format!(
+                        "rootfs staging failed: {error}; cleanup failed: {}",
+                        cleanup_errors.join(" | ")
+                    ));
+                }
+                return Err(format!("rootfs staging failed for '{}': {error}", entry.id));
+            }
+        }
+    }
+    if let Err(error) =
+        verify_staged_rootfs_inventory(candidate_directory, declaration, runtime_manifest_payload)
+    {
+        let mut cleanup_errors = Vec::new();
+        for path in created.iter().rev() {
+            if let Err(cleanup) = fs::remove_dir_all(path) {
+                cleanup_errors.push(format!("{}: {cleanup}", path.display()));
+            }
+        }
+        if !cleanup_errors.is_empty() {
+            return Err(format!(
+                "rootfs inventory verification failed: {error}; cleanup failed: {}",
+                cleanup_errors.join(" | ")
+            ));
+        }
+        return Err(format!("rootfs inventory verification failed: {error}"));
+    }
+    Ok(())
+}
+
+/// Verify the physically materialized set before a candidate may be published.
+/// An additional rootfs, changed runtime manifest or symlink is not tolerated.
+fn verify_staged_rootfs_inventory(
+    candidate_directory: &Path,
+    declaration: &DomesticConstructionDeclaration,
+    runtime_manifest_payload: &[u8],
+) -> Result<(), String> {
+    let territory = candidate_directory.join("rootfs");
+    let metadata = fs::symlink_metadata(&territory)
+        .map_err(|e| format!("cannot inspect staged rootfs territory: {e}"))?;
+    if !metadata.file_type().is_dir() {
+        return Err("staged rootfs territory is not a real directory".into());
+    }
+    let declared: std::collections::BTreeSet<&str> = declaration
+        .rootfs
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect();
+    if declared.is_empty() || declared.len() != declaration.rootfs.len() {
+        return Err("invalid staged rootfs declaration membership".into());
+    }
+    let mut observed = std::collections::BTreeSet::new();
+    for entry in fs::read_dir(&territory)
+        .map_err(|e| format!("cannot enumerate staged rootfs territory: {e}"))?
+    {
+        let entry = entry.map_err(|e| format!("cannot read staged rootfs entry: {e}"))?;
+        let id = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| "non-UTF-8 staged rootfs entry".to_string())?;
+        if !declared.contains(id.as_str()) || !observed.insert(id.clone()) {
+            return Err(format!("undeclared staged rootfs entry: {id}"));
+        }
+        let environment = entry.path();
+        let environment_type = fs::symlink_metadata(&environment)
+            .map_err(|e| format!("cannot inspect rootfs '{id}': {e}"))?;
+        if !environment_type.file_type().is_dir() {
+            return Err(format!("rootfs '{id}' must be a real directory"));
+        }
+        let rootfs_type = fs::symlink_metadata(environment.join("rootfs"))
+            .map_err(|e| format!("rootfs '{id}' payload missing: {e}"))?;
+        if !rootfs_type.file_type().is_dir() {
+            return Err(format!("rootfs '{id}' payload must be a real directory"));
+        }
+        let manifest = environment.join("domestic-runtime.json");
+        let manifest_type = fs::symlink_metadata(&manifest)
+            .map_err(|e| format!("rootfs '{id}' runtime manifest missing: {e}"))?;
+        if !manifest_type.file_type().is_file() {
+            return Err(format!(
+                "rootfs '{id}' runtime manifest must be a regular file"
+            ));
+        }
+        if fs::read(&manifest)
+            .map_err(|e| format!("cannot read rootfs '{id}' runtime manifest: {e}"))?
+            != runtime_manifest_payload
+        {
+            return Err(format!(
+                "rootfs '{id}' runtime manifest differs from authenticated material"
+            ));
+        }
+    }
+    if observed.len() != declared.len() {
+        return Err("staged rootfs inventory is incomplete".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -790,5 +1226,599 @@ mod custom_raw_url_tests {
                 "invalid revision was accepted: {revision:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod multirootfs_preinstall_contract_tests {
+    use super::*;
+
+    fn construction(rootfs: serde_json::Value, selected: &str) -> DomesticConstructionDeclaration {
+        let raw = serde_json::json!({
+            "schema": "1", "name": "neebles-domestic-construction",
+            "subject": "fixture",
+            "rootfs": rootfs,
+            "steps": [{ "id": "run", "runtime_authority": "modules.runtime",
+                "rootfs": selected, "world": "modules.fixture",
+                "execution": "foreground", "session": false }]
+        })
+        .to_string();
+        DomesticConstructionDeclaration::parse(&raw).expect("valid Construction fixture")
+    }
+
+    #[test]
+    fn preinstall_accepts_arbitrary_declared_rootfs() {
+        let fixture = construction(serde_json::json!([{"id":"caca-de-gato"}]), "caca-de-gato");
+        assert!(validate_preinstall_rootfs_recipe_contract(&fixture).is_ok());
+    }
+
+    #[test]
+    fn preinstall_accepts_any_second_identity() {
+        let fixture = construction(serde_json::json!([{"id": "motor-x"}]), "motor-x");
+        assert!(validate_preinstall_rootfs_recipe_contract(&fixture).is_ok());
+    }
+
+    #[test]
+    fn preinstall_rejects_unbound_additional_rootfs() {
+        let fixture = construction(
+            serde_json::json!([
+                {"id": "gato"}, {"id": "perro"}
+            ]),
+            "perro",
+        );
+        assert!(validate_preinstall_rootfs_recipe_contract(&fixture).is_err());
+    }
+}
+
+#[cfg(test)]
+mod multi_recipe_acquisition_tests {
+    use super::{rootfs_recipe_paths, unique_rootfs_packages};
+    use neebles_backend::module_material::{MaterialRecipe, PackageRequirement};
+    use std::collections::BTreeMap;
+
+    fn recipe(filename: &str, sha: &str) -> MaterialRecipe {
+        MaterialRecipe {
+            module: "sample".into(),
+            version: "1".into(),
+            packages: vec![PackageRequirement {
+                filename: filename.into(),
+                sha256: sha.into(),
+            }],
+            entries: vec![],
+        }
+    }
+
+    #[test]
+    fn rootfs_urls_derive_from_opaque_declarations() {
+        let (a, b) = rootfs_recipe_paths("modulo-x", "caca-de-gato").unwrap();
+        assert_eq!(
+            a,
+            "runtime/manifests/modules/rootfs/modulo-x/caca-de-gato.packages.tsv"
+        );
+        assert_eq!(
+            b,
+            "runtime/manifests/modules/rootfs/modulo-x/caca-de-gato.manifest.json"
+        );
+        assert!(rootfs_recipe_paths("modulo-x", "../escape").is_err());
+    }
+
+    #[test]
+    fn shared_packages_download_once_and_essential_overlap_fails() {
+        let mut recipes = BTreeMap::new();
+        recipes.insert("gato".into(), recipe("one.deb", "abc"));
+        recipes.insert("perro".into(), recipe("one.deb", "abc"));
+        assert_eq!(unique_rootfs_packages(&[], &recipes).unwrap().len(), 1);
+        assert!(unique_rootfs_packages(
+            &[PackageRequirement {
+                filename: "one.deb".into(),
+                sha256: "abc".into()
+            }],
+            &recipes
+        )
+        .is_err());
+        recipes.insert("perro".into(), recipe("one.deb", "different"));
+        assert!(unique_rootfs_packages(&[], &recipes).is_err());
+    }
+}
+
+#[cfg(test)]
+mod multirootfs_staging_atomicity_tests {
+    use super::*;
+    use neebles_backend::module_material::{MaterialLayer, MaterialRecipe, PackageRequirement};
+
+    fn declaration() -> DomesticConstructionDeclaration {
+        let raw = serde_json::json!({
+            "schema":"1", "name":"neebles-domestic-construction", "subject":"fixture",
+            "rootfs":[{"id":"gato"},{"id":"perro"}],
+            "steps":[{"id":"run", "runtime_authority":"modules.runtime",
+                "rootfs":"perro", "world":"modules.fixture",
+                "execution":"foreground", "session":false}]
+        })
+        .to_string();
+        DomesticConstructionDeclaration::parse(&raw).unwrap()
+    }
+
+    fn runtime_payload() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema":"1", "name":"neebles-domestic-runtime", "root":"rootfs",
+            "worlds":{"fixture.runtime":{"categories":{
+                "runtime_paths":{"category":"runtime_paths","value":"fixture-runtime",
+                    "declared_targets":["."],"resolved_targets":["."]}
+            }}}
+        }))
+        .unwrap()
+    }
+
+    fn recipe() -> MaterialRecipe {
+        MaterialRecipe {
+            module: "fixture".into(),
+            version: "1".into(),
+            packages: vec![],
+            entries: vec![],
+        }
+    }
+
+    fn single_declaration() -> DomesticConstructionDeclaration {
+        let raw = serde_json::json!({
+            "schema":"1", "name":"neebles-domestic-construction", "subject":"fixture",
+            "rootfs":[{"id":"gato"}],
+            "steps":[{"id":"run", "runtime_authority":"modules.runtime",
+                "rootfs":"gato", "world":"modules.fixture",
+                "execution":"foreground", "session":false}]
+        })
+        .to_string();
+        DomesticConstructionDeclaration::parse(&raw).unwrap()
+    }
+
+    fn prepared_fixture(payload: Vec<u8>) -> PreparedModulePackages {
+        PreparedModulePackages {
+            report: ModulePreinstallReport {
+                module: "fixture".into(),
+                custom_revision: "revision".into(),
+                required: 0,
+                reused: 0,
+                downloaded: 0,
+            },
+            material_root: PathBuf::new(),
+            binding_format: CandidateBindingFormat::LegacyV2,
+            binding_input: MaterialBindingInput {
+                module: "fixture".into(),
+                version: "1".into(),
+                custom_revision: "revision".into(),
+                essential_packages_payload: Vec::new(),
+                essential_manifest_payload: br#"{"entries":[]}"#.to_vec(),
+                module_packages_payload: Vec::new(),
+                module_manifest_payload: br#"{"module":"fixture","version":"1","entries":[]}"#
+                    .to_vec(),
+                construction_payload: serde_json::json!({
+                    "schema":"1", "name":"neebles-domestic-construction", "subject":"fixture",
+                    "rootfs":[{"id":"gato"}],
+                    "steps":[{"id":"run", "runtime_authority":"modules.runtime",
+                        "rootfs":"gato", "world":"modules.fixture",
+                        "execution":"foreground", "session":false}]
+                })
+                .to_string()
+                .into_bytes(),
+                runtime_manifest_payload: payload,
+            },
+        }
+    }
+
+    // Transaction-level fixture: the same prepared inventory drives physical
+    // staging, schema-3 binding preparation and post-publication loading.
+    fn prepared_v3_fixture(material_root: PathBuf) -> PreparedModulePackages {
+        let mut prepared = prepared_fixture(runtime_payload());
+        prepared.material_root = material_root;
+        prepared.binding_input.custom_revision = "a".repeat(40);
+        prepared.binding_input.essential_manifest_payload = br#"{"entries":[]}"#.to_vec();
+        prepared.binding_input.construction_payload = serde_json::json!({
+            "schema":"1", "name":"neebles-domestic-construction", "subject":"fixture",
+            "rootfs":[{"id":"gato"},{"id":"perro"}],
+            "steps":[{"id":"run", "runtime_authority":"modules.runtime",
+                "rootfs":"perro", "world":"modules.fixture",
+                "execution":"foreground", "session":false}]
+        })
+        .to_string()
+        .into_bytes();
+        prepared.binding_format = CandidateBindingFormat::MultiRootfsV3(
+            ["gato", "perro"]
+                .iter()
+                .map(|id| RootfsBindingInput {
+                    id: (*id).to_string(),
+                    packages_payload: Vec::new(),
+                    manifest_payload: serde_json::json!({
+                        "module":"fixture", "version":"1", "rootfs":id, "entries":[]
+                    })
+                    .to_string()
+                    .into_bytes(),
+                })
+                .collect(),
+        );
+        prepared
+    }
+
+    #[test]
+    fn schema_three_physical_candidate_and_active_binding_agree_after_publish() {
+        let tmp = tempfile::tempdir().unwrap();
+        let prepared = prepared_v3_fixture(tmp.path().join("material"));
+        let candidate = tmp.path().join("unpublished");
+        let installed = tmp.path().join("installed");
+        fs::create_dir(&candidate).unwrap();
+        stage_declared_rootfs_for_test(&prepared, &candidate, tmp.path()).unwrap();
+        let binding = prepared.prepare_binding().unwrap();
+        verify_candidate_rootfs_before_publication(&prepared, &candidate).unwrap();
+        assert!(!installed.exists());
+        assert!(!prepared.material_root.join("fixture").exists());
+        fs::rename(&candidate, &installed).unwrap();
+        binding.activate_install().unwrap();
+        let active = neebles_backend::module_material_binding::load_installed_material_binding(
+            &prepared.material_root,
+            "fixture",
+        )
+        .unwrap();
+        match active {
+            neebles_backend::module_material_binding::InstalledMaterialBinding::MultiRootfs(v3) => {
+                assert_eq!(v3.rootfs_recipes.len(), 2);
+                for id in ["gato", "perro"] {
+                    assert!(v3.rootfs_recipes.contains_key(id));
+                    assert!(installed.join("rootfs").join(id).join("rootfs").is_dir());
+                    assert_eq!(
+                        fs::read(
+                            installed
+                                .join("rootfs")
+                                .join(id)
+                                .join("domestic-runtime.json")
+                        )
+                        .unwrap(),
+                        prepared.binding_input.runtime_manifest_payload
+                    );
+                }
+            }
+            _ => panic!("schema-3 candidate unexpectedly activated legacy binding"),
+        }
+    }
+
+    #[test]
+    fn schema_three_single_rootfs_publishes_one_environment_and_one_recipe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut prepared = prepared_v3_fixture(tmp.path().join("material"));
+        prepared.binding_input.construction_payload = serde_json::json!({
+            "schema":"1", "name":"neebles-domestic-construction", "subject":"fixture",
+            "rootfs":[{"id":"solo"}],
+            "steps":[{"id":"run", "runtime_authority":"modules.runtime",
+                "rootfs":"solo", "world":"modules.fixture",
+                "execution":"foreground", "session":false}]
+        })
+        .to_string()
+        .into_bytes();
+        prepared.binding_format = CandidateBindingFormat::MultiRootfsV3(vec![RootfsBindingInput {
+            id: "solo".into(),
+            packages_payload: Vec::new(),
+            manifest_payload: serde_json::json!({
+                "module":"fixture", "version":"1", "rootfs":"solo", "entries":[]
+            })
+            .to_string()
+            .into_bytes(),
+        }]);
+        let candidate = tmp.path().join("candidate");
+        let installed = tmp.path().join("installed");
+        fs::create_dir(&candidate).unwrap();
+        stage_declared_rootfs_for_test(&prepared, &candidate, tmp.path()).unwrap();
+        verify_candidate_rootfs_before_publication(&prepared, &candidate).unwrap();
+        fs::rename(&candidate, &installed).unwrap();
+        prepared
+            .prepare_binding()
+            .unwrap()
+            .activate_install()
+            .unwrap();
+        let active = neebles_backend::module_material_binding::load_installed_material_binding(
+            &prepared.material_root,
+            "fixture",
+        )
+        .unwrap();
+        match active {
+            neebles_backend::module_material_binding::InstalledMaterialBinding::MultiRootfs(v3) => {
+                assert_eq!(v3.rootfs_recipes.len(), 1);
+                assert!(v3.rootfs_recipes.contains_key("solo"));
+                assert!(installed.join("rootfs/solo/rootfs").is_dir());
+                assert!(!installed.join("rootfs/gato").exists());
+                assert!(!installed.join("rootfs/perro").exists());
+            }
+            _ => panic!("a single rootfs must publish a V3 binding"),
+        }
+    }
+
+    #[test]
+    fn schema_three_binding_activation_collision_preserves_previous_and_candidate_can_compensate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let prepared = prepared_v3_fixture(tmp.path().join("material"));
+        let candidate = tmp.path().join("candidate");
+        let installed = tmp.path().join("installed");
+        fs::create_dir(&candidate).unwrap();
+        stage_declared_rootfs_for_test(&prepared, &candidate, tmp.path()).unwrap();
+        let first = prepared.prepare_binding().unwrap();
+        first.activate_install().unwrap();
+        let prior = neebles_backend::module_material_binding::load_installed_material_binding(
+            &prepared.material_root,
+            "fixture",
+        )
+        .unwrap();
+        let second = prepared.prepare_binding().unwrap();
+        verify_candidate_rootfs_before_publication(&prepared, &candidate).unwrap();
+        fs::rename(&candidate, &installed).unwrap();
+        assert!(second.activate_install().is_err());
+        // Mirror the install transaction's compensation of the newly published
+        // module; an already-active binding must remain unchanged.
+        fs::remove_dir_all(&installed).unwrap();
+        assert!(!installed.exists());
+        let restored = neebles_backend::module_material_binding::load_installed_material_binding(
+            &prepared.material_root,
+            "fixture",
+        )
+        .unwrap();
+        assert_eq!(restored.custom_revision(), prior.custom_revision());
+    }
+
+    fn stage_declared_rootfs_for_test(
+        prepared: &PreparedModulePackages,
+        candidate: &Path,
+        package_pool: &Path,
+    ) -> Result<(), String> {
+        let raw = std::str::from_utf8(&prepared.binding_input.construction_payload)
+            .map_err(|error| error.to_string())?;
+        let declared = DomesticConstructionDeclaration::parse(raw)?;
+        let rootfs = match &prepared.binding_format {
+            CandidateBindingFormat::MultiRootfsV3(rootfs) => rootfs,
+            _ => return Err("expected schema-3 fixture".into()),
+        };
+        let recipes =
+            neebles_backend::module_material_binding::validate_construction_rootfs_binding(
+                &prepared.binding_input.module,
+                &prepared.binding_input.version,
+                &prepared.binding_input.construction_payload,
+                rootfs,
+            )?;
+        stage_authenticated_rootfs_set(
+            candidate,
+            &declared,
+            &recipes,
+            &MaterialLayer {
+                packages: vec![],
+                entries: vec![],
+            },
+            package_pool,
+            package_pool,
+            &prepared.binding_input.runtime_manifest_payload,
+        )
+    }
+
+    #[test]
+    fn prepublication_recheck_accepts_untampered_staged_set() {
+        let tmp = tempfile::tempdir().unwrap();
+        let candidate = tmp.path().join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let payload = runtime_payload();
+        let recipes = BTreeMap::from([("gato".into(), recipe())]);
+        let essential = MaterialLayer {
+            packages: vec![],
+            entries: vec![],
+        };
+        stage_authenticated_rootfs_set(
+            &candidate,
+            &single_declaration(),
+            &recipes,
+            &essential,
+            tmp.path(),
+            tmp.path(),
+            &payload,
+        )
+        .unwrap();
+        assert!(
+            verify_candidate_rootfs_before_publication(&prepared_fixture(payload), &candidate)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn prepublication_recheck_rejects_physical_tamper() {
+        let tmp = tempfile::tempdir().unwrap();
+        let candidate = tmp.path().join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let payload = runtime_payload();
+        let recipes = BTreeMap::from([("gato".into(), recipe())]);
+        let essential = MaterialLayer {
+            packages: vec![],
+            entries: vec![],
+        };
+        stage_authenticated_rootfs_set(
+            &candidate,
+            &single_declaration(),
+            &recipes,
+            &essential,
+            tmp.path(),
+            tmp.path(),
+            &payload,
+        )
+        .unwrap();
+        fs::write(
+            candidate.join("rootfs/gato/domestic-runtime.json"),
+            b"modified",
+        )
+        .unwrap();
+        assert!(
+            verify_candidate_rootfs_before_publication(&prepared_fixture(payload), &candidate)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn two_independent_rootfs_materialize_in_one_unpublished_candidate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let candidate = tmp.path().join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let recipes = BTreeMap::from([("gato".into(), recipe()), ("perro".into(), recipe())]);
+        let essential = MaterialLayer {
+            packages: vec![],
+            entries: vec![],
+        };
+        stage_authenticated_rootfs_set(
+            &candidate,
+            &declaration(),
+            &recipes,
+            &essential,
+            tmp.path(),
+            tmp.path(),
+            &runtime_payload(),
+        )
+        .unwrap();
+        assert!(candidate.join("rootfs/gato/rootfs").is_dir());
+        assert!(candidate.join("rootfs/perro/rootfs").is_dir());
+    }
+
+    #[test]
+    fn physical_inventory_rejects_extra_and_missing_rootfs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let candidate = tmp.path().join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let recipes = BTreeMap::from([("gato".into(), recipe()), ("perro".into(), recipe())]);
+        let essential = MaterialLayer {
+            packages: vec![],
+            entries: vec![],
+        };
+        let payload = runtime_payload();
+        stage_authenticated_rootfs_set(
+            &candidate,
+            &declaration(),
+            &recipes,
+            &essential,
+            tmp.path(),
+            tmp.path(),
+            &payload,
+        )
+        .unwrap();
+        fs::create_dir(candidate.join("rootfs/intruso")).unwrap();
+        assert!(verify_staged_rootfs_inventory(&candidate, &declaration(), &payload).is_err());
+        fs::remove_dir(candidate.join("rootfs/intruso")).unwrap();
+        fs::remove_dir_all(candidate.join("rootfs/perro")).unwrap();
+        assert!(verify_staged_rootfs_inventory(&candidate, &declaration(), &payload).is_err());
+    }
+
+    #[test]
+    fn physical_inventory_rejects_tampered_manifest_and_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let candidate = tmp.path().join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let recipes = BTreeMap::from([("gato".into(), recipe()), ("perro".into(), recipe())]);
+        let essential = MaterialLayer {
+            packages: vec![],
+            entries: vec![],
+        };
+        let payload = runtime_payload();
+        stage_authenticated_rootfs_set(
+            &candidate,
+            &declaration(),
+            &recipes,
+            &essential,
+            tmp.path(),
+            tmp.path(),
+            &payload,
+        )
+        .unwrap();
+        let manifest = candidate.join("rootfs/gato/domestic-runtime.json");
+        fs::write(&manifest, b"modified").unwrap();
+        assert!(verify_staged_rootfs_inventory(&candidate, &declaration(), &payload).is_err());
+        fs::write(&manifest, &payload).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let original = candidate.join("rootfs/perro/rootfs");
+            fs::remove_dir(&original).unwrap();
+            symlink(candidate.join("rootfs/gato/rootfs"), &original).unwrap();
+            assert!(verify_staged_rootfs_inventory(&candidate, &declaration(), &payload).is_err());
+        }
+    }
+
+    #[test]
+    fn undeclared_recipe_rejected_before_any_rootfs_is_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        let candidate = tmp.path().join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let recipes = BTreeMap::from([
+            ("gato".into(), recipe()),
+            ("perro".into(), recipe()),
+            ("intruso".into(), recipe()),
+        ]);
+        let essential = MaterialLayer {
+            packages: vec![],
+            entries: vec![],
+        };
+        assert!(stage_authenticated_rootfs_set(
+            &candidate,
+            &declaration(),
+            &recipes,
+            &essential,
+            tmp.path(),
+            tmp.path(),
+            &runtime_payload()
+        )
+        .is_err());
+        assert!(!candidate.join("rootfs").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_rootfs_territory_rejected_without_touching_target() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let candidate = tmp.path().join("candidate");
+        let external = tmp.path().join("external");
+        fs::create_dir(&candidate).unwrap();
+        fs::create_dir(&external).unwrap();
+        symlink(&external, candidate.join("rootfs")).unwrap();
+        let recipes = BTreeMap::from([("gato".into(), recipe()), ("perro".into(), recipe())]);
+        let essential = MaterialLayer {
+            packages: vec![],
+            entries: vec![],
+        };
+        assert!(stage_authenticated_rootfs_set(
+            &candidate,
+            &declaration(),
+            &recipes,
+            &essential,
+            tmp.path(),
+            tmp.path(),
+            &runtime_payload()
+        )
+        .is_err());
+        assert!(fs::read_dir(&external).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn failure_in_second_rootfs_removes_the_first_without_publishing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let candidate = tmp.path().join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let mut bad = recipe();
+        bad.packages.push(PackageRequirement {
+            filename: "missing.deb".into(),
+            sha256: "0".repeat(64),
+        });
+        let recipes = BTreeMap::from([("gato".into(), recipe()), ("perro".into(), bad)]);
+        let essential = MaterialLayer {
+            packages: vec![],
+            entries: vec![],
+        };
+        assert!(stage_authenticated_rootfs_set(
+            &candidate,
+            &declaration(),
+            &recipes,
+            &essential,
+            tmp.path(),
+            tmp.path(),
+            &runtime_payload()
+        )
+        .is_err());
+        assert!(!candidate.join("rootfs/gato").exists());
+        assert!(!candidate.join("rootfs/perro").exists());
     }
 }

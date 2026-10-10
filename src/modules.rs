@@ -1939,6 +1939,60 @@ fn install_require_tree(
 
         let lifecycle = candidate.lifecycle().clone();
 
+        // Preinstall must complete inside the unpublished candidate. Publishing
+        // first would expose an installed module with no materialized rootfs.
+        let prepared = match crate::module_preinstall::ensure_module_packages_for_candidate(
+            &module_id,
+            &candidate.manifest.version,
+        ) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                return Err(require_install_failure(
+                    format!(
+                        "module '{}' candidate preinstall failed: {}",
+                        module_id, error
+                    ),
+                    &mut transaction,
+                ))
+            }
+        };
+        if let Err(error) =
+            crate::module_preinstall::stage_declared_rootfs(&prepared, candidate.staging.path())
+        {
+            return Err(require_install_failure(
+                format!("module '{}' candidate rootfs failed: {}", module_id, error),
+                &mut transaction,
+            ));
+        }
+
+        // Validate and stage the authenticated binding before publishing the
+        // candidate. A malformed schema-3 inventory must not expose a module.
+        let prepared_binding = match prepared.prepare_binding() {
+            Ok(binding) => binding,
+            Err(error) => {
+                return Err(require_install_failure(
+                    format!(
+                        "module '{}' material binding preparation failed: {}",
+                        module_id, error
+                    ),
+                    &mut transaction,
+                ))
+            }
+        };
+
+        if let Err(error) = crate::module_preinstall::verify_candidate_rootfs_before_publication(
+            &prepared,
+            candidate.staging.path(),
+        ) {
+            return Err(require_install_failure(
+                format!(
+                    "module '{}' prepublication rootfs verification failed: {}",
+                    module_id, error
+                ),
+                &mut transaction,
+            ));
+        }
+
         let publication = publish_require_candidate(candidate);
 
         let data = match publication {
@@ -1988,17 +2042,6 @@ fn install_require_tree(
             );
         }
 
-        let prepared = match crate::module_preinstall::ensure_module_packages(&module_id) {
-            Ok(prepared) => prepared,
-
-            Err(error) => {
-                return Err(require_install_failure(
-                    format!("module '{}' preinstall failed: {}", module_id, error),
-                    &mut transaction,
-                ));
-            }
-        };
-
         eprintln!(
             "N.E.E.B.L.E.S.: module '{}' preinstall GREEN: required={} reused={} downloaded={} custom_revision={}",
             module_id,
@@ -2007,24 +2050,6 @@ fn install_require_tree(
             prepared.report.downloaded,
             prepared.report.custom_revision
         );
-
-        let prepared_binding =
-            match neebles_backend::module_material_binding::prepare_material_binding(
-                &prepared.material_root,
-                prepared.binding_input.clone(),
-            ) {
-                Ok(binding) => binding,
-
-                Err(error) => {
-                    return Err(require_install_failure(
-                        format!(
-                            "module {} material binding preparation failed: {}",
-                            module_id, error
-                        ),
-                        &mut transaction,
-                    ));
-                }
-            };
 
         let active_binding_path = match prepared_binding.activate_install() {
             Ok(path) => path,
@@ -5226,6 +5251,31 @@ fn update_with_observer(
         ));
     }
 
+    // Download, verify and materialize before deactivating the known-good
+    // installation. A failed rootfs must never replace the running module.
+    let prepared =
+        crate::module_preinstall::ensure_module_packages_for_candidate(name, &manifest.version)?;
+    crate::module_preinstall::stage_declared_rootfs(&prepared, staging.path())?;
+
+    // Fail closed while the previous installation is still live. The binding
+    // is staged but not activated until the module candidate is published.
+    let prepared_binding = prepared.prepare_binding().map_err(|error| {
+        format!(
+            "module '{}' candidate material binding preparation failed: {}",
+            name, error
+        )
+    })?;
+
+    // Revalidate the complete rootfs set immediately before touching the live
+    // installation. Binding preparation may have taken time after staging.
+    crate::module_preinstall::verify_candidate_rootfs_before_publication(&prepared, staging.path())
+        .map_err(|error| {
+            format!(
+                "module '{}' prepublication rootfs verification failed: {}",
+                name, error,
+            )
+        })?;
+
     /*
      * Candidate is now completely staged and validated.
      *
@@ -5291,33 +5341,6 @@ fn update_with_observer(
         }
     }
 
-    let prepared = match crate::module_preinstall::ensure_module_packages(name) {
-        Ok(prepared) => prepared,
-
-        Err(preinstall_error) => {
-            let failed_update_path = root.join(format!(
-                ".neebles-failed-preinstall-update-{name}-{transaction}"
-            ));
-
-            let rollback =
-                rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
-
-            let binding_sync = synchronize_existing_material_binding_after_update_rollback(
-                &material_root,
-                name,
-                rollback.state,
-            );
-
-            return Err(format_live_update_failure_with_binding(
-                name,
-                "preinstall",
-                &preinstall_error,
-                &rollback,
-                binding_sync,
-            ));
-        }
-    };
-
     eprintln!(
         "N.E.E.B.L.E.S.: module '{}' update preinstall GREEN: required={} reused={} downloaded={} custom_revision={}",
         name,
@@ -5326,36 +5349,6 @@ fn update_with_observer(
         prepared.report.downloaded,
         prepared.report.custom_revision
     );
-
-    let prepared_binding = match neebles_backend::module_material_binding::prepare_material_binding(
-        &prepared.material_root,
-        prepared.binding_input.clone(),
-    ) {
-        Ok(binding) => binding,
-
-        Err(binding_error) => {
-            let failed_update_path = root.join(format!(
-                ".neebles-failed-binding-prepare-update-{name}-{transaction}"
-            ));
-
-            let rollback =
-                rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
-
-            let binding_sync = synchronize_existing_material_binding_after_update_rollback(
-                &material_root,
-                name,
-                rollback.state,
-            );
-
-            return Err(format_live_update_failure_with_binding(
-                name,
-                "material binding preparation",
-                &binding_error,
-                &rollback,
-                binding_sync,
-            ));
-        }
-    };
 
     let material_binding_update = match prepared_binding.activate_update() {
         Ok(binding) => binding,
@@ -6822,6 +6815,327 @@ mod module_transaction_certification_tests {
             label,
             transaction_id()
         ))
+    }
+
+    fn v3_update_fixture(
+        version: &str,
+        ids: &[&str],
+    ) -> neebles_backend::module_material_binding::MaterialBindingV3Input {
+        use neebles_backend::module_material_binding::MaterialBindingV3Input;
+        use neebles_backend::module_material_binding::RootfsBindingInput;
+        let rootfs = ids
+            .iter()
+            .map(|id| RootfsBindingInput {
+                id: (*id).to_string(),
+                packages_payload: Vec::new(),
+                manifest_payload: serde_json::json!({
+                    "module": "connect", "version": version, "rootfs": id, "entries": []
+                })
+                .to_string()
+                .into_bytes(),
+            })
+            .collect();
+        MaterialBindingV3Input {
+            module: "connect".into(),
+            version: version.into(),
+            custom_revision: "a".repeat(40),
+            essential_packages_payload: Vec::new(),
+            essential_manifest_payload: br#"{"entries":[]}"#.to_vec(),
+            runtime_manifest_payload: br#"{"worlds":{}}"#.to_vec(),
+            construction_payload: serde_json::json!({
+                "schema":"1", "name":"neebles-domestic-construction",
+                "subject":"connect",
+                "rootfs": ids.iter().map(|id| serde_json::json!({"id":id})).collect::<Vec<_>>(),
+                "steps":[{"id":"open", "runtime_authority":"modules.runtime",
+                    "rootfs":ids[0], "world":"modules.connect",
+                    "execution":"persistent", "session":false}]
+            })
+            .to_string()
+            .into_bytes(),
+            rootfs,
+        }
+    }
+
+    #[test]
+    fn v3_live_update_rollback_restores_physical_module_and_binding_together() {
+        use neebles_backend::module_material_binding::{
+            load_material_binding_v3, prepare_material_binding_v3,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let material = temp.path().join("material");
+        let current = temp.path().join("current");
+        let backup = temp.path().join("backup");
+        let failed = temp.path().join("failed");
+        fs::create_dir(&current).unwrap();
+        fs::write(current.join("version"), b"1.0").unwrap();
+        prepare_material_binding_v3(&material, v3_update_fixture("1.0", &["gato", "perro"]))
+            .unwrap()
+            .activate_install()
+            .unwrap();
+        let original = load_material_binding_v3(&material, "connect").unwrap();
+
+        fs::rename(&current, &backup).unwrap();
+        fs::create_dir(&current).unwrap();
+        fs::write(current.join("version"), b"2.0").unwrap();
+        let activated = prepare_material_binding_v3(
+            &material,
+            v3_update_fixture("2.0", &["gato", "perro", "pato"]),
+        )
+        .unwrap()
+        .activate_update()
+        .unwrap();
+        assert_eq!(
+            load_material_binding_v3(&material, "connect")
+                .unwrap()
+                .rootfs_recipes
+                .len(),
+            3
+        );
+
+        let rollback = super::rollback_live_update_paths(&current, &backup, &failed);
+        assert_eq!(
+            rollback.state,
+            super::LiveUpdateRollbackState::PreviousRestored
+        );
+        super::synchronize_activated_material_binding_after_update_rollback(
+            activated,
+            &material,
+            "connect",
+            rollback.state,
+        )
+        .unwrap();
+        assert_eq!(fs::read(current.join("version")).unwrap(), b"1.0");
+        assert!(!backup.exists());
+        assert!(!failed.exists());
+        let restored = load_material_binding_v3(&material, "connect").unwrap();
+        assert_eq!(restored.version, original.version);
+        assert_eq!(
+            restored.rootfs_recipes.keys().collect::<Vec<_>>(),
+            original.rootfs_recipes.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn v3_live_update_move_failure_preserves_new_module_and_binding() {
+        use neebles_backend::module_material_binding::{
+            load_material_binding_v3, prepare_material_binding_v3,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let material = temp.path().join("material");
+        let current = temp.path().join("current");
+        let backup = temp.path().join("backup");
+        let failed = temp.path().join("missing-parent").join("failed");
+        fs::create_dir(&current).unwrap();
+        fs::write(current.join("version"), b"1.0").unwrap();
+        prepare_material_binding_v3(&material, v3_update_fixture("1.0", &["gato", "perro"]))
+            .unwrap()
+            .activate_install()
+            .unwrap();
+        fs::rename(&current, &backup).unwrap();
+        fs::create_dir(&current).unwrap();
+        fs::write(current.join("version"), b"2.0").unwrap();
+        let activated = prepare_material_binding_v3(
+            &material,
+            v3_update_fixture("2.0", &["gato", "perro", "pato"]),
+        )
+        .unwrap()
+        .activate_update()
+        .unwrap();
+        let rollback = super::rollback_live_update_paths(&current, &backup, &failed);
+        assert_eq!(rollback.state, super::LiveUpdateRollbackState::NewPreserved);
+        super::synchronize_activated_material_binding_after_update_rollback(
+            activated,
+            &material,
+            "connect",
+            rollback.state,
+        )
+        .unwrap();
+        assert_eq!(fs::read(current.join("version")).unwrap(), b"2.0");
+        assert_eq!(fs::read(backup.join("version")).unwrap(), b"1.0");
+        let retained = load_material_binding_v3(&material, "connect").unwrap();
+        assert_eq!(retained.version, "2.0");
+        assert_eq!(retained.rootfs_recipes.len(), 3);
+        assert!(retained.rootfs_recipes.contains_key("pato"));
+    }
+
+    #[test]
+    fn v3_uninstall_abort_restores_physical_rootfs_and_authenticated_binding() {
+        use neebles_backend::module_material_binding::{
+            load_material_binding_v3, prepare_material_binding_v3, stage_material_binding_removal,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let material = temp.path().join("material");
+        let current = temp.path().join("installed");
+        let detached = temp.path().join("uninstall-staged");
+        fs::create_dir(&current).unwrap();
+        for id in ["gato", "perro"] {
+            let root = current.join("rootfs").join(id).join("rootfs");
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join("owned-marker"), id.as_bytes()).unwrap();
+        }
+        prepare_material_binding_v3(&material, v3_update_fixture("1.0", &["gato", "perro"]))
+            .unwrap()
+            .activate_install()
+            .unwrap();
+        let before = load_material_binding_v3(&material, "connect").unwrap();
+
+        fs::rename(&current, &detached).unwrap();
+        let removal = stage_material_binding_removal(&material, "connect")
+            .unwrap()
+            .expect("binding V3 must exist");
+        assert!(!current.exists());
+        assert!(!material.join("connect").exists());
+        assert!(detached.join("rootfs/gato/rootfs/owned-marker").exists());
+        assert!(detached.join("rootfs/perro/rootfs/owned-marker").exists());
+
+        // Same compensation ordering as uninstall_internal: return the physical
+        // module to active first, then let the staged binding restore on drop.
+        fs::rename(&detached, &current).unwrap();
+        drop(removal);
+        let after = load_material_binding_v3(&material, "connect").unwrap();
+        assert_eq!(after.version, before.version);
+        assert_eq!(
+            after.rootfs_recipes.keys().collect::<Vec<_>>(),
+            before.rootfs_recipes.keys().collect::<Vec<_>>()
+        );
+        for id in ["gato", "perro"] {
+            assert_eq!(
+                fs::read(current.join("rootfs").join(id).join("rootfs/owned-marker")).unwrap(),
+                id.as_bytes()
+            );
+        }
+        assert!(!detached.exists());
+    }
+
+    #[test]
+    fn v3_uninstall_finalize_removes_physical_rootfs_and_all_active_recipes() {
+        use neebles_backend::module_material_binding::{
+            load_material_binding_v3, prepare_material_binding_v3, stage_material_binding_removal,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let material = temp.path().join("material");
+        let current = temp.path().join("installed");
+        let detached = temp.path().join("uninstall-staged");
+        for id in ["gato", "perro", "pato"] {
+            let root = current.join("rootfs").join(id).join("rootfs");
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join("owned-marker"), id.as_bytes()).unwrap();
+        }
+        prepare_material_binding_v3(
+            &material,
+            v3_update_fixture("2.0", &["gato", "perro", "pato"]),
+        )
+        .unwrap()
+        .activate_install()
+        .unwrap();
+        fs::rename(&current, &detached).unwrap();
+        let removal = stage_material_binding_removal(&material, "connect")
+            .unwrap()
+            .expect("binding V3 must exist");
+        removal.finalize();
+        fs::remove_dir_all(&detached).unwrap();
+
+        assert!(!current.exists());
+        assert!(!detached.exists());
+        assert!(!material.join("connect").exists());
+        assert!(load_material_binding_v3(&material, "connect").is_err());
+        let residues: Vec<_> = fs::read_dir(&material)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(residues.is_empty(), "staging residues remain: {residues:?}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn v3_uninstall_binding_symlink_failure_restores_physical_installation() {
+        use neebles_backend::module_material_binding::{
+            load_material_binding_v3, prepare_material_binding_v3, stage_material_binding_removal,
+        };
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let material = temp.path().join("material");
+        let current = temp.path().join("installed");
+        let detached = temp.path().join("uninstall-staged");
+        for id in ["gato", "perro"] {
+            let root = current.join("rootfs").join(id).join("rootfs");
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join("owned-marker"), id.as_bytes()).unwrap();
+        }
+        prepare_material_binding_v3(&material, v3_update_fixture("1.0", &["gato", "perro"]))
+            .unwrap()
+            .activate_install()
+            .unwrap();
+        let original = material.join("connect");
+        let stored = material.join("stored-binding");
+        fs::rename(&original, &stored).unwrap();
+        symlink(&stored, &original).unwrap();
+
+        // Mirror uninstall_internal's physical detachment and failure compensation.
+        fs::rename(&current, &detached).unwrap();
+        assert!(stage_material_binding_removal(&material, "connect").is_err());
+        fs::rename(&detached, &current).unwrap();
+
+        assert!(!detached.exists());
+        assert!(fs::symlink_metadata(&original)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(stored.is_dir(), "original binding must not be overwritten");
+        for id in ["gato", "perro"] {
+            assert_eq!(
+                fs::read(current.join("rootfs").join(id).join("rootfs/owned-marker")).unwrap(),
+                id.as_bytes()
+            );
+        }
+        fs::remove_file(&original).unwrap();
+        fs::rename(&stored, &original).unwrap();
+        assert_eq!(
+            load_material_binding_v3(&material, "connect")
+                .unwrap()
+                .rootfs_recipes
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn v3_uninstall_failed_physical_restore_does_not_overwrite_collision() {
+        use neebles_backend::module_material_binding::{
+            prepare_material_binding_v3, stage_material_binding_removal,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let material = temp.path().join("material");
+        let current = temp.path().join("installed");
+        let detached = temp.path().join("uninstall-staged");
+        for id in ["gato", "perro"] {
+            let root = current.join("rootfs").join(id).join("rootfs");
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join("owned-marker"), id.as_bytes()).unwrap();
+        }
+        prepare_material_binding_v3(&material, v3_update_fixture("1.0", &["gato", "perro"]))
+            .unwrap()
+            .activate_install()
+            .unwrap();
+        fs::rename(&current, &detached).unwrap();
+        let removal = stage_material_binding_removal(&material, "connect")
+            .unwrap()
+            .expect("V3 binding must exist");
+
+        // A nonempty conflicting directory prevents restoring the original path.
+        fs::create_dir(&current).unwrap();
+        fs::write(current.join("foreign-owner"), b"do-not-overwrite").unwrap();
+        assert!(fs::rename(&detached, &current).is_err());
+        // Same critical-failure rule as uninstall_internal: do not resurrect
+        // material for a module that is no longer in the active installation.
+        removal.finalize();
+        assert_eq!(
+            fs::read(current.join("foreign-owner")).unwrap(),
+            b"do-not-overwrite"
+        );
+        assert!(detached.join("rootfs/gato/rootfs/owned-marker").exists());
+        assert!(detached.join("rootfs/perro/rootfs/owned-marker").exists());
+        assert!(!material.join("connect").exists());
     }
 
     #[test]

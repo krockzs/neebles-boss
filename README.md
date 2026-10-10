@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.33 (CAST30 repair source staging)**
-**Published release status:** **Boss v1.0.32 is published; v1.0.33 not released**
-**Current integration status (2026-10-08):** Boss v1.0.32 published (11 assets), but Fresh Live exposed an Open runtime session that stayed registered after the module window closed and unreliable/late Active visual synchronization. Source-only repairs are staged in v1.0.33: Test Module 1.2.3 closes/unregisters its owned window session, Boss broadcasts committed Active state earlier and hardens Launcher callbacks/refresh, Boss UI aligns Notify right, and Launcher uses a larger, scrollable five-column module layout. Test Module source is `308fbf186aa9dc2a2201862f993809799a987fd0`; CUSTOM V2 source is `d7fa0452fb3e16db85de71e2c7fc6d041fa0a3e5`; CUSTOM Classic/Esbirro build pin remains `20488f6818d5e227f043425a682115f614f4bf79`. **No v1.0.33 release or Fresh Live triplet acceptance is claimed.**
+**Current source line:** **1.0.34 (Multi-RootFS source integration; release pending)**
+**Published release status:** **1.0.34 not published; candidate certification pending**
+**Current integration status (2026-10-10):** Multi-RootFS source changes are staged; Rust format, unit tests and locked check passed. Release assembly, UID/GID VM checks and complete runtime certification remain pending. This statement does not certify a 1.0.34 installation.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 

@@ -51,10 +51,12 @@ pub fn load_module_domestic_construction_declaration(
 
     let territory = crate::module_material_territory::resolve_module_material_territory()?;
 
-    let binding =
-        crate::module_material_binding::load_material_binding(&territory.material_root, subject)?;
+    let binding = crate::module_material_binding::load_installed_material_binding(
+        &territory.material_root,
+        subject,
+    )?;
 
-    let raw = std::str::from_utf8(&binding.construction_payload).map_err(|error| {
+    let raw = std::str::from_utf8(binding.construction_payload()).map_err(|error| {
         format!("material binding Construction is not UTF-8: subject={subject} error={error}")
     })?;
 
@@ -76,7 +78,67 @@ pub struct DomesticConstructionDeclaration {
     pub schema: String,
     pub name: String,
     pub subject: String,
+    #[serde(default, deserialize_with = "deserialize_domestic_rootfs")]
+    pub rootfs: Vec<DomesticRootfsDeclaration>,
     pub steps: Vec<DomesticConstructionStep>,
+}
+
+/// Logical rootfs identity; physical paths and package integrity remain Boss/CUSTOM V2 authority.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DomesticRootfsDeclaration {
+    pub id: String,
+    /// World declared by the canonical keyed domination contract.
+    /// Legacy array declarations carry no world and retain their historical semantics.
+    #[serde(default)]
+    pub domination_world: Option<String>,
+}
+
+/// Preserve legacy arrays while accepting the canonical keyed rootfs contract.
+/// The domination world is validated here; recipe bytes and their SHA authority
+/// remain in CUSTOM V2 / MaterialBinding, never in Construction.
+fn deserialize_domestic_rootfs<'de, D>(
+    deserializer: D,
+) -> Result<Vec<DomesticRootfsDeclaration>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct DominationWorld {
+        world: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RootfsEntry {
+        domination: DominationWorld,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum RootfsWire {
+        Legacy(Vec<DomesticRootfsDeclaration>),
+        Keyed(BTreeMap<String, RootfsEntry>),
+    }
+
+    match RootfsWire::deserialize(deserializer)? {
+        RootfsWire::Legacy(entries) => Ok(entries),
+        RootfsWire::Keyed(entries) => entries
+            .into_iter()
+            .map(|(id, entry)| {
+                if entry.domination.world.trim().is_empty() {
+                    return Err(serde::de::Error::custom(format!(
+                        "domination world cannot be empty for rootfs {id}"
+                    )));
+                }
+                Ok(DomesticRootfsDeclaration {
+                    id,
+                    domination_world: Some(entry.domination.world),
+                })
+            })
+            .collect(),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
@@ -91,6 +153,8 @@ pub enum DomesticConstructionExecution {
 pub struct DomesticConstructionStep {
     pub id: String,
     pub runtime_authority: String,
+    #[serde(default)]
+    pub rootfs: Option<String>,
     pub world: String,
     pub execution: DomesticConstructionExecution,
     pub session: bool,
@@ -175,10 +239,53 @@ impl DomesticConstructionDeclaration {
             return Err("domestic construction must declare at least one step".to_string());
         }
 
+        let mut rootfs_ids = BTreeSet::<String>::new();
+        for rootfs in &self.rootfs {
+            validate_domestic_construction_subject(&rootfs.id)?;
+            if !rootfs_ids.insert(rootfs.id.clone()) {
+                return Err(format!("duplicate domestic rootfs id: {}", rootfs.id));
+            }
+        }
+
         let mut ids = BTreeSet::<String>::new();
 
         for step in &self.steps {
             step.validate()?;
+            if step.runtime_authority == "modules.runtime" {
+                let selected = step.rootfs.as_deref().ok_or_else(|| {
+                    format!(
+                        "domestic construction step {} must explicitly select a rootfs",
+                        step.id
+                    )
+                })?;
+                if !rootfs_ids.contains(selected) {
+                    return Err(format!(
+                        "domestic construction step {} selects undeclared rootfs {}",
+                        step.id, selected
+                    ));
+                }
+                // A declaration must not request one authenticated House but
+                // execute through a different world's spell. Legacy arrays
+                // intentionally keep their previous semantics.
+                if let Some(world) = self
+                    .rootfs
+                    .iter()
+                    .find(|entry| entry.id == selected)
+                    .and_then(|entry| entry.domination_world.as_deref())
+                {
+                    if step.world != world {
+                        return Err(format!(
+                            "domestic construction step {} world {} differs from domination world {} for rootfs {}",
+                            step.id, step.world, world, selected
+                        ));
+                    }
+                }
+            } else if step.rootfs.is_some() {
+                return Err(format!(
+                    "domestic construction step {} cannot select module rootfs with authority {}",
+                    step.id, step.runtime_authority
+                ));
+            }
 
             if !ids.insert(step.id.clone()) {
                 return Err(format!(
@@ -600,7 +707,16 @@ fn project_construction_step_for_execution(
     let step = declaration.step(step_id)?;
 
     let runtime_lease = if step.runtime_authority == MODULE_RUNTIME_AUTHORITY {
-        let lease = crate::module_runtime_lease::create_module_runtime_lease(&declaration.subject)?;
+        let selected = step.rootfs.as_deref().ok_or_else(|| {
+            format!(
+                "domestic construction step {} must explicitly select a rootfs",
+                step.id
+            )
+        })?;
+        let lease = crate::module_runtime_lease::create_module_runtime_lease_for_rootfs(
+            &declaration.subject,
+            selected,
+        )?;
 
         request.manifest_path = lease.manifest_path().to_path_buf();
 
@@ -1362,5 +1478,164 @@ mod point2_session_readonly_tests {
                 "unexpected error for {key}: {error}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod multirootfs_contract_tests {
+    use super::DomesticConstructionDeclaration;
+
+    fn declaration(rootfs: serde_json::Value, selected: serde_json::Value) -> String {
+        serde_json::json!({
+            "schema": "1",
+            "name": "neebles-domestic-construction",
+            "subject": "fixture",
+            "rootfs": rootfs,
+            "steps": [{
+                "id": "open",
+                "runtime_authority": "modules.runtime",
+                "rootfs": selected,
+                "world": "modules.fixture",
+                "execution": "persistent",
+                "session": false
+            }]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn keyed_domination_accepts_one_real_rootfs() {
+        let raw = declaration(
+            serde_json::json!({"python3.13-tk":{"domination":{"world":"modules.fixture"}}}),
+            serde_json::json!("python3.13-tk"),
+        );
+        let parsed = DomesticConstructionDeclaration::parse(&raw).unwrap();
+        assert_eq!(parsed.rootfs.len(), 1);
+        assert_eq!(parsed.rootfs[0].id, "python3.13-tk");
+    }
+
+    #[test]
+    fn keyed_domination_accepts_multiple_arbitrary_ids() {
+        let raw = declaration(
+            serde_json::json!({
+                "ssh":{"domination":{"world":"modules.ssh"}},
+                "vnc":{"domination":{"world":"modules.fixture"}}
+            }),
+            serde_json::json!("vnc"),
+        );
+        let parsed = DomesticConstructionDeclaration::parse(&raw).unwrap();
+        assert_eq!(parsed.rootfs.len(), 2);
+    }
+
+    #[test]
+    fn keyed_domination_rejects_step_world_mismatch() {
+        let raw = declaration(
+            serde_json::json!({"python3.13-tk":{"domination":{"world":"modules.python3.13-tk"}}}),
+            serde_json::json!("python3.13-tk"),
+        );
+        assert!(DomesticConstructionDeclaration::parse(&raw)
+            .unwrap_err()
+            .contains("differs from domination world"));
+    }
+
+    #[test]
+    fn keyed_domination_keeps_world_for_selected_rootfs() {
+        let raw = declaration(
+            serde_json::json!({"python3.13-tk":{"domination":{"world":"modules.fixture"}}}),
+            serde_json::json!("python3.13-tk"),
+        );
+        let parsed = DomesticConstructionDeclaration::parse(&raw).unwrap();
+        assert_eq!(
+            parsed.rootfs[0].domination_world.as_deref(),
+            Some("modules.fixture")
+        );
+    }
+
+    #[test]
+    fn keyed_domination_rejects_missing_world() {
+        let raw = declaration(
+            serde_json::json!({"ssh":{"domination":{}}}),
+            serde_json::json!("ssh"),
+        );
+        assert!(DomesticConstructionDeclaration::parse(&raw).is_err());
+    }
+
+    #[test]
+    fn keyed_domination_rejects_unknown_contract_fields() {
+        let raw = declaration(
+            serde_json::json!({"ssh":{"domination":{"world":"modules.ssh","authority":"root"}}}),
+            serde_json::json!("ssh"),
+        );
+        assert!(DomesticConstructionDeclaration::parse(&raw).is_err());
+    }
+
+    #[test]
+    fn multirootfs_accepts_declared_selection() {
+        let raw = declaration(
+            serde_json::json!([{"id":"principal"}, {"id":"vnc"}]),
+            serde_json::json!("vnc"),
+        );
+        let parsed = DomesticConstructionDeclaration::parse(&raw).unwrap();
+        assert_eq!(parsed.steps[0].rootfs.as_deref(), Some("vnc"));
+    }
+
+    #[test]
+    fn multirootfs_accepts_any_safe_single_id() {
+        let raw = declaration(
+            serde_json::json!([{"id":"caca-de-gato"}]),
+            serde_json::json!("caca-de-gato"),
+        );
+        assert!(DomesticConstructionDeclaration::parse(&raw).is_ok());
+    }
+
+    #[test]
+    fn multirootfs_rejects_unknown_selection() {
+        let raw = declaration(
+            serde_json::json!([{"id":"principal"}]),
+            serde_json::json!("vnc"),
+        );
+        assert!(DomesticConstructionDeclaration::parse(&raw)
+            .unwrap_err()
+            .contains("undeclared rootfs"));
+    }
+
+    #[test]
+    fn multirootfs_rejects_duplicate_ids() {
+        let raw = declaration(
+            serde_json::json!([{"id":"principal"}, {"id":"principal"}]),
+            serde_json::json!("principal"),
+        );
+        assert!(DomesticConstructionDeclaration::parse(&raw)
+            .unwrap_err()
+            .contains("duplicate domestic rootfs"));
+    }
+
+    #[test]
+    fn multirootfs_rejects_unsafe_path_id() {
+        let raw = declaration(
+            serde_json::json!([{"id":"../vnc"}]),
+            serde_json::json!("../vnc"),
+        );
+        assert!(DomesticConstructionDeclaration::parse(&raw).is_err());
+    }
+
+    #[test]
+    fn multirootfs_rejects_implicit_selection() {
+        let raw = serde_json::json!({
+            "schema": "1",
+            "name": "neebles-domestic-construction",
+            "subject": "fixture",
+            "steps": [{
+                "id": "open",
+                "runtime_authority": "modules.runtime",
+                "world": "modules.fixture",
+                "execution": "persistent",
+                "session": false
+            }]
+        })
+        .to_string();
+        assert!(DomesticConstructionDeclaration::parse(&raw)
+            .unwrap_err()
+            .contains("explicitly select"));
     }
 }

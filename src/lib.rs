@@ -14,6 +14,7 @@ pub mod module_material;
 pub mod module_material_binding;
 pub mod module_material_territory;
 pub mod module_materialization;
+pub mod module_persistent_rootfs;
 pub mod module_runtime_lease;
 pub mod spell_world;
 

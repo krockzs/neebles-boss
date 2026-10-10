@@ -28,6 +28,17 @@ struct MaterialLayerManifest {
     entries: Vec<MaterialManifestEntry>,
 }
 
+/// A rootfs-specific module delta must explicitly bind its identity.
+/// This metadata cannot be interpreted as the legacy principal recipe.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RootfsMaterialManifest {
+    module: String,
+    version: String,
+    rootfs: String,
+    entries: Vec<MaterialManifestEntry>,
+}
+
 #[derive(Debug, Deserialize)]
 struct MaterialManifestEntry {
     path: String,
@@ -423,9 +434,117 @@ pub fn parse_material_recipe(
     })
 }
 
+/// Authenticate a material delta for precisely one logical environment.
+/// The rootfs selector is a required field, not an inferred physical path.
+/// Keep legacy module recipes separate for backwards compatibility.
+pub fn parse_rootfs_material_recipe(
+    module_id: &str,
+    module_version: &str,
+    rootfs_id: &str,
+    packages_payload: &str,
+    manifest_payload: &[u8],
+) -> Result<MaterialRecipe, String> {
+    if !valid_module_id(module_id) || !valid_module_id(rootfs_id) {
+        return Err("invalid module/rootfs identity for material recipe".to_string());
+    }
+    let manifest: RootfsMaterialManifest = serde_json::from_slice(manifest_payload)
+        .map_err(|error| format!("invalid rootfs material manifest JSON: {error}"))?;
+    if manifest.module != module_id
+        || manifest.version != module_version
+        || manifest.rootfs != rootfs_id
+    {
+        return Err(format!(
+            "rootfs material identity mismatch: expected={module_id}/{module_version}/{rootfs_id} actual={}/{}/{}",
+            manifest.module, manifest.version, manifest.rootfs
+        ));
+    }
+    let selectors = parse_packages_tsv(packages_payload)?;
+    let (entries, package_entries) = parse_material_entries(&manifest.entries, "rootfs module")?;
+    let packages = validate_package_authority(
+        &selectors,
+        &manifest.entries,
+        &package_entries,
+        "rootfs module",
+    )?;
+    Ok(MaterialRecipe {
+        module: manifest.module,
+        version: manifest.version,
+        packages,
+        entries,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rootfs_material_requires_explicit_matching_identity() {
+        let valid = serde_json::json!({"module":"connect", "version":"1.0",
+            "rootfs":"ssh", "entries":[]});
+        assert!(parse_rootfs_material_recipe(
+            "connect",
+            "1.0",
+            "ssh",
+            "",
+            valid.to_string().as_bytes()
+        )
+        .is_ok());
+        assert!(parse_rootfs_material_recipe(
+            "connect",
+            "1.0",
+            "vnc",
+            "",
+            valid.to_string().as_bytes()
+        )
+        .is_err());
+        assert!(parse_rootfs_material_recipe(
+            "connect",
+            "1.1",
+            "ssh",
+            "",
+            valid.to_string().as_bytes()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rootfs_material_rejects_missing_or_unsafe_identity() {
+        let absent = serde_json::json!({"module":"connect", "version":"1.0",
+            "entries":[]});
+        assert!(parse_rootfs_material_recipe(
+            "connect",
+            "1.0",
+            "ssh",
+            "",
+            absent.to_string().as_bytes()
+        )
+        .is_err());
+        let invalid = serde_json::json!({"module":"connect", "version":"1.0",
+            "rootfs":"../ssh", "entries":[]});
+        assert!(parse_rootfs_material_recipe(
+            "connect",
+            "1.0",
+            "../ssh",
+            "",
+            invalid.to_string().as_bytes()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rootfs_material_rejects_unrecognized_fields() {
+        let injected = serde_json::json!({"module":"connect", "version":"1.0",
+            "rootfs":"ssh", "entries":[], "physical_path":"/tmp/injected"});
+        assert!(parse_rootfs_material_recipe(
+            "connect",
+            "1.0",
+            "ssh",
+            "",
+            injected.to_string().as_bytes()
+        )
+        .is_err());
+    }
 
     fn sha(character: char) -> String {
         std::iter::repeat_n(character, 64).collect()
