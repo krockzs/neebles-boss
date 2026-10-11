@@ -442,7 +442,7 @@ PlasmoidItem {
 
                         fillMode: Image.PreserveAspectFit
                         smooth: true
-                        mipmap: true
+                        mipmap: false
                     }
                 }
 

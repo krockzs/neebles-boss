@@ -10,6 +10,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QCursor>
+#include <QScreen>
+#include <QPoint>
+#include <QRect>
+#include <QtGlobal>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -1222,6 +1227,10 @@ int main(
         return -1;
     }
 
+    const bool neeblesX11 =
+        QGuiApplication::platformName() == QStringLiteral("xcb");
+
+    if (!neeblesX11) {
     auto *layerWindow =
         LayerShellQt::Window::get(
             window
@@ -1277,6 +1286,35 @@ int main(
         false
     );
 
+    } else {
+        window->setFlags(
+            Qt::Tool | Qt::FramelessWindowHint
+        );
+    }
+
+    auto placeX11 = [window, neeblesX11]() {
+        if (!neeblesX11)
+            return;
+
+        const QPoint cursor = QCursor::pos();
+        QScreen *screen = QGuiApplication::screenAt(cursor);
+        if (!screen)
+            screen = QGuiApplication::primaryScreen();
+        if (!screen)
+            return;
+
+        const QRect area = screen->availableGeometry();
+        const QSize popup = window->size();
+        const int gap = 10;
+        int x = cursor.x() - popup.width() + 18;
+        int y = cursor.y() - popup.height() - gap;
+        if (y < area.top())
+            y = cursor.y() + gap;
+        x = qBound(area.left(), x, area.right() - popup.width() + 1);
+        y = qBound(area.top(), y, area.bottom() - popup.height() + 1);
+        window->setPosition(x, y);
+    };
+
     QObject::connect(
         window,
         &QWindow::activeChanged,
@@ -1295,12 +1333,13 @@ int main(
         &trayClient,
         &TraySocketClient::hostShowRequested,
         window,
-        [window, &bossEvents]() {
+        [window, &bossEvents, placeX11]() {
             if (!bossEvents.trayEnabled()) {
                 window->hide();
                 return;
             }
 
+            placeX11();
             window->show();
             window->raise();
             window->requestActivate();
@@ -1320,7 +1359,7 @@ int main(
         &trayClient,
         &TraySocketClient::hostToggleRequested,
         window,
-        [window, &bossEvents]() {
+        [window, &bossEvents, placeX11]() {
             if (!bossEvents.trayEnabled()) {
                 window->hide();
                 return;
@@ -1331,6 +1370,7 @@ int main(
                 return;
             }
 
+            placeX11();
             window->show();
             window->raise();
             window->requestActivate();
