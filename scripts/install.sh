@@ -298,7 +298,7 @@ fi
 # installation the old binary is absent, so there is no update handoff or notes.
 # The probe happens BEFORE replacing client/. No process is stopped here.
 NEEBLES_BOSS_PREVIOUS_VERSION=""
-NEEBLES_BOSS_TARGET_VERSION="1.0.38"
+NEEBLES_BOSS_TARGET_VERSION="1.0.39"
 NEEBLES_BOSS_IS_UPGRADE=0
 if [[ -z "$DESTDIR" && -f "$BIN_DIR/neebles" && -x "$BIN_DIR/neebles" ]]; then
     neebles_boss_previous_version_output="$("$BIN_DIR/neebles" --version)" || {
@@ -1217,7 +1217,7 @@ fi
 
 # NEEBLES_1036_INSTALLER_RECEIPT_20
 NEEBLES_BOSS_RECEIPT_OK=0
-# The old 1.0.35 backend cannot execute Rust code introduced in 1.0.38.
+# The old 1.0.35 backend cannot execute Rust code introduced in 1.0.39.
 # Therefore the NEW installer, which is already executing during the upgrade,
 # publishes the durable UI receipt after all installation commit gates passed.
 # An install without previous version / a same-version reinstall produces none.
@@ -1225,7 +1225,7 @@ publish_boss_upgrade_receipt() {
     local passwd_record home_dir config_root neebles_config receipt temporary mode
     [[ -z "$DESTDIR" && "$NEEBLES_BOSS_IS_UPGRADE" == 1 ]] || return 0
     [[ "$NEEBLES_BOSS_PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.38' ]] || return 1
+    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.39' ]] || return 1
     [[ "$DESKTOP_UID" =~ ^[0-9]+$ && "$DESKTOP_GID" =~ ^[0-9]+$ && "$DESKTOP_UID" != '0' ]] || return 1
     passwd_record="$(getent passwd "$DESKTOP_UID")" || return 1
     IFS=: read -r _ _ _ _ _ home_dir _ <<< "$passwd_record"
@@ -1321,15 +1321,29 @@ launch_verified_boss_handoff() {
     local installer_start_ticks=""
     installer_start_ticks="$(awk -F ') ' '{split($2, f, " "); print f[20]}' "/proc/$$/stat")" || return 1
     [[ "$installer_start_ticks" =~ ^[0-9]+$ ]] || return 1
-    # Detach the helper: old backend must receive install.sh success first.
-    /usr/bin/env -i "HOME=$(getent passwd "$DESKTOP_UID" | awk -F: 'NR==1 {print $6}')" \
-        "NEEBLES_INSTALLER_PID=$$" "NEEBLES_INSTALLER_START_TICKS=$installer_start_ticks" \
-        "XDG_RUNTIME_DIR=$session_root" \
-        "DBUS_SESSION_BUS_ADDRESS=unix:path=$session_root/bus" \
-        "PATH=/usr/bin:/bin" \
+    # Register the helper as its OWN transient user service. A background child
+    # inherits the old UI's run-p*.service cgroup and is killed with the old UI.
+    # systemd-run --user creates a separate service cgroup under the user manager.
+    # Never use --scope: it would preserve the caller's process lifetime.
+    local home_dir=""
+    home_dir="$(getent passwd "$DESKTOP_UID" | awk -F: 'NR==1 {print $6}')" || return 1
+    [[ "$home_dir" == /* && "$home_dir" != '/' && -d "$home_dir" ]] || return 1
+    [[ -x /usr/bin/systemd-run ]] || return 1
+    local handoff_unit="neebles-boss-upgrade-handoff-${NEEBLES_BOSS_TARGET_VERSION//./-}"
+    echo "NEEBLES_BOSS_HANDOFF_REGISTERING_UNIT=$handoff_unit"
+    if ! /usr/bin/env -i "HOME=$home_dir" "USER=$(id -nu "$DESKTOP_UID")" \
+        "LOGNAME=$(id -nu "$DESKTOP_UID")" "XDG_RUNTIME_DIR=$session_root" \
+        "DBUS_SESSION_BUS_ADDRESS=unix:path=$session_root/bus" "PATH=/usr/bin:/bin" \
         "$domestic_setpriv" "--reuid=$DESKTOP_UID" "--regid=$DESKTOP_GID" --init-groups \
-        /usr/bin/python3 "$handoff" > /dev/null 2>&1 < /dev/null &
-    echo "NEEBLES_BOSS_HANDOFF_SPAWNED_PID=$!"
+        /usr/bin/systemd-run --user --collect --unit="$handoff_unit" \
+        --property=Type=exec \
+        --setenv="NEEBLES_INSTALLER_PID=$$" \
+        --setenv="NEEBLES_INSTALLER_START_TICKS=$installer_start_ticks" \
+        /usr/bin/python3 "$handoff"; then
+        echo 'NEEBLES_BOSS_HANDOFF_ERROR=user_service_registration_failed' >&2
+        return 1
+    fi
+    echo "NEEBLES_BOSS_HANDOFF_UNIT_REGISTERED=$handoff_unit"
 }
 if [[ "$NEEBLES_BOSS_IS_UPGRADE" == '1' ]]; then
     if ! launch_verified_boss_handoff; then

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Boss 1.0.35 -> 1.0.38 desktop handoff; runs as desktop user.
+"""Independent Boss 1.0.35 -> 1.0.39 desktop handoff; runs as desktop user.
 
 This is intentionally not called from Boss 1.0.35. Fail closed on identity
 mismatch or unavailable Plasma systemd user unit. No broad process matching.
@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-TARGET = "1.0.38"
+TARGET = "1.0.39"
 BUS_NAME = "org.neebles.Boss"
 UI_PATH = "/opt/neebles/client/ui/neebles-ui"
 BOSS_PATH = "/opt/neebles/client/bin/neebles"
@@ -191,6 +191,11 @@ def main():
     time.sleep(2)
     # Validate display before ending the last usable Boss UI.
     restore_graphical_environment()
+    # A hard safety gate prevents a regression to the old run-p*.service.
+    helper_cgroup = Path("/proc/self/cgroup").read_text(encoding="utf-8")
+    if "neebles-boss-upgrade-handoff-1-0-39.service" not in helper_cgroup:
+        raise RuntimeError("Handoff is not isolated in its dedicated user service")
+    event("Verified isolated systemd user-service cgroup")
     old = owner_pid(bus_path)
     if old is None:
         event("No prior UI owner; no unrelated process terminated")
@@ -204,11 +209,13 @@ def main():
                 raise RuntimeError("Boss UI owner identity changed before retirement")
             signal.pidfd_send_signal(process_fd, signal.SIGTERM, None, 0)
             event(f"SIGTERM sent to verified retired Boss UI PID={old} via pidfd")
+            event("Waiting for old Boss UI process exit via pidfd")
             # pidfd becomes readable only when the exact old process terminates.
             poller = select.poll()
             poller.register(process_fd, select.POLLIN)
             if not poller.poll(24000):
                 raise RuntimeError("Old Boss UI did not terminate within 24 seconds")
+            event("Verified retired Boss UI process has exited")
             # Process exit closes its held QLocalSocket. Separately require
             # org.neebles.Boss to be free, not transferred to a new owner.
             for _ in range(20):
@@ -224,6 +231,7 @@ def main():
             os.close(process_fd)
     # Once old UI is absent, the server lease disconnects as its socket closes.
     # Plasma is restarted only through the user's own service manager.
+    event("Preparing Plasma-only service restart")
     service = "plasma-plasmashell.service"
     check = run(["/usr/bin/systemctl", "--user", "is-active", "--quiet", service])
     if check.returncode:
@@ -232,6 +240,7 @@ def main():
     if restart.returncode:
         raise RuntimeError("plasmashell restart failed: " + restart.stderr.strip())
     event("Restarted plasma-plasmashell.service only")
+    event("Plasma restarted; starting new Boss entrypoint")
     launch = subprocess.Popen([BOSS_PATH, "start"], stdin=subprocess.DEVNULL,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               start_new_session=True, close_fds=True)
