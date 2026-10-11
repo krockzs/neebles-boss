@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.37
+
+Fixed installation of the post-update handoff, scoped KDE Plasma restart and update notes after Boss upgrades. Module updates present available notes after installed-version verification.

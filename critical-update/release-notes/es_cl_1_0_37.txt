@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.37
+
+Se corrigió la instalación del asistente postactualización, el reinicio controlado de KDE Plasma y la presentación de novedades tras actualizar Boss. Las actualizaciones de módulos muestran sus notas cuando existen y la versión instalada se verifica.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Boss 1.0.35 -> 1.0.36 desktop handoff; runs as desktop user.
+"""Independent Boss 1.0.35 -> 1.0.37 desktop handoff; runs as desktop user.
 
 This is intentionally not called from Boss 1.0.35. Fail closed on identity
 mismatch or unavailable Plasma systemd user unit. No broad process matching.
@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-TARGET = "1.0.36"
+TARGET = "1.0.37"
 BUS_NAME = "org.neebles.Boss"
 UI_PATH = "/opt/neebles/client/ui/neebles-ui"
 BOSS_PATH = "/opt/neebles/client/bin/neebles"

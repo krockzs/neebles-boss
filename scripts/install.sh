@@ -298,7 +298,7 @@ fi
 # installation the old binary is absent, so there is no update handoff or notes.
 # The probe happens BEFORE replacing client/. No process is stopped here.
 NEEBLES_BOSS_PREVIOUS_VERSION=""
-NEEBLES_BOSS_TARGET_VERSION="1.0.36"
+NEEBLES_BOSS_TARGET_VERSION="1.0.37"
 NEEBLES_BOSS_IS_UPGRADE=0
 if [[ -z "$DESTDIR" && -f "$BIN_DIR/neebles" && -x "$BIN_DIR/neebles" ]]; then
     neebles_boss_previous_version_output="$("$BIN_DIR/neebles" --version)" || {
@@ -523,6 +523,7 @@ REQUIRED_ROOTS=(
     launcher
     spacer
     notifications
+    handoff
     release-notes
     applications
     systemd
@@ -672,6 +673,8 @@ copy_data_tree "$CLIENT_DATA_SOURCE/config" "$CLIENT_STAGE/config"
 copy_data_tree "$CLIENT_DATA_SOURCE/launcher" "$CLIENT_STAGE/launcher"
 copy_data_tree "$CLIENT_DATA_SOURCE/spacer" "$CLIENT_STAGE/spacer"
 copy_data_tree "$CLIENT_DATA_SOURCE/notifications" "$CLIENT_STAGE/notifications"
+copy_data_tree "$CLIENT_DATA_SOURCE/handoff" "$CLIENT_STAGE/handoff"
+[[ -f "$CLIENT_STAGE/handoff/neebles-boss-handoff.py" && ! -L "$CLIENT_STAGE/handoff/neebles-boss-handoff.py" ]] || { echo "Missing installed handoff helper" >&2; exit 1; }
 copy_data_tree "$CLIENT_DATA_SOURCE/release-notes" "$CLIENT_STAGE/release-notes"
 copy_data_tree "$CLIENT_DATA_SOURCE/applications" "$CLIENT_STAGE/applications"
 
@@ -1214,7 +1217,7 @@ fi
 
 # NEEBLES_1036_INSTALLER_RECEIPT_20
 NEEBLES_BOSS_RECEIPT_OK=0
-# The old 1.0.35 backend cannot execute Rust code introduced in 1.0.36.
+# The old 1.0.35 backend cannot execute Rust code introduced in 1.0.37.
 # Therefore the NEW installer, which is already executing during the upgrade,
 # publishes the durable UI receipt after all installation commit gates passed.
 # An install without previous version / a same-version reinstall produces none.
@@ -1222,7 +1225,7 @@ publish_boss_upgrade_receipt() {
     local passwd_record home_dir config_root neebles_config receipt temporary
     [[ -z "$DESTDIR" && "$NEEBLES_BOSS_IS_UPGRADE" == 1 ]] || return 0
     [[ "$NEEBLES_BOSS_PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.36' ]] || return 1
+    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.37' ]] || return 1
     [[ "$DESKTOP_UID" =~ ^[0-9]+$ && "$DESKTOP_GID" =~ ^[0-9]+$ && "$DESKTOP_UID" != '0' ]] || return 1
     passwd_record="$(getent passwd "$DESKTOP_UID")" || return 1
     IFS=: read -r _ _ _ _ _ home_dir _ <<< "$passwd_record"

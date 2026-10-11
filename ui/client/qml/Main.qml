@@ -2914,6 +2914,79 @@ boss.updateModule(
             transactionHideButton.forceActiveFocus()
     }
 
+    // Module notes appear only when a verified update produces non-empty notes.
+    // They are not emitted on initial installation, no-op or failure.
+    Connections {
+        target: boss
+        property string lastModuleNotesToken: ""
+        function onTransactionOperationChanged() {
+            const tx = boss.transactionOperation
+            if (!tx || tx.operation !== "update" || tx.running === true
+                || tx.success !== true || !tx.confirmedVersion || !tx.releaseNotes
+                || !tx.fromVersion || tx.fromVersion === tx.confirmedVersion)
+                return
+            const token = String(tx.name) + ":" + String(tx.fromVersion)
+                + ":" + String(tx.confirmedVersion)
+            if (token === lastModuleNotesToken)
+                return
+            lastModuleNotesToken = token
+            moduleUpdateSuccessDialog.moduleName = String(tx.name || "")
+            moduleUpdateSuccessDialog.moduleVersion = String(tx.confirmedVersion)
+            moduleUpdateSuccessDialog.notesText = String(tx.releaseNotes)
+            moduleUpdateSuccessDialog.open()
+        }
+    }
+
+    Dialog {
+        id: moduleUpdateSuccessDialog
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        width: Math.min(680, root.width - 64)
+        height: Math.min(480, root.height - 64)
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        padding: 24
+        property string moduleName: ""
+        property string moduleVersion: ""
+        property string notesText: ""
+        background: Rectangle {
+            radius: 12
+            color: "#18181B"
+            border.color: "#7C3AED"
+            border.width: 1
+        }
+        contentItem: ColumnLayout {
+            spacing: 14
+            Text {
+                Layout.fillWidth: true
+                font.pixelSize: 21
+                font.bold: true
+                color: "#F5F3FF"
+                wrapMode: Text.WordWrap
+                text: (boss.language.startsWith("es") ? "Módulo actualizado: " : "Module updated: ")
+                    + moduleUpdateSuccessDialog.moduleName + " " + moduleUpdateSuccessDialog.moduleVersion
+            }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                TextArea {
+                    readOnly: true
+                    selectByMouse: true
+                    wrapMode: TextEdit.Wrap
+                    color: "#E4E4E7"
+                    text: moduleUpdateSuccessDialog.notesText
+                    background: Rectangle { color: "#09090B"; radius: 6 }
+                }
+            }
+            Button {
+                Layout.alignment: Qt.AlignRight
+                text: boss.language.startsWith("es") ? "Entendido" : "Got it"
+                onClicked: moduleUpdateSuccessDialog.close()
+            }
+        }
+    }
+
     // This dialog acknowledges only a verified installed-version record.
     // A close without accepting keeps it pending for the next launch.
     Dialog {
