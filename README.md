@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.34 (Multi-RootFS source integration; release pending)**
-**Published release status:** **1.0.34 not published; candidate certification pending**
-**Current integration status (2026-10-10):** Multi-RootFS source changes are staged; Rust format, unit tests and locked check passed. Release assembly, UID/GID VM checks and complete runtime certification remain pending. This statement does not certify a 1.0.34 installation.
+**Current source line:** **1.0.35 (X11 fixes and Critical Update test candidate; release pending)**
+**Published release status:** **1.0.34 published; 1.0.35 candidate not yet certified or published**
+**Current integration status (2026-10-10):** X11 Tray patch compiled and tested on Ryzen; Launcher rendering patched; OS/Build XAUTHORITY fix is separately synchronized. Boss 1.0.35 build, release candidate, Critical Update and VM/install certifications remain pending.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
