@@ -71,7 +71,7 @@ ApplicationWindow {
     minimumHeight: 520
     visible: true
 
-    title: root.t("app.title")
+    title: root.t("app.title") + " " + Qt.application.version
     color: "#09090B"
 
     property int page: 0
@@ -590,7 +590,14 @@ ApplicationWindow {
         )
     }
 
-    Component.onCompleted: loadingConfig = false
+    Component.onCompleted: {
+        loadingConfig = false
+        if (typeof boss !== "undefined"
+            && boss.pendingBossUpdate
+            && boss.pendingBossUpdate.to_version) {
+            bossUpdateSuccessDialog.open()
+        }
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -2550,6 +2557,19 @@ boss.updateModule(
                         elide:
                             Text.ElideRight
                     }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: transactionProcessDialog.contentItem.transaction.operation === "update"
+                        text: {
+                            const tx = transactionProcessDialog.contentItem.transaction
+                            if (tx.confirmedVersion)
+                                return (tx.fromVersion || "?") + " → " + tx.confirmedVersion
+                            return (tx.fromVersion || "?") + " → " + (tx.toVersion || "?")
+                        }
+                        color: "#C4B5FD"
+                        font.pixelSize: 12
+                    }
                 }
 
                 Button {
@@ -2719,6 +2739,38 @@ boss.updateModule(
                 }
             }
 
+            // NEEBLES_MODULE_NOTES_UI_14: update-only notes from verified version.
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: visible ? 164 : 0
+                visible: {
+                    const tx = transactionProcessDialog.contentItem.transaction
+                    return tx.operation === "update"
+                        && tx.success === true
+                        && !!tx.confirmedVersion
+                        && !!tx.releaseNotes
+                }
+                spacing: 6
+
+                Label {
+                    text: root.t("modules.transaction.success") + " · Release Notes"
+                    font.bold: true
+                    color: "#D8B4FE"
+                }
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    TextArea {
+                        readOnly: true
+                        selectByMouse: true
+                        wrapMode: TextEdit.Wrap
+                        color: "#E4E4E7"
+                        text: transactionProcessDialog.contentItem.transaction.releaseNotes || ""
+                        background: Rectangle { color: "#09090B"; radius: 8 }
+                    }
+                }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 12
@@ -2860,6 +2912,78 @@ boss.updateModule(
 
         onOpened:
             transactionHideButton.forceActiveFocus()
+    }
+
+    // This dialog acknowledges only a verified installed-version record.
+    // A close without accepting keeps it pending for the next launch.
+    Dialog {
+        id: bossUpdateSuccessDialog
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        width: Math.min(680, root.width - 64)
+        height: Math.min(510, root.height - 64)
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        closePolicy: Popup.NoAutoClose
+        padding: 24
+        background: Rectangle {
+            radius: 12
+            color: "#18181B"
+            border.color: "#7C3AED"
+            border.width: 1
+        }
+        contentItem: ColumnLayout {
+            spacing: 14
+            Text {
+                Layout.fillWidth: true
+                color: "#F5F3FF"
+                font.pixelSize: 23
+                font.bold: true
+                wrapMode: Text.WordWrap
+                text: boss.language.startsWith("es")
+                    ? "NEEBLES Boss actualizado correctamente"
+                    : "NEEBLES Boss updated successfully"
+            }
+            Text {
+                Layout.fillWidth: true
+                color: "#C4B5FD"
+                font.pixelSize: 15
+                text: boss.pendingBossUpdate.from_version + "  →  "
+                    + boss.pendingBossUpdate.to_version
+            }
+            Text {
+                Layout.fillWidth: true
+                color: "#D4D4D8"
+                text: boss.language.startsWith("es") ? "Novedades de esta versión" : "What's new"
+                font.bold: true
+            }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                TextArea {
+                    readOnly: true
+                    selectByMouse: true
+                    wrapMode: TextEdit.Wrap
+                    color: "#E4E4E7"
+                    background: Rectangle { color: "#09090B"; radius: 6 }
+                    text: boss.pendingBossUpdate.release_notes
+                        ? boss.pendingBossUpdate.release_notes
+                        : (boss.language.startsWith("es")
+                           ? "No hay notas de versión disponibles."
+                           : "No release notes available.")
+                }
+            }
+            Button {
+                Layout.alignment: Qt.AlignRight
+                text: boss.language.startsWith("es") ? "Entendido" : "Got it"
+                onClicked: {
+                    if (boss.acknowledgeBossUpdate())
+                        bossUpdateSuccessDialog.close()
+                }
+            }
+        }
     }
 
     Dialog {

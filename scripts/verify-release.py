@@ -38,9 +38,11 @@ REQUIRED_CLIENT_DATA_ROOTS = {
     "launcher",
     "spacer",
     "notifications",
+    "release-notes",
     "applications",
     "systemd",
     "runtime",
+    'handoff',
 }
 
 REQUIRED_CLIENT_DATA_FILES = {
@@ -48,6 +50,8 @@ REQUIRED_CLIENT_DATA_FILES = {
     "assets/branding/neebles-boss-icon.png",
     "applications/org.neebles.Boss.desktop",
     "languages/manifest.json",
+    "release-notes/es_cl_1_0_36.txt",
+    "release-notes/en_us_1_0_36.txt",
     "config/defaults.json",
     "launcher/metadata.json",
     "launcher/contents/ui/main.qml",
@@ -61,10 +65,12 @@ REQUIRED_CLIENT_DATA_FILES = {
     "runtime/qml/NEEBLES/BossEvents/libneebles-launcher-eventsplugin.so",
     "runtime/qml/NEEBLES/BossEvents/neebles-launcher-events.qmltypes",
     "runtime/qml/NEEBLES/BossEvents/qmldir",
+    'handoff/neebles-boss-handoff.py',
 }
 
 EXECUTABLE_CLIENT_DATA_FILES = {
     "runtime/tray-host/neebles-tray-host",
+    'handoff/neebles-boss-handoff.py',
 }
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")

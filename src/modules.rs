@@ -1937,6 +1937,19 @@ fn install_require_tree(
             return Err(require_install_failure(error, &mut transaction));
         };
 
+        // NEEBLES_MODULE_NOTES_HARDEN_16: validate install candidate too,
+        // even though initial installation never displays release notes.
+        // Registry-selected candidate is still staged and unpublished.
+        if let Err(error) = validate_staged_module_release_notes(
+            candidate.staging.path(),
+            &candidate.manifest.version,
+        ) {
+            return Err(require_install_failure(
+                format!("module '{}' release notes validation failed: {}", module_id, error),
+                &mut transaction,
+            ));
+        }
+
         let lifecycle = candidate.lifecycle().clone();
 
         // Preinstall must complete inside the unpublished candidate. Publishing
@@ -5121,6 +5134,88 @@ fn format_live_update_failure_with_binding(
     }
 }
 
+
+// NEEBLES_MODULE_NOTES_STAGING_15
+// The git checkout is authenticated/pinned by checkout_registry_commit.
+// Never retrieve release notes from a second, mutable network endpoint.
+// A missing directory (legacy modules) is valid. A malformed existing one is not.
+fn validate_staged_module_release_notes(
+    candidate: &std::path::Path,
+    version: &str,
+) -> Result<(), String> {
+    use std::fs;
+
+    // 'version' has already passed manifest semver + immutable Registry comparison.
+    // Limit the possible filename surface further, regardless of manifest parser.
+    if !version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        || version.is_empty() || version.starts_with('.') || version.ends_with('.')
+        || version.contains("..")
+    {
+        return Err(format!("unsafe module release-notes version: {version}"));
+    }
+    let subdir = candidate.join("critical-update").join("release-notes");
+    let critical = candidate.join("critical-update");
+    // NEEBLES_MODULE_NOTES_HARDEN_16: reject dangling parent symlinks too.
+    match fs::symlink_metadata(&critical) {
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
+            return Err("release-notes parent must be a real directory".to_string());
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("release-notes parent metadata: {e}")),
+    }
+    let meta = match fs::symlink_metadata(&subdir) {
+        Ok(v) => v,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("release-notes directory metadata: {e}")),
+    };
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return Err("release-notes must be a real directory".to_string());
+    }
+    let version_suffix = version.replace('.', "_");
+    // Current release notes may be absent for legacy modules, but all
+    // notes that are present must be valid.
+    let _version_suffix = version_suffix;
+    for entry in fs::read_dir(&subdir)
+        .map_err(|e| format!("release-notes inventory: {e}"))?
+    {
+        let entry = entry.map_err(|e| format!("release-notes entry: {e}"))?;
+        let name = entry.file_name();
+        let name = name.to_str().ok_or("release-notes filename not UTF-8")?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|e| format!("release-notes file metadata: {e}"))?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(format!("release-notes entry is not regular file: {name}"));
+        }
+        // Historical notes for older versions can coexist. Only two supported
+        // locales and version-shaped filenames are permitted in this directory.
+        let recognized = ["es_cl_", "en_us_"].iter().any(|prefix| {
+            if let Some(rest) = name.strip_prefix(prefix) {
+                if let Some(stem) = rest.strip_suffix(".txt") {
+                    return !stem.is_empty() && stem.bytes().all(|c|
+                        c.is_ascii_digit() || c == b'_');
+                }
+            }
+            false
+        });
+        if !recognized {
+            return Err(format!("release-notes filename invalid: {name}"));
+        }
+        if metadata.len() > 65536 {
+            return Err(format!("release-notes file exceeds 64KiB: {name}"));
+        }
+        // Every historical note is part of the published inventory.
+        // Do not accept malformed old files just because the new version differs.
+        let bytes = fs::read(entry.path())
+            .map_err(|e| format!("release-notes read error {name}: {e}"))?;
+        if bytes.len() > 65536 || std::str::from_utf8(&bytes).is_err() {
+            return Err(format!("release-notes invalid content: {name}"));
+        }
+    }
+    // No requirement that either note exists: install and legacy update compatible.
+    Ok(())
+}
+
 pub fn update(name: &str, close_running: bool) -> Result<(), String> {
     let result = update_with_observer(name, close_running, None);
 
@@ -5250,6 +5345,10 @@ fn update_with_observer(
             name, manifest.version, entry.version
         ));
     }
+
+    // Validate optional notes while candidate still belongs to the immutable
+    // Registry checkout. Publication will preserve the same module directory.
+    validate_staged_module_release_notes(staging.path(), &manifest.version)?;
 
     // Download, verify and materialize before deactivating the known-good
     // installation. A failed rootfs must never replace the running module.
@@ -7533,5 +7632,89 @@ mod point2_tray_governed_runtime_tests {
             .expect("authenticated identity must still control its own group");
 
         let _ = child.wait();
+    }
+}
+
+
+// NEEBLES_1036_MODULE_NOTES_GATE37_TESTS
+#[cfg(test)]
+mod module_release_notes_gate37_tests {
+    use super::validate_staged_module_release_notes;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+    use std::path::Path;
+
+    fn notes_dir(root: &Path) -> std::path::PathBuf {
+        root.join("critical-update").join("release-notes")
+    }
+
+    #[test]
+    fn module_release_notes_gate37_absent_is_compatible() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(validate_staged_module_release_notes(temp.path(), "1.2.4").is_ok());
+    }
+
+    #[test]
+    fn module_release_notes_gate37_valid_locales_and_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = notes_dir(temp.path());
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("es_cl_1_2_4.txt"), "Actualización correcta: áéíóú").unwrap();
+        fs::write(dir.join("en_us_1_2_4.txt"), "Updated successfully").unwrap();
+        fs::write(dir.join("es_cl_1_2_3.txt"), "Versión anterior").unwrap();
+        assert!(validate_staged_module_release_notes(temp.path(), "1.2.4").is_ok());
+    }
+
+    #[test]
+    fn module_release_notes_gate37_rejects_symlinked_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("other");
+        fs::create_dir(&target).unwrap();
+        symlink(&target, temp.path().join("critical-update")).unwrap();
+        assert!(validate_staged_module_release_notes(temp.path(), "1.2.4").is_err());
+    }
+
+    #[test]
+    fn module_release_notes_gate37_rejects_symlinked_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = notes_dir(temp.path());
+        fs::create_dir_all(&dir).unwrap();
+        let target = temp.path().join("outside.txt");
+        fs::write(&target, b"no").unwrap();
+        symlink(&target, dir.join("es_cl_1_2_4.txt")).unwrap();
+        assert!(validate_staged_module_release_notes(temp.path(), "1.2.4").is_err());
+    }
+
+    #[test]
+    fn module_release_notes_gate37_rejects_bad_utf8_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = notes_dir(temp.path());
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("en_us_1_2_3.txt"), [0xff, 0xfe]).unwrap();
+        assert!(validate_staged_module_release_notes(temp.path(), "1.2.4").is_err());
+    }
+
+    #[test]
+    fn module_release_notes_gate37_rejects_oversized_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = notes_dir(temp.path());
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("en_us_1_2_4.txt"), vec![b'a'; 65537]).unwrap();
+        assert!(validate_staged_module_release_notes(temp.path(), "1.2.4").is_err());
+    }
+
+    #[test]
+    fn module_release_notes_gate37_rejects_foreign_filename() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = notes_dir(temp.path());
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("fr_fr_1_2_4.txt"), b"wrong locale").unwrap();
+        assert!(validate_staged_module_release_notes(temp.path(), "1.2.4").is_err());
+    }
+
+    #[test]
+    fn module_release_notes_gate37_rejects_unsafe_version() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(validate_staged_module_release_notes(temp.path(), "../1.2.4").is_err());
     }
 }

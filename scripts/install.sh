@@ -294,6 +294,32 @@ if [[ -z "$DESTDIR" && ${EUID} -ne 0 ]]; then
     exit 1
 fi
 
+# A genuine update has a pre-existing, readable Boss version. On first
+# installation the old binary is absent, so there is no update handoff or notes.
+# The probe happens BEFORE replacing client/. No process is stopped here.
+NEEBLES_BOSS_PREVIOUS_VERSION=""
+NEEBLES_BOSS_TARGET_VERSION="1.0.36"
+NEEBLES_BOSS_IS_UPGRADE=0
+if [[ -z "$DESTDIR" && -f "$BIN_DIR/neebles" && -x "$BIN_DIR/neebles" ]]; then
+    neebles_boss_previous_version_output="$("$BIN_DIR/neebles" --version)" || {
+        echo 'Refusing Boss update transition: previous installed version is unreadable.' >&2
+        exit 1
+    }
+    NEEBLES_BOSS_PREVIOUS_VERSION="${neebles_boss_previous_version_output##* }"
+    if [[ ! "$NEEBLES_BOSS_PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo 'Refusing Boss update transition: previous installed version is invalid.' >&2
+        exit 1
+    fi
+    if [[ "$NEEBLES_BOSS_PREVIOUS_VERSION" != "$NEEBLES_BOSS_TARGET_VERSION" ]]; then
+        NEEBLES_BOSS_IS_UPGRADE=1
+    fi
+fi
+printf 'NEEBLES_BOSS_PREVIOUS_VERSION=%s\n' "$NEEBLES_BOSS_PREVIOUS_VERSION"
+printf 'NEEBLES_BOSS_TARGET_VERSION=%s\n' "$NEEBLES_BOSS_TARGET_VERSION"
+printf 'NEEBLES_BOSS_IS_UPGRADE=%s\n' "$NEEBLES_BOSS_IS_UPGRADE"
+# IMPORTANT: No receipt and no handoff are authorized by this probe alone.
+# They require a successfully committed installation and verified target version.
+
 if [[ $# -ne 6 && $# -ne 7 ]]; then
     echo "Usage: $0 <neebles-backend-binary> <neebles-ui-binary> <client-data.tar.gz|client-data-directory> <neebles-auth-agent-binary> <runtime-resolver> <runtime-manifest> [authority-supply]" >&2
     exit 1
@@ -497,6 +523,7 @@ REQUIRED_ROOTS=(
     launcher
     spacer
     notifications
+    release-notes
     applications
     systemd
     runtime
@@ -645,6 +672,7 @@ copy_data_tree "$CLIENT_DATA_SOURCE/config" "$CLIENT_STAGE/config"
 copy_data_tree "$CLIENT_DATA_SOURCE/launcher" "$CLIENT_STAGE/launcher"
 copy_data_tree "$CLIENT_DATA_SOURCE/spacer" "$CLIENT_STAGE/spacer"
 copy_data_tree "$CLIENT_DATA_SOURCE/notifications" "$CLIENT_STAGE/notifications"
+copy_data_tree "$CLIENT_DATA_SOURCE/release-notes" "$CLIENT_STAGE/release-notes"
 copy_data_tree "$CLIENT_DATA_SOURCE/applications" "$CLIENT_STAGE/applications"
 
 progress 75
@@ -1145,6 +1173,29 @@ if [[ -z "$DESTDIR" ]]; then
 fi
 
 
+
+# NEEBLES_1036_POSTCOMMIT_VERSION_GATE_19
+# Must execute BEFORE clearing rollback state and destroying prior client tree.
+# No success receipt or desktop handoff is authorized until this gate passes.
+neebles_boss_installed_version_output="$("$BIN_DIR/neebles" --version)" || {
+    echo 'Boss postcommit version probe failed; transaction will roll back.' >&2
+    exit 1
+}
+neebles_boss_installed_version="${neebles_boss_installed_version_output##* }"
+if [[ "$neebles_boss_installed_version" != "$NEEBLES_BOSS_TARGET_VERSION" ]]; then
+    printf 'Boss postcommit version mismatch: expected=%s installed=%s\n' \
+        "$NEEBLES_BOSS_TARGET_VERSION" "$neebles_boss_installed_version" >&2
+    exit 1
+fi
+if [[ "$NEEBLES_BOSS_IS_UPGRADE" == 1 ]]; then
+    printf 'NEEBLES_BOSS_VERIFIED_UPGRADE=%s->%s\n' \
+        "$NEEBLES_BOSS_PREVIOUS_VERSION" "$neebles_boss_installed_version"
+else
+    echo 'NEEBLES_BOSS_VERIFIED_UPGRADE=none'
+fi
+# A separate trusted handoff is still required to retire the old UI and
+# restart plasmashell. Initial installs never acquire update semantics.
+
 CLIENT_SWAPPED=0
 GLOBAL_PATHS=()
 GLOBAL_BACKUPS=()
@@ -1158,6 +1209,96 @@ fi
 if [[ -n "$CLIENT_BACKUP" && -e "$CLIENT_BACKUP" ]]; then
     rm -rf "$CLIENT_BACKUP"
     CLIENT_BACKUP=""
+fi
+
+
+# NEEBLES_1036_INSTALLER_RECEIPT_20
+NEEBLES_BOSS_RECEIPT_OK=0
+# The old 1.0.35 backend cannot execute Rust code introduced in 1.0.36.
+# Therefore the NEW installer, which is already executing during the upgrade,
+# publishes the durable UI receipt after all installation commit gates passed.
+# An install without previous version / a same-version reinstall produces none.
+publish_boss_upgrade_receipt() {
+    local passwd_record home_dir config_root neebles_config receipt temporary
+    [[ -z "$DESTDIR" && "$NEEBLES_BOSS_IS_UPGRADE" == 1 ]] || return 0
+    [[ "$NEEBLES_BOSS_PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.36' ]] || return 1
+    [[ "$DESKTOP_UID" =~ ^[0-9]+$ && "$DESKTOP_GID" =~ ^[0-9]+$ && "$DESKTOP_UID" != '0' ]] || return 1
+    passwd_record="$(getent passwd "$DESKTOP_UID")" || return 1
+    IFS=: read -r _ _ _ _ _ home_dir _ <<< "$passwd_record"
+    [[ "$home_dir" == /* && "$home_dir" != '/' && -d "$home_dir" && ! -L "$home_dir" ]] || return 1
+    [[ "$(stat -c '%u' -- "$home_dir")" == "$DESKTOP_UID" ]] || return 1
+    config_root="$home_dir/.config"
+    neebles_config="$config_root/neebles"
+    for path in "$config_root" "$neebles_config"; do
+        [[ ! -L "$path" ]] || return 1
+        if [[ ! -d "$path" ]]; then
+            install -d -m 0700 -o "$DESKTOP_UID" -g "$DESKTOP_GID" -- "$path" || return 1
+        fi
+        [[ "$(stat -c '%u' -- "$path")" == "$DESKTOP_UID" ]] || return 1
+        [[ "$(stat -c '%a' -- "$path")" =~ ^(700|750|755)$ ]] || return 1
+    done
+    receipt="$neebles_config/boss-update-pending.json"
+    [[ ! -L "$receipt" ]] || return 1
+    temporary="$(mktemp "$neebles_config/.boss-update-pending.XXXXXXXX")" || return 1
+    if ! printf '{"schema":1,"target":"boss","from_version":"%s","to_version":"%s"}\n' \
+        "$NEEBLES_BOSS_PREVIOUS_VERSION" "$NEEBLES_BOSS_TARGET_VERSION" > "$temporary"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
+    chmod 0600 -- "$temporary" || { rm -f -- "$temporary"; return 1; }
+    chown "$DESKTOP_UID:$DESKTOP_GID" -- "$temporary" || { rm -f -- "$temporary"; return 1; }
+    mv -fT -- "$temporary" "$receipt" || { rm -f -- "$temporary"; return 1; }
+    NEEBLES_BOSS_RECEIPT_OK=1
+    echo "NEEBLES_BOSS_RECEIPT_PUBLISHED=$receipt"
+}
+# At this point commit rollback state has been released. Receipt failures must
+# be visible, but must not misreport a successful installation as rolled back.
+if ! publish_boss_upgrade_receipt; then
+    echo 'WARNING: Boss installed successfully but upgrade confirmation receipt could not be published.' >&2
+    echo 'NEEBLES_BOSS_RECEIPT_PUBLISHED=failed'
+fi
+# No desktop operation here; independent authenticated handoff still pending.
+
+
+# NEEBLES_1036_DESKTOP_HANDOFF_22
+# This helper is shipped in authenticated client-data and runs without relying
+# on old Boss 1.0.35 process logic. Only genuine verified upgrades invoke it.
+launch_verified_boss_handoff() {
+    [[ -z "$DESTDIR" && "$NEEBLES_BOSS_IS_UPGRADE" == '1' && "$NEEBLES_BOSS_RECEIPT_OK" == '1' ]] || return 0
+    local handoff="$CLIENT_ROOT/handoff/neebles-boss-handoff.py"
+    local session_root="/run/user/$DESKTOP_UID"
+    local resolver="$CLIENT_ROOT/runtime/neebles-runtime-resolve"
+    local manifest="$CLIENT_ROOT/runtime/boss/domestic-runtime.json"
+    local runtime_root="$CLIENT_ROOT/runtime/boss/rootfs"
+    local domestic_setpriv=""
+    local session_log=""
+    [[ -f "$handoff" && ! -L "$handoff" && -f "$manifest" && -x "$resolver" ]] || return 1
+    [[ -d "$session_root" && "$(stat -c '%u' "$session_root")" == "$DESKTOP_UID" ]] || return 1
+    [[ -S "$session_root/bus" && "$(stat -c '%u' "$session_root/bus")" == "$DESKTOP_UID" ]] || return 1
+    domestic_setpriv="$("$resolver" --manifest "$manifest" --world boss.setpriv --category executable)" || return 1
+    [[ "$domestic_setpriv" == "$runtime_root/"* && -x "$domestic_setpriv" ]] || return 1
+    # NEEBLES_1036_HANDOFF_INSTALLER_BARRIER_25
+    # The detached helper must observe THIS installer's exit, not guess from a sleep.
+    # Linux /proc field 22 (starttime) prevents PID-reuse confusion.
+    local installer_start_ticks=""
+    installer_start_ticks="$(awk -F ') ' '{split($2, f, " "); print f[20]}' "/proc/$$/stat")" || return 1
+    [[ "$installer_start_ticks" =~ ^[0-9]+$ ]] || return 1
+    # Detach the helper: old backend must receive install.sh success first.
+    /usr/bin/env -i "HOME=$(getent passwd "$DESKTOP_UID" | awk -F: 'NR==1 {print $6}')" \
+        "NEEBLES_INSTALLER_PID=$$" "NEEBLES_INSTALLER_START_TICKS=$installer_start_ticks" \
+        "XDG_RUNTIME_DIR=$session_root" \
+        "DBUS_SESSION_BUS_ADDRESS=unix:path=$session_root/bus" \
+        "PATH=/usr/bin:/bin" \
+        "$domestic_setpriv" "--reuid=$DESKTOP_UID" "--regid=$DESKTOP_GID" --init-groups \
+        /usr/bin/python3 "$handoff" > /dev/null 2>&1 < /dev/null &
+    echo "NEEBLES_BOSS_HANDOFF_SPAWNED_PID=$!"
+}
+if [[ "$NEEBLES_BOSS_IS_UPGRADE" == '1' ]]; then
+    if ! launch_verified_boss_handoff; then
+        echo 'WARNING: verified update committed, but desktop handoff could not be launched.' >&2
+        echo 'NEEBLES_BOSS_HANDOFF=failed'
+    fi
 fi
 
 progress 100

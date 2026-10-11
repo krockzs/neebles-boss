@@ -17,12 +17,14 @@ fi
 }
 
 REQUIRED_ROOTS=(
+    handoff
     assets
     languages
     config
     launcher
     spacer
     notifications
+    release-notes
     applications
     systemd
 )

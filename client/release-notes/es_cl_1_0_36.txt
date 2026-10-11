@@ -1,0 +1,7 @@
+N.E.E.B.L.E.S. Boss 1.0.36
+
+- Se incorpora el sistema de Release Notes versionadas y multilingües.
+- Las notas de cada actualización se muestran en el idioma configurado en Boss.
+- Se incorpora una ventana de confirmación al completar correctamente una actualización.
+- Se mejora la actualización visual de KDE Plasma y la reapertura automática de Boss UI.
+- Se agrega el número de versión a la barra de título de Boss UI.

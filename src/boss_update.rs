@@ -374,6 +374,99 @@ fn execute_critical_update_instructions(instructions: &[String]) -> Result<usize
     crate::critical_update::execute_instructions(instructions, &[&nightmare])
 }
 
+
+// The update executor is privileged and must never take a home path from the UI.
+// The only desktop identity accepted is the previously root-owned Boss runtime identity.
+fn publish_verified_boss_update_receipt(from_version: &str, to_version: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::ffi::OsStrExt;
+
+    let identity_path = Path::new("/etc/neebles/runtime.env");
+    let identity_meta = fs::symlink_metadata(identity_path)
+        .map_err(|e| format!("Boss receipt runtime identity metadata: {e}"))?;
+    if !identity_meta.file_type().is_file() || identity_meta.uid() != 0
+        || identity_meta.mode() & 0o022 != 0 {
+        return Err("Boss receipt refused untrusted runtime identity".to_owned());
+    }
+    let identity = fs::read_to_string(identity_path)
+        .map_err(|e| format!("Boss receipt runtime identity: {e}"))?;
+    let unique_decimal = |key: &str| -> Result<u32, String> {
+        let prefix = format!("{key}=");
+        let values: Vec<_> = identity.lines().filter_map(|l| l.strip_prefix(&prefix)).collect();
+        if values.len() != 1 || values[0].is_empty()
+            || !values[0].bytes().all(|b| b.is_ascii_digit()) {
+            return Err(format!("Boss receipt identity {key} must occur once as decimal"));
+        }
+        values[0].parse::<u32>().map_err(|e| format!("Boss receipt {key}: {e}"))
+    };
+    let uid = unique_decimal("NEEBLES_DESKTOP_UID")?;
+    let gid = unique_decimal("NEEBLES_DESKTOP_GID")?;
+    if uid == 0 { return Err("Boss receipt cannot target root desktop".to_owned()); }
+
+    // Resolve the canonical home through the system user database, not environment variables.
+    let passwd = unsafe { libc::getpwuid(uid) };
+    if passwd.is_null() { return Err("Boss receipt desktop account missing".to_owned()); }
+    let account = unsafe { &*passwd };
+    if account.pw_gid != gid || account.pw_dir.is_null() {
+        return Err("Boss receipt desktop account identity mismatch".to_owned());
+    }
+    let home = unsafe { std::ffi::CStr::from_ptr(account.pw_dir) }.to_bytes();
+    let home = PathBuf::from(std::ffi::OsStr::from_bytes(home));
+    if !home.is_absolute() || home == Path::new("/") {
+        return Err("Boss receipt unsafe desktop home".to_owned());
+    }
+    let owned_dir = |path: &Path| -> Result<(), String> {
+        let meta = fs::symlink_metadata(path)
+            .map_err(|e| format!("Boss receipt directory {}: {e}", path.display()))?;
+        if !meta.file_type().is_dir() || meta.uid() != uid || meta.mode() & 0o022 != 0 {
+            return Err(format!("Boss receipt directory untrusted: {}", path.display()));
+        }
+        Ok(())
+    };
+    owned_dir(&home)?;
+    let config = home.join(".config");
+    owned_dir(&config)?;
+    let neebles = config.join("neebles");
+    if !neebles.exists() {
+        fs::create_dir(&neebles)
+            .map_err(|e| format!("Boss receipt create directory: {e}"))?;
+        let c_path = std::ffi::CString::new(neebles.as_os_str().as_bytes())
+            .map_err(|_| "Boss receipt invalid config path".to_owned())?;
+        if unsafe { libc::chown(c_path.as_ptr(), uid, gid) } != 0 {
+            return Err(format!("Boss receipt chown directory: {}", std::io::Error::last_os_error()));
+        }
+        fs::set_permissions(&neebles, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("Boss receipt chmod directory: {e}"))?;
+    }
+    owned_dir(&neebles)?;
+    let destination = neebles.join("boss-update-pending.json");
+    if fs::symlink_metadata(&destination).is_ok() {
+        let meta = fs::symlink_metadata(&destination)
+            .map_err(|e| format!("Boss receipt existing record: {e}"))?;
+        if !meta.file_type().is_file() || meta.uid() != uid {
+            return Err("Boss receipt existing record is not trusted".to_owned());
+        }
+    }
+    let payload = serde_json::to_vec(&json!({
+        "schema": 1,
+        "target": "boss",
+        "from_version": from_version,
+        "to_version": to_version,
+    })).map_err(|e| format!("Boss receipt JSON serialization: {e}"))?;
+    let mut staged = tempfile::NamedTempFile::new_in(&neebles)
+        .map_err(|e| format!("Boss receipt staging: {e}"))?;
+    staged.write_all(&payload).map_err(|e| format!("Boss receipt write: {e}"))?;
+    staged.as_file().sync_all().map_err(|e| format!("Boss receipt sync: {e}"))?;
+    if unsafe { libc::fchown(staged.as_file().as_raw_fd(), uid, gid) } != 0 {
+        return Err(format!("Boss receipt fchown: {}", std::io::Error::last_os_error()));
+    }
+    staged.persist(&destination)
+        .map_err(|e| format!("Boss receipt atomic publish: {}", e.error))?;
+    Ok(())
+}
+
 pub fn execute_update_json() -> Result<Value, String> {
     if unsafe { libc::geteuid() } != 0 {
         return Err("Boss Critical Update requires administrative authorization".to_string());
@@ -440,6 +533,48 @@ pub fn execute_update_json() -> Result<Value, String> {
 
     let critical_update_executed =
         execute_critical_update_instructions(&critical_update_instructions)?;
+
+    // Confirm the installed product, not merely the installer's exit status.
+    // The path is the authenticated Boss entrypoint created by install.sh.
+    let installed_output = std::process::Command::new(
+        "/opt/neebles/client/bin/neebles"
+    )
+        .arg("--version")
+        .output()
+        .map_err(|error| format!(
+            "could not inspect installed Boss version after Critical Update: {error}"
+        ))?;
+
+    if !installed_output.status.success() {
+        return Err(format!(
+            "installed Boss version command failed after Critical Update: {}",
+            installed_output.status
+        ));
+    }
+
+    let installed_stdout = String::from_utf8(installed_output.stdout)
+        .map_err(|error| format!(
+            "installed Boss version output is not UTF-8: {error}"
+        ))?;
+
+    let installed_version = installed_stdout
+        .split_whitespace()
+        .last()
+        .ok_or_else(||
+            "installed Boss version command returned empty output".to_string()
+        )?;
+
+    if installed_version != bootstrap.stable.version.as_str() {
+        return Err(format!(
+            "Boss Critical Update version mismatch: expected {}, installed {}",
+            bootstrap.stable.version,
+            installed_version
+        ));
+    }
+
+    // Publish only after installer, Critical Update instructions and installed
+    // version verification all succeeded. Older UI does not need to know this format.
+    publish_verified_boss_update_receipt(crate::VERSION, &bootstrap.stable.version)?;
 
     Ok(json!({
         "updated": true,

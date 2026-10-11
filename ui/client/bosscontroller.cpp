@@ -4,6 +4,11 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
+#include <QRegularExpression>
+#include <QFile>
+#include <QStandardPaths>
+#include <QRegularExpression>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -51,6 +56,7 @@ BossController::BossController(QObject *parent)
     );
 
     reload();
+    loadPendingBossUpdate();
 
     m_modulePollTimer->start();
     m_updatePollTimer->start();
@@ -1451,6 +1457,75 @@ void BossController::applyModuleLifecycle()
         }
     }
 }
+
+// Step07 contract: the privileged updater (step08) will atomically publish
+// a per-desktop-user record in ~/.config/neebles/boss-update-pending.json.
+// Never trust the record to launch commands, select paths, or declare install success.
+void BossController::loadPendingBossUpdate()
+{
+    m_pendingBossUpdate.clear();
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
+    const QString fileName = base + QStringLiteral("/neebles/boss-update-pending.json");
+    const QFileInfo info(fileName);
+    if (!info.isFile() || info.isSymLink() || info.size() > 8192) {
+        emit pendingBossUpdateChanged();
+        return;
+    }
+    QFile file(fileName);
+    if (!file.open(QIODevice::ReadOnly)) {
+        emit pendingBossUpdateChanged();
+        return;
+    }
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) {
+        emit pendingBossUpdateChanged();
+        return;
+    }
+    const QJsonObject obj = document.object();
+    const QString target = obj.value(QStringLiteral("to_version")).toString();
+    const QString previous = obj.value(QStringLiteral("from_version")).toString();
+    static const QRegularExpression versionPattern(QStringLiteral("^[0-9]+\\.[0-9]+\\.[0-9]+$"));
+    if (obj.value(QStringLiteral("schema")).toInt() != 1
+        || obj.value(QStringLiteral("target")).toString() != QStringLiteral("boss")
+        || !versionPattern.match(target).hasMatch()
+        || !versionPattern.match(previous).hasMatch()
+        || target != QCoreApplication::applicationVersion()
+        || target == previous) {
+        emit pendingBossUpdateChanged();
+        return;
+    }
+    QString language = m_language.toLower().replace('-', '_');
+    language = language.startsWith(QStringLiteral("es"))
+        ? QStringLiteral("es_cl") : QStringLiteral("en_us");
+    const QString fileVersion = QString(target).replace('.', '_');
+    const QString notesPath = QStringLiteral("/opt/neebles/client/release-notes/")
+        + language + QStringLiteral("_") + fileVersion + QStringLiteral(".txt");
+    QString notes;
+    QFile notesFile(notesPath);
+    if (QFileInfo(notesPath).isFile() && !QFileInfo(notesPath).isSymLink()
+        && QFileInfo(notesPath).size() <= 131072
+        && notesFile.open(QIODevice::ReadOnly)) {
+        notes = QString::fromUtf8(notesFile.readAll());
+    }
+    m_pendingBossUpdate.insert(QStringLiteral("from_version"), previous);
+    m_pendingBossUpdate.insert(QStringLiteral("to_version"), target);
+    m_pendingBossUpdate.insert(QStringLiteral("release_notes"), notes);
+    emit pendingBossUpdateChanged();
+}
+
+bool BossController::acknowledgeBossUpdate()
+{
+    if (m_pendingBossUpdate.isEmpty()) return false;
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
+    const QString fileName = base + QStringLiteral("/neebles/boss-update-pending.json");
+    const QFileInfo info(fileName);
+    if (!info.isFile() || info.isSymLink() || !QFile::remove(fileName)) return false;
+    m_pendingBossUpdate.clear();
+    emit pendingBossUpdateChanged();
+    return true;
+}
+
 void BossController::installBossUpdate()
 {
     if (
@@ -2006,6 +2081,21 @@ void BossController::startModuleProcess(
         name
     );
 
+    // A module update is not confirmed solely by process exit code.
+    // Record the exact target before executing the update.
+    if (operation == QStringLiteral("update")) {
+        for (const QVariant &item : m_modules) {
+            const QVariantMap module = item.toMap();
+            if (module.value(QStringLiteral("name")).toString() != name)
+                continue;
+            state.insert(QStringLiteral("fromVersion"),
+                module.value(QStringLiteral("installed_version")).toString());
+            state.insert(QStringLiteral("toVersion"),
+                module.value(QStringLiteral("remote_version")).toString());
+            break;
+        }
+    }
+
     m_transactionOperation =
         state;
 
@@ -2370,6 +2460,93 @@ void BossController::startModuleProcess(
                         )
                     )
                 );
+            }
+
+            // Re-read the installed model after process exit; the registry's
+            // remote version is not evidence of an installed update.
+            if (success && operation == QStringLiteral("update")) {
+                const QString expected = m_transactionOperation.value(
+                    QStringLiteral("toVersion")).toString();
+                bool observed = false;
+                bool modelOk = false;
+                const QVariant current = parseJson(run(
+                    {QStringLiteral("boss"), QStringLiteral("surface-model")},
+                    false, 10000, &modelOk));
+                if (modelOk && current.canConvert<QVariantList>() && !expected.isEmpty()) {
+                    for (const QVariant &entry : current.toList()) {
+                        const QVariantMap installed = entry.toMap();
+                        if (installed.value(QStringLiteral("name")).toString() == name &&
+                            installed.value(QStringLiteral("version")).toString() == expected) {
+                            observed = true;
+                            break;
+                        }
+                    }
+                }
+                if (!observed) {
+                    success = false;
+                    appendTransactionOperationLog(QStringLiteral(
+                        "N.E.E.B.L.E.S.: update not confirmed: installed module "
+                        "version does not match the requested target"));
+                } else {
+                    setTransactionOperationField(QStringLiteral("confirmedVersion"), expected);
+
+                    // NEEBLES_MODULE_NOTES_UI_14: presentation only after verified update.
+                    // Initial module installs never reach this branch.
+                    // Installed bytes MUST be supplied by the authenticated module
+                    // source distribution; this reader does not authenticate them.
+                    const QString previous = m_transactionOperation.value(
+                        QStringLiteral("fromVersion")).toString();
+                    const QRegularExpression safeModule(
+                        QStringLiteral("^[a-zA-Z0-9][a-zA-Z0-9_-]*$"));
+                    const QRegularExpression safeVersion(
+                        QStringLiteral("^[0-9]+(?:\\.[0-9]+){1,3}$"));
+                    if (previous != expected && safeModule.match(name).hasMatch()
+                        && safeVersion.match(expected).hasMatch()) {
+                        QString locale = m_language.toLower();
+                        if (locale != QStringLiteral("es_cl")
+                            && locale != QStringLiteral("en_us"))
+                            locale = QStringLiteral("en_us");
+                        const QString fileName = locale + QStringLiteral("_")
+                            + QString(expected).replace(QLatin1Char('.'), QLatin1Char('_'))
+                            + QStringLiteral(".txt");
+                        const QString directory = QStringLiteral("/opt/neebles/modules/")
+                            + name + QStringLiteral("/critical-update/release-notes/");
+                        // NEEBLES_1036_MODULE_NOTES_TRUST_36
+                        // The signed/pinned candidate is installed under the
+                        // root-owned module tree; never follow a writable or
+                        // symlinked ancestor when presenting its notes.
+                        const QFileInfo modulesRoot(QStringLiteral("/opt/neebles/modules"));
+                        const QFileInfo moduleRoot(QStringLiteral("/opt/neebles/modules/") + name);
+                        const QFileInfo criticalRoot(moduleRoot.filePath()
+                            + QStringLiteral("/critical-update"));
+                        const QFileInfo parent(directory);
+                        const QFileInfo fileInfo(directory + fileName);
+                        const auto trustedDirectory = [](const QFileInfo &info) {
+                            return info.isDir() && !info.isSymLink()
+                                && info.ownerId() == 0
+                                && !(info.permissions() & (QFileDevice::WriteGroup | QFileDevice::WriteOther));
+                        };
+                        if (trustedDirectory(modulesRoot)
+                            && trustedDirectory(moduleRoot)
+                            && trustedDirectory(criticalRoot)
+                            && trustedDirectory(parent)
+                            && fileInfo.isFile() && !fileInfo.isSymLink()
+                            && fileInfo.ownerId() == 0
+                            && !(fileInfo.permissions() & (QFileDevice::WriteGroup | QFileDevice::WriteOther))
+                            && fileInfo.size() <= 65536) {
+                            QFile notesFile(fileInfo.absoluteFilePath());
+                            if (notesFile.open(QIODevice::ReadOnly)) {
+                                const QByteArray bytes = notesFile.readAll();
+                                if (bytes.size() <= 65536) {
+                                    const QString notes = QString::fromUtf8(bytes).trimmed();
+                                    if (!notes.isEmpty())
+                                        setTransactionOperationField(
+                                            QStringLiteral("releaseNotes"), notes);
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             setTransactionOperationField(

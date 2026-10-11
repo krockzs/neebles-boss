@@ -22,6 +22,7 @@ class BossController final : public QObject
     Q_PROPERTY(bool bossUpdateAvailable READ bossUpdateAvailable NOTIFY bossUpdateChanged)
     Q_PROPERTY(QString bossInstalledVersion READ bossInstalledVersion NOTIFY bossUpdateChanged)
     Q_PROPERTY(QString bossRemoteVersion READ bossRemoteVersion NOTIFY bossUpdateChanged)
+    Q_PROPERTY(QVariantMap pendingBossUpdate READ pendingBossUpdate NOTIFY pendingBossUpdateChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
     Q_PROPERTY(QVariantMap transactionOperation READ transactionOperation NOTIFY transactionOperationChanged)
@@ -40,6 +41,7 @@ public:
     bool bossUpdateAvailable() const { return m_bossUpdateAvailable; }
     QString bossInstalledVersion() const { return m_bossInstalledVersion; }
     QString bossRemoteVersion() const { return m_bossRemoteVersion; }
+    QVariantMap pendingBossUpdate() const { return m_pendingBossUpdate; }
     bool busy() const { return m_busy; }
     QString statusText() const { return m_statusText; }
     QVariantMap transactionOperation() const { return m_transactionOperation; }
@@ -50,6 +52,7 @@ public:
     Q_INVOKABLE QUrl flagUrl(const QString &name) const;
     Q_INVOKABLE void reload();
     Q_INVOKABLE void installBossUpdate();
+    Q_INVOKABLE bool acknowledgeBossUpdate();
     Q_INVOKABLE void saveConfig(const QString &language,
                                 bool trayEnabled,
                                 bool launcherEnabled,
@@ -101,6 +104,7 @@ signals:
     void languagesChanged();
     void modulesChanged();
     void bossUpdateChanged();
+    void pendingBossUpdateChanged();
     void busyChanged();
     void statusTextChanged();
     void transactionOperationChanged();
@@ -118,6 +122,7 @@ private:
     void loadTranslations();
     void loadModules();
     void loadBossUpdateStatus();
+    void loadPendingBossUpdate();
     void pollModuleRuntime();
     void pollUpdates();
     void applyModuleLifecycle();
@@ -152,6 +157,7 @@ private:
     bool m_telemetryEnabled = false;
     QVariantList m_languages;
     QVariantList m_modules;
+    QVariantMap m_pendingBossUpdate;
     bool m_bossUpdateAvailable = false;
     QString m_bossInstalledVersion;
     QString m_bossRemoteVersion;
