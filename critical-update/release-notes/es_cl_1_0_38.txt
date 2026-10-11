@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.38
+
+Corregida la generación segura del comprobante de actualización en directorios de configuración propios con permisos de grupo. El instalador protege automáticamente el directorio NEEBLES, diagnostica bloqueos del comprobante y habilita el handoff para reiniciar solo Plasma y volver a abrir Boss con sus novedades.

@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.38
+
+Fixes secure upgrade-receipt creation in user-owned group-writable config directories. The installer privately protects the NEEBLES configuration directory, diagnoses receipt failures and enables the post-update handoff for Plasma-only restart and the Boss notes dialog.

@@ -298,7 +298,7 @@ fi
 # installation the old binary is absent, so there is no update handoff or notes.
 # The probe happens BEFORE replacing client/. No process is stopped here.
 NEEBLES_BOSS_PREVIOUS_VERSION=""
-NEEBLES_BOSS_TARGET_VERSION="1.0.37"
+NEEBLES_BOSS_TARGET_VERSION="1.0.38"
 NEEBLES_BOSS_IS_UPGRADE=0
 if [[ -z "$DESTDIR" && -f "$BIN_DIR/neebles" && -x "$BIN_DIR/neebles" ]]; then
     neebles_boss_previous_version_output="$("$BIN_DIR/neebles" --version)" || {
@@ -1217,15 +1217,15 @@ fi
 
 # NEEBLES_1036_INSTALLER_RECEIPT_20
 NEEBLES_BOSS_RECEIPT_OK=0
-# The old 1.0.35 backend cannot execute Rust code introduced in 1.0.37.
+# The old 1.0.35 backend cannot execute Rust code introduced in 1.0.38.
 # Therefore the NEW installer, which is already executing during the upgrade,
 # publishes the durable UI receipt after all installation commit gates passed.
 # An install without previous version / a same-version reinstall produces none.
 publish_boss_upgrade_receipt() {
-    local passwd_record home_dir config_root neebles_config receipt temporary
+    local passwd_record home_dir config_root neebles_config receipt temporary mode
     [[ -z "$DESTDIR" && "$NEEBLES_BOSS_IS_UPGRADE" == 1 ]] || return 0
     [[ "$NEEBLES_BOSS_PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.37' ]] || return 1
+    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.38' ]] || return 1
     [[ "$DESKTOP_UID" =~ ^[0-9]+$ && "$DESKTOP_GID" =~ ^[0-9]+$ && "$DESKTOP_UID" != '0' ]] || return 1
     passwd_record="$(getent passwd "$DESKTOP_UID")" || return 1
     IFS=: read -r _ _ _ _ _ home_dir _ <<< "$passwd_record"
@@ -1234,12 +1234,45 @@ publish_boss_upgrade_receipt() {
     config_root="$home_dir/.config"
     neebles_config="$config_root/neebles"
     for path in "$config_root" "$neebles_config"; do
-        [[ ! -L "$path" ]] || return 1
-        if [[ ! -d "$path" ]]; then
-            install -d -m 0700 -o "$DESKTOP_UID" -g "$DESKTOP_GID" -- "$path" || return 1
+        if [[ -L "$path" || ( -e "$path" && ! -d "$path" ) ]]; then
+            printf 'NEEBLES_BOSS_RECEIPT_ERROR=unsafe_config_node path=%s\n' "$path" >&2
+            return 1
         fi
-        [[ "$(stat -c '%u' -- "$path")" == "$DESKTOP_UID" ]] || return 1
-        [[ "$(stat -c '%a' -- "$path")" =~ ^(700|750|755)$ ]] || return 1
+        if [[ ! -d "$path" ]]; then
+            if ! install -d -m 0700 -o "$DESKTOP_UID" -g "$DESKTOP_GID" -- "$path"; then
+                printf 'NEEBLES_BOSS_RECEIPT_ERROR=create_failed path=%s\n' "$path" >&2
+                return 1
+            fi
+        fi
+        if [[ "$(stat -c '%u' -- "$path")" != "$DESKTOP_UID" ]]; then
+            printf 'NEEBLES_BOSS_RECEIPT_ERROR=owner_mismatch path=%s\n' "$path" >&2
+            return 1
+        fi
+        mode="$(stat -c '%a' -- "$path")" || return 1
+        # Do not silently trust a world-writable user configuration tree.
+        if (( (8#$mode & 0002) != 0 )); then
+            printf 'NEEBLES_BOSS_RECEIPT_ERROR=world_writable path=%s mode=%s\n' "$path" "$mode" >&2
+            return 1
+        fi
+        # The observed 775 is user-owned and group-writable; make only the
+        # dedicated ~/.config/neebles directory private, never chmod ~/.config.
+        if [[ "$path" == "$neebles_config" && "$mode" != 700 ]]; then
+            if ! chmod 0700 -- "$path"; then
+                printf 'NEEBLES_BOSS_RECEIPT_ERROR=private_chmod_failed path=%s\n' "$path" >&2
+                return 1
+            fi
+            printf 'NEEBLES_BOSS_RECEIPT_CONFIG_SECURED=%s previous_mode=%s mode=700\n' "$path" "$mode"
+            mode="$(stat -c '%a' -- "$path")" || return 1
+        fi
+        if [[ "$path" == "$config_root" ]]; then
+            if [[ ! "$mode" =~ ^(700|750|755)$ ]]; then
+                printf 'NEEBLES_BOSS_RECEIPT_ERROR=parent_mode path=%s mode=%s\n' "$path" "$mode" >&2
+                return 1
+            fi
+        elif [[ "$mode" != 700 ]]; then
+            printf 'NEEBLES_BOSS_RECEIPT_ERROR=private_mode path=%s mode=%s\n' "$path" "$mode" >&2
+            return 1
+        fi
     done
     receipt="$neebles_config/boss-update-pending.json"
     [[ ! -L "$receipt" ]] || return 1
@@ -1260,6 +1293,7 @@ publish_boss_upgrade_receipt() {
 if ! publish_boss_upgrade_receipt; then
     echo 'WARNING: Boss installed successfully but upgrade confirmation receipt could not be published.' >&2
     echo 'NEEBLES_BOSS_RECEIPT_PUBLISHED=failed'
+    echo 'NEEBLES_BOSS_HANDOFF_SKIPPED=receipt_not_published' >&2
 fi
 # No desktop operation here; independent authenticated handoff still pending.
 
