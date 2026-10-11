@@ -373,8 +373,60 @@ fn lifecycle_process_observer_factory() -> modules::ModuleLifecycleObserverFacto
     })
 }
 
+// B42_CLI_RECOVERY_DIAGNOSTICS
+// Pure request construction: exactly one module, no disk access or local dispatch.
+fn b42_recovery_diagnostics_request(args: &[String]) -> Result<ExecutionRequest, String> {
+    if args.len() != 2 || args[0] != "recovery-diagnostics" {
+        return Err("usage: neebles modules recovery-diagnostics <module>".to_string());
+    }
+    let module = &args[1];
+    if module.is_empty()
+        || !module
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err("invalid module identity for recovery diagnostics".to_string());
+    }
+    Ok(ExecutionRequest {
+        target: "boss".to_string(),
+        action: Some("recovery-diagnostics".to_string()),
+        args: vec![module.to_string()],
+        context: ExecutionContext {
+            caller: "cli.modules.recovery-diagnostics".to_string(),
+        },
+    })
+}
+
+fn b42_recovery_diagnostics_command(args: &[String]) -> i32 {
+    let request = match b42_recovery_diagnostics_request(args) {
+        Ok(request) => request,
+        Err(error) => return fail(error),
+    };
+    // Only the persistent Boss has authority to interpret its recovery evidence.
+    match ipc::request(&request) {
+        Ok(response) if response.ok => match response.result {
+            Some(report) => print_value(report),
+            None => fail("Boss returned no recovery diagnostic report".to_string()),
+        },
+        Ok(response) => {
+            let message = response
+                .error
+                .map(|error| error.message)
+                .unwrap_or_else(|| {
+                    format!(
+                        "Boss recovery diagnostics failed with code {}",
+                        response.code
+                    )
+                });
+            fail(message)
+        }
+        Err(error) => fail(error),
+    }
+}
+
 fn modules_command(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
+        Some("recovery-diagnostics") => b42_recovery_diagnostics_command(args),
         Some("available") | Some("list") => match modules::available_modules_json() {
             Ok(value) => print_value(value),
             Err(error) => fail(error),
@@ -1269,8 +1321,49 @@ fn print_help() {
     println!("  neebles modules install|update|uninstall <module>");
     println!("  neebles modules update <module> --close-running");
     println!("  neebles modules preflight <enable|disable|uninstall> <module>");
+    println!("  neebles modules recovery-diagnostics <module>");
     println!("  neebles modules enable|disable <module>");
     println!("  neebles notify <info|success|warning|critical|fatal> <title> <message>");
     println!("  neebles socket serve");
     println!("  neebles --request-json '<ExecutionRequest JSON>'");
+}
+
+#[cfg(test)]
+mod b42_cli_recovery_diagnostics_tests {
+    use super::*;
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| (*item).to_owned()).collect()
+    }
+
+    #[test]
+    fn b42_valid_module_uses_persistent_boss_request_and_exact_action() {
+        let request =
+            b42_recovery_diagnostics_request(&args(&["recovery-diagnostics", "test-module"]))
+                .unwrap();
+        assert_eq!(request.target, "boss");
+        assert_eq!(request.action.as_deref(), Some("recovery-diagnostics"));
+        assert_eq!(request.args, vec!["test-module"]);
+        assert_eq!(request.context.caller, "cli.modules.recovery-diagnostics");
+    }
+
+    #[test]
+    fn b42_missing_or_extra_args_rejected_before_ipc() {
+        assert!(b42_recovery_diagnostics_request(&args(&["recovery-diagnostics"])).is_err());
+        assert!(b42_recovery_diagnostics_request(&args(&[
+            "recovery-diagnostics",
+            "test",
+            "extra"
+        ]))
+        .is_err());
+        assert!(b42_recovery_diagnostics_request(&args(&["unknown", "test"])).is_err());
+    }
+
+    #[test]
+    fn b42_unsafe_module_identity_rejected_before_ipc() {
+        for module in ["", "../bad", "a/b", "a.b", "bad module", "á"] {
+            assert!(
+                b42_recovery_diagnostics_request(&args(&["recovery-diagnostics", module])).is_err()
+            );
+        }
+    }
 }

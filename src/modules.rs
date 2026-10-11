@@ -1945,7 +1945,10 @@ fn install_require_tree(
             &candidate.manifest.version,
         ) {
             return Err(require_install_failure(
-                format!("module '{}' release notes validation failed: {}", module_id, error),
+                format!(
+                    "module '{}' release notes validation failed: {}",
+                    module_id, error
+                ),
                 &mut transaction,
             ));
         }
@@ -2418,6 +2421,13 @@ pub fn modules_root() -> PathBuf {
 }
 
 fn module_has_active_resources(name: &str) -> Result<bool, String> {
+    // B8: extras are a separate runtime class, never another Governor Open.
+    if !crate::module_extra_runtime_registry::governed_extra_owners()
+        .module_owners(name)?
+        .is_empty()
+    {
+        return Ok(true);
+    }
     let runtime_active = crate::module_ipc::runtime_registry().get(name)?.is_some();
 
     if runtime_active {
@@ -2711,6 +2721,1235 @@ fn request_persistent_boss_action(action: &str, args: Vec<String>) -> Result<Val
         "persistent Boss action '{}' failed: {}",
         action, detail
     ))
+}
+
+// B13: strict typed validation of read-only inventory from the persistent Boss.
+// A malformed response never means "zero extras".
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PersistentExtraOwner {
+    id: String,
+    pid: u32,
+    start_time_ticks: u64,
+    session_id: String,
+}
+
+fn parse_persistent_extra_inventory(
+    expected_module: &str,
+    payload: &Value,
+) -> Result<Vec<PersistentExtraOwner>, String> {
+    let obj = payload
+        .as_object()
+        .ok_or("persistent extra inventory must be an object")?;
+    if obj.len() != 2 || obj.get("module").and_then(Value::as_str) != Some(expected_module) {
+        return Err("persistent extra inventory wrong module or fields".into());
+    }
+    let extras = obj
+        .get("extras")
+        .and_then(Value::as_array)
+        .ok_or("persistent extra inventory missing extras array")?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut entries = Vec::with_capacity(extras.len());
+    for item in extras {
+        let record = item
+            .as_object()
+            .ok_or("persistent extra entry must be an object")?;
+        if record.len() != 4 {
+            return Err("persistent extra entry has unknown or missing fields".into());
+        }
+        let id = record
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or("persistent extra entry missing id")?;
+        if id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+            || matches!(id, "open" | "governor.open")
+            || !seen.insert(id.to_owned())
+        {
+            return Err(
+                "persistent extra inventory has invalid or duplicate extra identity".into(),
+            );
+        }
+        let pid = record
+            .get("pid")
+            .and_then(Value::as_u64)
+            .and_then(|v| u32::try_from(v).ok())
+            .filter(|v| *v > 0)
+            .ok_or("persistent extra entry invalid PID")?;
+        let start_time_ticks = record
+            .get("start_time_ticks")
+            .and_then(Value::as_u64)
+            .filter(|v| *v > 0)
+            .ok_or("persistent extra entry invalid starttime")?;
+        let session_id = record
+            .get("session_id")
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty() && v.len() <= 256)
+            .ok_or("persistent extra entry invalid session")?;
+        entries.push(PersistentExtraOwner {
+            id: id.to_owned(),
+            pid,
+            start_time_ticks,
+            session_id: session_id.to_owned(),
+        });
+    }
+    Ok(entries)
+}
+
+// B29: OS-random challenge prevents accepting a response to an older query.
+// This does NOT certify an atomic logical snapshot or authorize termination.
+fn new_extra_capture_nonce() -> Result<String, String> {
+    use std::io::Read;
+    let mut random = [0_u8; 16];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut source| source.read_exact(&mut random))
+        .map_err(|error| format!("cannot generate Boss capture nonce: {error}"))?;
+    let mut nonce = String::with_capacity(32);
+    for byte in random {
+        use std::fmt::Write;
+        write!(&mut nonce, "{byte:02x}").map_err(|error| error.to_string())?;
+    }
+    Ok(nonce)
+}
+
+// B28/B29: strict single-response validation; B13 remains the canonical
+// validator for physical owner records. No silent fallback to an empty list.
+fn parse_persistent_extra_capture(
+    expected_module: &str,
+    expected_nonce: &str,
+    payload: &Value,
+) -> Result<Vec<PersistentExtraOwner>, String> {
+    let obj = payload.as_object().ok_or("B28 capture must be an object")?;
+    if obj.len() != 4
+        || obj.get("module").and_then(Value::as_str) != Some(expected_module)
+        || expected_nonce.len() != 32
+        || !expected_nonce
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        || obj.get("request_nonce").and_then(Value::as_str) != Some(expected_nonce)
+        || obj.get("coherent").and_then(Value::as_bool) != Some(true)
+    {
+        return Err("B28 capture wrong module, coherence or fields".into());
+    }
+    let physical = serde_json::json!({
+        "module": expected_module,
+        "extras": obj.get("extras").ok_or("B28 capture missing extras")?,
+    });
+    parse_persistent_extra_inventory(expected_module, &physical)
+}
+
+#[cfg(test)]
+mod b29_capture_binding_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn b29_rejects_replayed_and_missing_nonce() {
+        let original = json!({"module":"alpha","coherent":true,
+            "request_nonce":"0123456789abcdef0123456789abcdef","extras":[]});
+        assert!(parse_persistent_extra_capture(
+            "alpha",
+            "0123456789abcdef0123456789abcdef",
+            &original
+        )
+        .is_ok());
+        assert!(parse_persistent_extra_capture(
+            "alpha",
+            "abcdef0123456789abcdef0123456789",
+            &original
+        )
+        .is_err());
+        let mut tampered = original.clone();
+        tampered.as_object_mut().unwrap().remove("request_nonce");
+        assert!(parse_persistent_extra_capture(
+            "alpha",
+            "0123456789abcdef0123456789abcdef",
+            &tampered
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn b29_generates_two_distinct_valid_challenges() {
+        let a = new_extra_capture_nonce().unwrap();
+        let b = new_extra_capture_nonce().unwrap();
+        assert_eq!(a.len(), 32);
+        assert!(a
+            .bytes()
+            .all(|v| v.is_ascii_hexdigit() && !v.is_ascii_uppercase()));
+        assert_ne!(a, b);
+    }
+}
+
+#[cfg(test)]
+mod b28_single_capture_tests {
+    use super::*;
+    use serde_json::json;
+    const NONCE: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn b28_capture_validates_exact_module_and_owner() {
+        let valid = json!({"module":"alpha","coherent":true,"request_nonce":NONCE,"extras":[
+            {"id":"cpu","pid":123,"start_time_ticks":456,"session_id":"session-x"}
+        ]});
+        assert_eq!(
+            parse_persistent_extra_capture("alpha", NONCE, &valid)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(parse_persistent_extra_capture("beta", NONCE, &valid).is_err());
+        let mut spoofed = valid.clone();
+        spoofed["extras"][0]["pid"] = json!(0);
+        assert!(parse_persistent_extra_capture("alpha", NONCE, &spoofed).is_err());
+    }
+
+    #[test]
+    fn b28_capture_fails_closed_on_missing_or_false_coherence() {
+        assert!(parse_persistent_extra_capture(
+            "alpha",
+            NONCE,
+            &json!({"module":"alpha","coherent":true,"request_nonce":NONCE,"extras":[]})
+        )
+        .unwrap()
+        .is_empty());
+        for invalid in [
+            json!({"module":"alpha","coherent":false,"request_nonce":NONCE,"extras":[]}),
+            json!({"module":"alpha","request_nonce":NONCE,"extras":[]}),
+            json!({"module":"alpha","coherent":true,"request_nonce":NONCE}),
+            json!({"module":"alpha","coherent":true,"request_nonce":NONCE,"extras":[],"extra":"unexpected"}),
+        ] {
+            assert!(parse_persistent_extra_capture("alpha", NONCE, &invalid).is_err());
+        }
+    }
+}
+
+// B30: a captured set cannot authorize an update after the physical owners
+// change. Nonce validation happens in parse_persistent_extra_capture.
+// This is a fail-closed recapture check, NOT an atomic snapshot or stop grant.
+fn b30_verify_fresh_capture(
+    original: &[PersistentExtraOwner],
+    fresh: &[PersistentExtraOwner],
+) -> Result<(), String> {
+    let mut original_sorted = original.to_vec();
+    let mut fresh_sorted = fresh.to_vec();
+    original_sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    fresh_sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    if original_sorted != fresh_sorted {
+        return Err("B30 persistent physical extra owners changed since capture".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod b30_recapture_tests {
+    use super::*;
+
+    fn owner(id: &str, pid: u32, ticks: u64, session: &str) -> PersistentExtraOwner {
+        PersistentExtraOwner {
+            id: id.into(),
+            pid,
+            start_time_ticks: ticks,
+            session_id: session.into(),
+        }
+    }
+
+    #[test]
+    fn b30_rejects_owner_change_and_disappearance() {
+        let baseline = vec![owner("cpu", 42, 100, "s1")];
+        assert!(b30_verify_fresh_capture(&baseline, &[]).is_err());
+        assert!(b30_verify_fresh_capture(&baseline, &[owner("cpu", 42, 101, "s1")]).is_err());
+        assert!(b30_verify_fresh_capture(&baseline, &[owner("cpu", 42, 100, "s2")]).is_err());
+        assert!(b30_verify_fresh_capture(&baseline, &[owner("cpu", 43, 100, "s1")]).is_err());
+    }
+
+    #[test]
+    fn b30_accepts_equivalent_sets_and_empty_set() {
+        assert!(b30_verify_fresh_capture(&[], &[]).is_ok());
+        let a = vec![owner("z", 42, 100, "s1"), owner("a", 43, 101, "s2")];
+        let b = vec![owner("a", 43, 101, "s2"), owner("z", 42, 100, "s1")];
+        assert!(b30_verify_fresh_capture(&a, &b).is_ok());
+        assert!(b30_verify_fresh_capture(&a, &[owner("a", 43, 101, "s2")]).is_err());
+    }
+}
+
+// B31: never reuse the first or second IPC challenge at publication.
+fn b31_verify_publication_challenge(
+    first: &str,
+    second: &str,
+    publication: &str,
+) -> Result<(), String> {
+    if publication == first
+        || publication == second
+        || publication.len() != 32
+        || !publication
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("B31 publication challenge is invalid or reused".into());
+    }
+    Ok(())
+}
+
+// A module may be physically published only while both the previously
+// verified inventory AND the final persistent-owner inventory are empty.
+fn b31_require_empty_publication_inventory(
+    before: &[PersistentExtraOwner],
+    at_publication: &[PersistentExtraOwner],
+) -> Result<(), String> {
+    b30_verify_fresh_capture(before, at_publication)?;
+    if !at_publication.is_empty() {
+        return Err("B31 registered extras block physical publication".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod b31_publication_gate_tests {
+    use super::*;
+
+    fn owner() -> PersistentExtraOwner {
+        PersistentExtraOwner {
+            id: "worker".into(),
+            pid: 42,
+            start_time_ticks: 123,
+            session_id: "session-one".into(),
+        }
+    }
+
+    #[test]
+    fn b31_publication_requires_empty_both_before_and_after() {
+        assert!(b31_require_empty_publication_inventory(&[], &[]).is_ok());
+        assert!(b31_require_empty_publication_inventory(&[], &[owner()]).is_err());
+        assert!(b31_require_empty_publication_inventory(&[owner()], &[]).is_err());
+        assert!(b31_require_empty_publication_inventory(&[owner()], &[owner()]).is_err());
+    }
+
+    #[test]
+    fn b31_challenge_must_be_new_and_exact_hex() {
+        let a = "0123456789abcdef0123456789abcdef";
+        let b = "abcdef0123456789abcdef0123456789";
+        let c = "00112233445566778899aabbccddeeff";
+        assert!(b31_verify_publication_challenge(a, b, c).is_ok());
+        assert!(b31_verify_publication_challenge(a, b, a).is_err());
+        assert!(b31_verify_publication_challenge(a, b, b).is_err());
+        assert!(b31_verify_publication_challenge(a, b, "wrong").is_err());
+        assert!(
+            b31_verify_publication_challenge(a, b, "00112233445566778899AABBCCDDEEFF").is_err()
+        );
+    }
+}
+
+// B32: names of the staging/backup directories created by this updater are
+// module-scoped and transaction-suffixed. An existing one is recovery evidence,
+// not a candidate for implicit cleanup. This is a read-only preflight; it does
+// not replace kernel serialization or a durable extra-process journal.
+// Match the exact transaction_id() format: PID-unix_nanos-counter.
+// This read-only check must never delete suspected recovery evidence.
+fn b32_is_actual_transaction_suffix(suffix: &str) -> bool {
+    let mut components = suffix.split('-');
+    for _ in 0..3 {
+        let Some(value) = components.next() else {
+            return false;
+        };
+        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return false;
+        }
+    }
+    components.next().is_none()
+}
+
+fn b32_reject_stale_module_transactions(
+    root: &std::path::Path,
+    module: &str,
+) -> Result<(), String> {
+    if module.is_empty()
+        || module == "."
+        || module == ".."
+        || !module
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("B32 invalid module identity for transaction recovery gate".into());
+    }
+    let update_prefix = format!(".neebles-update-{module}-");
+    let backup_prefix = format!(".neebles-backup-{module}-");
+    for entry in std::fs::read_dir(root).map_err(|e| {
+        format!(
+            "B32 cannot enumerate transaction root {}: {e}",
+            root.display()
+        )
+    })? {
+        let entry = entry.map_err(|e| format!("B32 cannot inspect transaction root: {e}"))?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        // B32_2_EXACT_TRANSACTION_SUFFIX_FIX: avoid confusing module-name
+        // prefixes; only PID-nanoseconds-counter is an updater transaction.
+        let suffix = name
+            .strip_prefix(&update_prefix)
+            .or_else(|| name.strip_prefix(&backup_prefix));
+        let durable_suffix = name.strip_prefix(&format!(".neebles-journal-{module}-"));
+        // B36: phase evidence is blocking even without a readable B33 journal.
+        // Do not follow symlinks or perform cleanup in this inspection.
+        let phase_prefix = format!(".neebles-phase-{module}-");
+        if let Some(tail) = name.strip_prefix(&phase_prefix) {
+            for phase in [
+                "before_backup_rename",
+                "before_candidate_publish",
+                "candidate_published",
+            ] {
+                if let Some(tx) = tail.strip_suffix(&format!("-{phase}")) {
+                    if b32_is_actual_transaction_suffix(tx) {
+                        return Err(format!(
+                            "B36 unresolved publication checkpoint blocks update: {}",
+                            entry.path().display()
+                        ));
+                    }
+                }
+            }
+        }
+
+        if let Some(tx) = durable_suffix.filter(|tx| b32_is_actual_transaction_suffix(tx)) {
+            let diagnostic = match b35_read_only_journal_integrity(&entry.path(), module, tx) {
+                Ok(()) => "structurally valid unresolved journal".to_owned(),
+                Err(reason) => format!("invalid or unreadable journal: {reason}"),
+            };
+            return Err(format!(
+                "B35 unresolved update journal blocks update: {} ({diagnostic}). Preserve for manual recovery",
+                entry.path().display()
+            ));
+        }
+        if suffix.is_some_and(b32_is_actual_transaction_suffix) {
+            return Err(format!(
+                "B32 unresolved module transaction blocks update: {}. Inspect and recover manually; no automatic removal is permitted",
+                entry.path().display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod b32_stale_transaction_recovery_tests {
+    use super::*;
+
+    #[test]
+    fn b32_empty_directory_can_start() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(b32_reject_stale_module_transactions(root.path(), "monitor").is_ok());
+    }
+
+    #[test]
+    fn b32_update_or_backup_evidence_blocks_and_is_never_removed() {
+        for prefix in [".neebles-update-monitor-", ".neebles-backup-monitor-"] {
+            let root = tempfile::tempdir().unwrap();
+            let evidence = root.path().join(format!("{prefix}123-456789-0"));
+            std::fs::create_dir(&evidence).unwrap();
+            assert!(b32_reject_stale_module_transactions(root.path(), "monitor").is_err());
+            assert!(evidence.is_dir());
+        }
+    }
+
+    #[test]
+    fn b32_other_module_and_unrelated_names_are_not_recovery_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        for name in [
+            ".neebles-update-monitor-two-123-456789-0",
+            ".neebles-backup-other-123-456789-0",
+            "ordinary",
+        ] {
+            std::fs::create_dir(root.path().join(name)).unwrap();
+        }
+        assert!(b32_reject_stale_module_transactions(root.path(), "monitor").is_ok());
+        assert!(b32_reject_stale_module_transactions(root.path(), "../monitor").is_err());
+    }
+}
+
+// B35_DURABLE_JOURNAL_INTEGRITY_AUDIT
+// Diagnostics ONLY. A recognized journal *always* blocks subsequent updates,
+// including when malformed, truncated, unreadable, or a symlink. Never delete it.
+fn b35_read_only_journal_integrity(
+    path: &std::path::Path,
+    module: &str,
+    transaction: &str,
+) -> Result<(), String> {
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|e| format!("cannot stat journal: {e}"))?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err("journal is not a regular non-symlink file".into());
+    }
+    if metadata.len() == 0 || metadata.len() > 4096 {
+        return Err("journal size is invalid".into());
+    }
+    let raw = std::fs::read(path).map_err(|e| format!("cannot read journal: {e}"))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&raw).map_err(|e| format!("invalid journal JSON: {e}"))?;
+    let obj = value.as_object().ok_or("journal must be an object")?;
+    const FIELDS: [&str; 7] = [
+        "schema",
+        "module",
+        "transaction",
+        "phase",
+        "new_version",
+        "extras",
+        "stop_or_restore_authorized",
+    ];
+    if obj.len() != FIELDS.len() || FIELDS.iter().any(|key| !obj.contains_key(*key)) {
+        return Err("journal has missing or unknown fields".into());
+    }
+    if obj.get("schema").and_then(serde_json::Value::as_u64) != Some(1)
+        || obj.get("module").and_then(serde_json::Value::as_str) != Some(module)
+        || obj.get("transaction").and_then(serde_json::Value::as_str) != Some(transaction)
+        || obj.get("phase").and_then(serde_json::Value::as_str) != Some("before_deactivation")
+        || obj
+            .get("new_version")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|v| v.is_empty() || v.len() > 128)
+        || obj
+            .get("extras")
+            .and_then(serde_json::Value::as_array)
+            .is_none_or(|v| !v.is_empty())
+        || obj
+            .get("stop_or_restore_authorized")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+    {
+        return Err("journal identity or zero-extra contract mismatch".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod b35_durable_journal_integrity_tests {
+    use super::*;
+
+    #[test]
+    fn b35_valid_journal_is_readable_but_still_blocks_update() {
+        let root = tempfile::tempdir().unwrap();
+        let journal =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "123-456-0", "1.2.4").unwrap();
+        assert!(b35_read_only_journal_integrity(&journal.path, "alpha", "123-456-0").is_ok());
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+        assert!(journal.path.exists());
+    }
+
+    #[test]
+    fn b35_truncated_and_tampered_journals_remain_blocking_evidence() {
+        for payload in [
+            "{",
+            "{}",
+            r#"{"schema":1,"module":"other","transaction":"123-456-0","phase":"before_deactivation","new_version":"1.2.4","extras":[],"stop_or_restore_authorized":false}"#,
+            r#"{"schema":1,"module":"alpha","transaction":"123-456-0","phase":"before_deactivation","new_version":"1.2.4","extras":["extra"],"stop_or_restore_authorized":false}"#,
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join(".neebles-journal-alpha-123-456-0");
+            std::fs::write(&path, payload).unwrap();
+            assert!(b35_read_only_journal_integrity(&path, "alpha", "123-456-0").is_err());
+            assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+            assert_eq!(std::fs::read_to_string(path).unwrap(), payload);
+        }
+    }
+
+    #[test]
+    fn b35_symlink_journal_is_never_followed_or_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("untouched");
+        std::fs::write(&target, "preserve").unwrap();
+        let path = root.path().join(".neebles-journal-alpha-123-456-0");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(b35_read_only_journal_integrity(&path, "alpha", "123-456-0").is_err());
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "preserve");
+        assert!(path.is_symlink());
+    }
+}
+
+// B37_READ_ONLY_INTERRUPTED_TRANSACTION_CLASSIFIER
+// Read-only triage only. Observations are never authorization to resume,
+// rename, unlink, close, or restore anything. The phase is an intent marker,
+// NEVER evidence that the corresponding rename completed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct B37InterruptedTransactionEvidence {
+    journal_valid: bool,
+    current_exists: bool,
+    backup_exists: bool,
+    staging_exists: bool,
+    observed_checkpoints: Vec<String>,
+    requires_manual_recovery: bool,
+}
+
+fn b37_probe_existing_entry(path: &std::path::Path) -> Result<bool, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "B37 symlinked recovery evidence: {}",
+                    path.display()
+                ));
+            }
+            if !metadata.file_type().is_dir() {
+                return Err(format!(
+                    "B37 non-directory recovery evidence: {}",
+                    path.display()
+                ));
+            }
+            Ok(true)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("B37 cannot inspect {}: {e}", path.display())),
+    }
+}
+
+fn b37_classify_interrupted_transaction(
+    root: &std::path::Path,
+    module: &str,
+    transaction: &str,
+) -> Result<B37InterruptedTransactionEvidence, String> {
+    if module.is_empty()
+        || !module
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        || !b32_is_actual_transaction_suffix(transaction)
+    {
+        return Err("B37 invalid recovery identity".into());
+    }
+    let current_exists = b37_probe_existing_entry(&root.join(module))?;
+    let backup_exists =
+        b37_probe_existing_entry(&root.join(format!(".neebles-backup-{module}-{transaction}")))?;
+    let staging_exists =
+        b37_probe_existing_entry(&root.join(format!(".neebles-update-{module}-{transaction}")))?;
+    let journal = root.join(format!(".neebles-journal-{module}-{transaction}"));
+    // A missing journal is NOT success; it is an invalid or incomplete record.
+    let journal_valid = b35_read_only_journal_integrity(&journal, module, transaction).is_ok();
+    let mut observed_checkpoints = Vec::new();
+    for phase in [
+        "before_backup_rename",
+        "before_candidate_publish",
+        "candidate_published",
+    ] {
+        let path = root.join(format!(".neebles-phase-{module}-{transaction}-{phase}"));
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_file() => {
+                // A forged or truncated marker must not be treated as a valid phase.
+                let bytes = std::fs::read(&path)
+                    .map_err(|e| format!("B37 unreadable checkpoint {}: {e}", path.display()))?;
+                if bytes.is_empty() || bytes.len() > 4096 {
+                    return Err(format!("B37 invalid checkpoint size: {}", path.display()));
+                }
+                let value: serde_json::Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| format!("B37 checkpoint JSON invalid: {e}"))?;
+                let obj = value.as_object().ok_or("B37 checkpoint is not object")?;
+                if obj.len() != 6
+                    || value.get("schema").and_then(|v| v.as_u64()) != Some(1)
+                    || value.get("module").and_then(|v| v.as_str()) != Some(module)
+                    || value.get("transaction").and_then(|v| v.as_str()) != Some(transaction)
+                    || value.get("phase").and_then(|v| v.as_str()) != Some(phase)
+                    || value
+                        .get("extras")
+                        .and_then(|v| v.as_array())
+                        .is_none_or(|v| !v.is_empty())
+                    || value
+                        .get("stop_or_restore_authorized")
+                        .and_then(|v| v.as_bool())
+                        != Some(false)
+                {
+                    return Err(format!(
+                        "B37 checkpoint identity mismatch: {}",
+                        path.display()
+                    ));
+                }
+                observed_checkpoints.push(phase.to_owned());
+            }
+            Ok(_) => return Err(format!("B37 nonregular checkpoint: {}", path.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("B37 checkpoint stat failed: {e}")),
+        }
+    }
+    // B38_RECOVERY_CHECKPOINT_CHAIN_INTEGRITY
+    // Every later checkpoint requires all predecessors. A missing or invalid
+    // journal must never be upgraded into trustworthy phase information.
+    if !journal_valid {
+        return Err(format!(
+            "B38 journal missing or invalid for interrupted transaction {module}/{transaction}"
+        ));
+    }
+    let phase_chain = [
+        "before_backup_rename",
+        "before_candidate_publish",
+        "candidate_published",
+    ];
+    for (index, phase) in phase_chain.iter().enumerate() {
+        if observed_checkpoints.iter().any(|seen| seen == phase) {
+            for predecessor in &phase_chain[..index] {
+                if !observed_checkpoints.iter().any(|seen| seen == predecessor) {
+                    return Err(format!(
+                        "B38 orphan checkpoint {phase} missing predecessor {predecessor}"
+                    ));
+                }
+            }
+        }
+    }
+    // Conservative classification: even all markers + new current are NOT
+    // sufficient to infer settings, material-binding or Lifecycle completion.
+    Ok(B37InterruptedTransactionEvidence {
+        journal_valid,
+        current_exists,
+        backup_exists,
+        staging_exists,
+        observed_checkpoints,
+        requires_manual_recovery: true,
+    })
+}
+
+// B39_READ_ONLY_RECOVERY_INVENTORY
+// A diagnostic inventory is never a permission to repair. Enumerate strictly
+// for one module; an unreadable or inconsistent transaction fails the entire
+// report instead of quietly presenting an incomplete, trustworthy-looking list.
+fn b39_read_only_recovery_inventory(
+    root: &std::path::Path,
+    module: &str,
+) -> Result<Vec<(String, B37InterruptedTransactionEvidence)>, String> {
+    if module.is_empty()
+        || !module
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("B39 invalid module identity".into());
+    }
+    let prefixes = [
+        format!(".neebles-journal-{module}-"),
+        format!(".neebles-backup-{module}-"),
+        format!(".neebles-update-{module}-"),
+    ];
+    let phase_prefix = format!(".neebles-phase-{module}-");
+    let mut transactions = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(root)
+        .map_err(|e| format!("B39 cannot enumerate {}: {e}", root.display()))?
+    {
+        let entry = entry.map_err(|e| format!("B39 cannot inspect recovery entry: {e}"))?;
+        let raw_name = entry.file_name();
+        let Some(name) = raw_name.to_str() else {
+            continue;
+        };
+        let suffix = prefixes
+            .iter()
+            .find_map(|prefix| name.strip_prefix(prefix.as_str()));
+        if let Some(tx) = suffix {
+            if b32_is_actual_transaction_suffix(tx) {
+                transactions.insert(tx.to_owned());
+            }
+        }
+        if let Some(tail) = name.strip_prefix(&phase_prefix) {
+            for phase in [
+                "before_backup_rename",
+                "before_candidate_publish",
+                "candidate_published",
+            ] {
+                if let Some(tx) = tail.strip_suffix(&format!("-{phase}")) {
+                    if b32_is_actual_transaction_suffix(tx) {
+                        transactions.insert(tx.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    let mut results = Vec::with_capacity(transactions.len());
+    for transaction in transactions {
+        let evidence = b37_classify_interrupted_transaction(root, module, &transaction)
+            .map_err(|e| format!("B39 unresolved evidence for {module}/{transaction}: {e}"))?;
+        if !evidence.requires_manual_recovery {
+            return Err("B39 diagnostic cannot certify recovery completion".into());
+        }
+        results.push((transaction, evidence));
+    }
+    Ok(results)
+}
+
+// B40_PUBLIC_READ_ONLY_RECOVERY_DIAGNOSTICS
+// Stable public backend API for future CLI/IPC wiring. This never grants a
+// recovery capability, never performs repairs and never removes artifacts.
+// Returning an error for invalid or ambiguous evidence is intentional: a
+// partial inventory must not be mistaken for an authoritative clean report.
+fn b40_recovery_diagnostics_at(
+    root: &std::path::Path,
+    module: &str,
+) -> Result<serde_json::Value, String> {
+    let inventory = b39_read_only_recovery_inventory(root, module)?;
+    let transactions: Vec<serde_json::Value> = inventory
+        .into_iter()
+        .map(|(transaction, evidence)| {
+            serde_json::json!({
+                "transaction": transaction,
+                "journal_valid": evidence.journal_valid,
+                "current_exists": evidence.current_exists,
+                "backup_exists": evidence.backup_exists,
+                "staging_exists": evidence.staging_exists,
+                "observed_checkpoints": evidence.observed_checkpoints,
+                "requires_manual_recovery": evidence.requires_manual_recovery,
+            })
+        })
+        .collect();
+    let state = if transactions.is_empty() {
+        "no_evidence_observed"
+    } else {
+        "recovery_required"
+    };
+    Ok(serde_json::json!({
+        "schema": 1,
+        "module": module,
+        "state": state,
+        "scope": "read_only_filesystem_evidence",
+        "automatic_recovery_authorized": false,
+        "destructive_actions_authorized": false,
+        "transactions": transactions,
+    }))
+}
+
+pub fn recovery_diagnostics(module: &str) -> Result<serde_json::Value, String> {
+    b40_recovery_diagnostics_at(&modules_root(), module)
+}
+
+#[cfg(test)]
+mod b40_public_read_only_recovery_diagnostics_tests {
+    use super::*;
+
+    #[test]
+    fn b40_empty_evidence_is_not_a_certificate_of_runtime_health() {
+        let root = tempfile::tempdir().unwrap();
+        let report = b40_recovery_diagnostics_at(root.path(), "alpha").unwrap();
+        assert_eq!(report["schema"], 1);
+        assert_eq!(report["module"], "alpha");
+        assert_eq!(report["state"], "no_evidence_observed");
+        assert_eq!(report["scope"], "read_only_filesystem_evidence");
+        assert_eq!(report["destructive_actions_authorized"], false);
+        assert_eq!(report["automatic_recovery_authorized"], false);
+        assert_eq!(report["transactions"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn b40_incomplete_transaction_is_reported_without_modifying_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let intent =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "123-456-0", "1.2.4").unwrap();
+        let journal = root.path().join(".neebles-journal-alpha-123-456-0");
+        let before = std::fs::read(&journal).unwrap();
+        let report = b40_recovery_diagnostics_at(root.path(), "alpha").unwrap();
+        assert_eq!(report["state"], "recovery_required");
+        assert_eq!(report["transactions"][0]["transaction"], "123-456-0");
+        assert_eq!(report["transactions"][0]["requires_manual_recovery"], true);
+        assert_eq!(report["automatic_recovery_authorized"], false);
+        assert_eq!(std::fs::read(&journal).unwrap(), before);
+        drop(intent);
+        assert!(journal.exists());
+    }
+
+    #[test]
+    fn b40_malformed_journal_returns_error_instead_of_a_clean_report() {
+        let root = tempfile::tempdir().unwrap();
+        let journal = root.path().join(".neebles-journal-alpha-123-456-0");
+        std::fs::write(&journal, "truncated").unwrap();
+        assert!(b40_recovery_diagnostics_at(root.path(), "alpha").is_err());
+        assert_eq!(std::fs::read_to_string(journal).unwrap(), "truncated");
+    }
+}
+
+#[cfg(test)]
+mod b39_read_only_recovery_inventory_tests {
+    use super::*;
+
+    #[test]
+    fn b39_inventory_is_sorted_module_scoped_and_never_authorizes_repair() {
+        let root = tempfile::tempdir().unwrap();
+        let _later =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "200-300-0", "1.2.4").unwrap();
+        let _earlier =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "100-300-0", "1.2.4").unwrap();
+        let _other =
+            B33DurableUpdateIntent::create(root.path(), "alpha-two", "150-300-0", "1.2.4").unwrap();
+        let seen = b39_read_only_recovery_inventory(root.path(), "alpha").unwrap();
+        assert_eq!(
+            seen.iter().map(|(tx, _)| tx.as_str()).collect::<Vec<_>>(),
+            vec!["100-300-0", "200-300-0"]
+        );
+        assert!(seen
+            .iter()
+            .all(|(_, evidence)| evidence.requires_manual_recovery));
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+    }
+
+    #[test]
+    fn b39_orphan_checkpoint_fails_whole_report_without_deleting_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let _valid =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "100-300-0", "1.2.4").unwrap();
+        let cp = B36PublicationCheckpoints::new(root.path(), "alpha", "200-300-0").unwrap();
+        cp.record("before_backup_rename").unwrap();
+        let checkpoint = cp.path("before_backup_rename").unwrap();
+        let bytes = std::fs::read(&checkpoint).unwrap();
+        assert!(b39_read_only_recovery_inventory(root.path(), "alpha").is_err());
+        assert_eq!(std::fs::read(checkpoint).unwrap(), bytes);
+    }
+
+    #[test]
+    fn b39_symlink_or_tampered_journal_fails_closed_and_no_evidence_is_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("outside");
+        std::fs::write(&target, b"preserve").unwrap();
+        let journal = root.path().join(".neebles-journal-alpha-100-300-0");
+        std::os::unix::fs::symlink(&target, &journal).unwrap();
+        assert!(b39_read_only_recovery_inventory(root.path(), "alpha").is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"preserve");
+        assert!(journal.is_symlink());
+    }
+}
+
+// B38: these are read-only causal-integrity tests; never remove evidence.
+#[cfg(test)]
+mod b38_recovery_checkpoint_chain_tests {
+    use super::*;
+
+    #[test]
+    fn b38_orphan_published_marker_fails_closed_without_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let _journal =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "123-456-0", "1.2.4").unwrap();
+        let cp = B36PublicationCheckpoints::new(root.path(), "alpha", "123-456-0").unwrap();
+        cp.record("candidate_published").unwrap();
+        let path = cp.path("candidate_published").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(b37_classify_interrupted_transaction(root.path(), "alpha", "123-456-0").is_err());
+        assert_eq!(std::fs::read(path).unwrap(), before);
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+    }
+
+    #[test]
+    fn b38_missing_journal_never_authenticates_a_valid_phase() {
+        let root = tempfile::tempdir().unwrap();
+        let cp = B36PublicationCheckpoints::new(root.path(), "alpha", "123-456-0").unwrap();
+        cp.record("before_backup_rename").unwrap();
+        assert!(b37_classify_interrupted_transaction(root.path(), "alpha", "123-456-0").is_err());
+        assert!(cp.path("before_backup_rename").unwrap().is_file());
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+    }
+
+    #[test]
+    fn b38_ordered_prefix_is_readable_but_remains_unresolved() {
+        let root = tempfile::tempdir().unwrap();
+        let _journal =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "123-456-0", "1.2.4").unwrap();
+        let cp = B36PublicationCheckpoints::new(root.path(), "alpha", "123-456-0").unwrap();
+        cp.record("before_backup_rename").unwrap();
+        cp.record("before_candidate_publish").unwrap();
+        let observed =
+            b37_classify_interrupted_transaction(root.path(), "alpha", "123-456-0").unwrap();
+        assert_eq!(
+            observed.observed_checkpoints,
+            vec!["before_backup_rename", "before_candidate_publish"]
+        );
+        assert!(observed.requires_manual_recovery);
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+    }
+}
+
+#[cfg(test)]
+mod b37_interrupted_transaction_classifier_tests {
+    use super::*;
+    #[test]
+    fn b37_before_backup_reports_physical_state_without_promoting_checkpoint() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("alpha")).unwrap();
+        std::fs::create_dir(root.path().join(".neebles-update-alpha-123-456-0")).unwrap();
+        let _intent =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "123-456-0", "1.2.4").unwrap();
+        let cp = B36PublicationCheckpoints::new(root.path(), "alpha", "123-456-0").unwrap();
+        cp.record("before_backup_rename").unwrap();
+        let evidence =
+            b37_classify_interrupted_transaction(root.path(), "alpha", "123-456-0").unwrap();
+        assert!(evidence.journal_valid && evidence.current_exists && evidence.staging_exists);
+        assert!(!evidence.backup_exists);
+        assert_eq!(evidence.observed_checkpoints, vec!["before_backup_rename"]);
+        assert!(evidence.requires_manual_recovery);
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+    }
+    #[test]
+    fn b37_published_checkpoint_never_certifies_success() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("alpha")).unwrap();
+        std::fs::create_dir(root.path().join(".neebles-backup-alpha-123-456-0")).unwrap();
+        let _intent =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "123-456-0", "1.2.4").unwrap();
+        let cp = B36PublicationCheckpoints::new(root.path(), "alpha", "123-456-0").unwrap();
+        for phase in [
+            "before_backup_rename",
+            "before_candidate_publish",
+            "candidate_published",
+        ] {
+            cp.record(phase).unwrap();
+        }
+        let evidence =
+            b37_classify_interrupted_transaction(root.path(), "alpha", "123-456-0").unwrap();
+        assert!(evidence.journal_valid && evidence.current_exists && evidence.backup_exists);
+        assert_eq!(evidence.observed_checkpoints.len(), 3);
+        assert!(evidence.requires_manual_recovery);
+    }
+    #[test]
+    fn b37_rejects_symlink_and_tampered_checkpoint_without_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = root.path().join("untouched");
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.path().join("alpha")).unwrap();
+        assert!(b37_classify_interrupted_transaction(root.path(), "alpha", "123-456-0").is_err());
+        assert!(outside.is_dir());
+        std::fs::remove_file(root.path().join("alpha")).unwrap();
+        let checkpoint = root
+            .path()
+            .join(".neebles-phase-alpha-123-456-0-candidate_published");
+        std::fs::write(&checkpoint, "{").unwrap();
+        assert!(b37_classify_interrupted_transaction(root.path(), "alpha", "123-456-0").is_err());
+        assert_eq!(std::fs::read_to_string(checkpoint).unwrap(), "{");
+    }
+}
+
+// B36_DURABLE_PUBLICATION_CHECKPOINTS
+// These immutable markers record that a boundary was ABOUT TO be crossed.
+// They are NOT proof that a subsequent rename succeeded; physical inspection
+// and the still-present B33 journal are required for any manual recovery.
+struct B36PublicationCheckpoints {
+    root: std::path::PathBuf,
+    module: String,
+    tx: String,
+}
+impl B36PublicationCheckpoints {
+    fn new(root: &std::path::Path, module: &str, tx: &str) -> Result<Self, String> {
+        if module.is_empty()
+            || !module
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            || !b32_is_actual_transaction_suffix(tx)
+        {
+            return Err("B36 invalid checkpoint identity".into());
+        }
+        Ok(Self {
+            root: root.to_owned(),
+            module: module.to_owned(),
+            tx: tx.to_owned(),
+        })
+    }
+    fn path(&self, phase: &str) -> Result<std::path::PathBuf, String> {
+        if !matches!(
+            phase,
+            "before_backup_rename" | "before_candidate_publish" | "candidate_published"
+        ) {
+            return Err("B36 unsupported publication phase".into());
+        }
+        Ok(self.root.join(format!(
+            ".neebles-phase-{}-{}-{phase}",
+            self.module, self.tx
+        )))
+    }
+    fn record(&self, phase: &str) -> Result<(), String> {
+        use std::io::Write;
+        let path = self.path(phase)?;
+        // Once a marker is created, any failure preserves it as evidence.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| {
+                format!(
+                    "B36 cannot exclusively create checkpoint {}: {e}",
+                    path.display()
+                )
+            })?;
+        let payload = serde_json::json!({
+            "schema":1,"module":self.module,"transaction":self.tx,
+            "phase":phase,"extras":[],"stop_or_restore_authorized":false
+        });
+        let bytes = serde_json::to_vec(&payload)
+            .map_err(|e| format!("B36 checkpoint encoding failed: {e}"))?;
+        file.write_all(&bytes)
+            .map_err(|e| format!("B36 checkpoint write failed: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("B36 checkpoint sync failed: {e}"))?;
+        std::fs::File::open(&self.root)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| format!("B36 checkpoint parent sync failed: {e}"))?;
+        Ok(())
+    }
+    fn retire_after_success(&self) -> Result<(), String> {
+        // All checkpoints must exist on a success path. Failure preserves ALL evidence.
+        for phase in [
+            "before_backup_rename",
+            "before_candidate_publish",
+            "candidate_published",
+        ] {
+            let path = self.path(phase)?;
+            let meta = std::fs::symlink_metadata(&path)
+                .map_err(|e| format!("B36 missing success checkpoint: {e}"))?;
+            if !meta.file_type().is_file() {
+                return Err("B36 nonregular success checkpoint".into());
+            }
+        }
+        for phase in [
+            "before_backup_rename",
+            "before_candidate_publish",
+            "candidate_published",
+        ] {
+            std::fs::remove_file(self.path(phase)?)
+                .map_err(|e| format!("B36 cannot retire success checkpoint: {e}"))?;
+        }
+        std::fs::File::open(&self.root)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| format!("B36 cannot sync checkpoint retirement: {e}"))?;
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod b36_durable_publication_checkpoint_tests {
+    use super::*;
+    #[test]
+    fn b36_checkpoints_persist_and_block_another_update() {
+        let root = tempfile::tempdir().unwrap();
+        let cp = B36PublicationCheckpoints::new(root.path(), "alpha", "123-456-0").unwrap();
+        for phase in [
+            "before_backup_rename",
+            "before_candidate_publish",
+            "candidate_published",
+        ] {
+            cp.record(phase).unwrap();
+            assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+            assert!(cp.record(phase).is_err());
+        }
+        cp.retire_after_success().unwrap();
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_ok());
+    }
+    #[test]
+    fn b36_wrong_module_and_unknown_phase_are_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(B36PublicationCheckpoints::new(root.path(), "../alpha", "123-456-0").is_err());
+        let cp = B36PublicationCheckpoints::new(root.path(), "alpha", "123-456-0").unwrap();
+        assert!(cp.record("restore_everything").is_err());
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_ok());
+    }
+    #[test]
+    fn b36_other_module_checkpoints_do_not_block() {
+        let root = tempfile::tempdir().unwrap();
+        let cp = B36PublicationCheckpoints::new(root.path(), "alpha-two", "123-456-0").unwrap();
+        cp.record("before_backup_rename").unwrap();
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_ok());
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha-two").is_err());
+    }
+}
+
+// B33_DURABLE_ZERO_EXTRA_UPDATE_INTENT
+// This journal is intentionally for the current B8-guarded ZERO-EXTRAS path.
+// Its existence prevents another update after a crash or ambiguous failure.
+// It does not authorize extra stop/restore, and does not claim to be a recovery engine.
+struct B33DurableUpdateIntent {
+    path: std::path::PathBuf,
+    root: std::path::PathBuf,
+}
+impl B33DurableUpdateIntent {
+    fn create(
+        root: &std::path::Path,
+        module: &str,
+        tx: &str,
+        new_version: &str,
+    ) -> Result<Self, String> {
+        if module.is_empty()
+            || !module
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            || !b32_is_actual_transaction_suffix(tx)
+        {
+            return Err("B33 invalid journal identity".into());
+        }
+        use std::io::Write;
+        let path = root.join(format!(".neebles-journal-{module}-{tx}"));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| format!("B33 journal creation failed at {}: {e}", path.display()))?;
+        // No failed-write cleanup: even partially written journal is recovery evidence.
+        let record = serde_json::json!({
+            "schema": 1,
+            "module": module,
+            "transaction": tx,
+            "phase": "before_deactivation",
+            "new_version": new_version,
+            "extras": [],
+            "stop_or_restore_authorized": false
+        });
+        let bytes = serde_json::to_vec(&record)
+            .map_err(|e| format!("B33 journal serialization failed: {e}"))?;
+        file.write_all(&bytes)
+            .map_err(|e| format!("B33 journal write failed: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("B33 journal fsync failed: {e}"))?;
+        std::fs::File::open(root)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| format!("B33 journal parent fsync failed: {e}"))?;
+        Ok(Self {
+            path,
+            root: root.to_owned(),
+        })
+    }
+    // Call ONLY after successful lifecycle/settings/features and cleanup attempt.
+    fn mark_success(self) -> Result<(), String> {
+        std::fs::remove_file(&self.path)
+            .map_err(|e| format!("B33 cannot retire journal {}: {e}", self.path.display()))?;
+        std::fs::File::open(&self.root)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| format!("B33 cannot sync journal retirement: {e}"))?;
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod b33_durable_intent_tests {
+    use super::*;
+    #[test]
+    fn b33_intent_is_synced_and_structurally_identified() {
+        let root = tempfile::tempdir().unwrap();
+        let intent =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "123-456-0", "1.2.4").unwrap();
+        let payload: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&intent.path).unwrap()).unwrap();
+        assert_eq!(payload["module"], "alpha");
+        assert_eq!(payload["phase"], "before_deactivation");
+        assert_eq!(payload["stop_or_restore_authorized"], false);
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+        intent.mark_success().unwrap();
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_ok());
+    }
+    #[test]
+    fn b33_failure_keeps_journal_and_rejects_second_creation() {
+        let root = tempfile::tempdir().unwrap();
+        let intent =
+            B33DurableUpdateIntent::create(root.path(), "alpha", "123-456-0", "1.2.4").unwrap();
+        assert!(
+            B33DurableUpdateIntent::create(root.path(), "alpha", "123-456-0", "1.2.4").is_err()
+        );
+        let evidence = intent.path.clone();
+        drop(intent);
+        assert!(evidence.is_file());
+        assert!(b32_reject_stale_module_transactions(root.path(), "alpha").is_err());
+        assert!(b32_reject_stale_module_transactions(root.path(), "beta").is_ok());
+    }
+    #[test]
+    fn b33_rejects_invalid_identifiers_without_writing() {
+        let root = tempfile::tempdir().unwrap();
+        for (module, tx) in [
+            ("../alpha", "123-456-0"),
+            ("alpha", "fake"),
+            ("alpha", "123-456-0-tail"),
+        ] {
+            assert!(B33DurableUpdateIntent::create(root.path(), module, tx, "1.2.4").is_err());
+        }
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
 }
 
 fn request_persistent_tray_start(name: &str) -> Result<(), String> {
@@ -5134,7 +6373,6 @@ fn format_live_update_failure_with_binding(
     }
 }
 
-
 // NEEBLES_MODULE_NOTES_STAGING_15
 // The git checkout is authenticated/pinned by checkout_registry_commit.
 // Never retrieve release notes from a second, mutable network endpoint.
@@ -5148,7 +6386,9 @@ fn validate_staged_module_release_notes(
     // 'version' has already passed manifest semver + immutable Registry comparison.
     // Limit the possible filename surface further, regardless of manifest parser.
     if !version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
-        || version.is_empty() || version.starts_with('.') || version.ends_with('.')
+        || version.is_empty()
+        || version.starts_with('.')
+        || version.ends_with('.')
         || version.contains("..")
     {
         return Err(format!("unsafe module release-notes version: {version}"));
@@ -5176,9 +6416,7 @@ fn validate_staged_module_release_notes(
     // Current release notes may be absent for legacy modules, but all
     // notes that are present must be valid.
     let _version_suffix = version_suffix;
-    for entry in fs::read_dir(&subdir)
-        .map_err(|e| format!("release-notes inventory: {e}"))?
-    {
+    for entry in fs::read_dir(&subdir).map_err(|e| format!("release-notes inventory: {e}"))? {
         let entry = entry.map_err(|e| format!("release-notes entry: {e}"))?;
         let name = entry.file_name();
         let name = name.to_str().ok_or("release-notes filename not UTF-8")?;
@@ -5192,8 +6430,8 @@ fn validate_staged_module_release_notes(
         let recognized = ["es_cl_", "en_us_"].iter().any(|prefix| {
             if let Some(rest) = name.strip_prefix(prefix) {
                 if let Some(stem) = rest.strip_suffix(".txt") {
-                    return !stem.is_empty() && stem.bytes().all(|c|
-                        c.is_ascii_digit() || c == b'_');
+                    return !stem.is_empty()
+                        && stem.bytes().all(|c| c.is_ascii_digit() || c == b'_');
                 }
             }
             false
@@ -5206,8 +6444,8 @@ fn validate_staged_module_release_notes(
         }
         // Every historical note is part of the published inventory.
         // Do not accept malformed old files just because the new version differs.
-        let bytes = fs::read(entry.path())
-            .map_err(|e| format!("release-notes read error {name}: {e}"))?;
+        let bytes =
+            fs::read(entry.path()).map_err(|e| format!("release-notes read error {name}: {e}"))?;
         if bytes.len() > 65536 || std::str::from_utf8(&bytes).is_err() {
             return Err(format!("release-notes invalid content: {name}"));
         }
@@ -5280,6 +6518,11 @@ fn update_with_observer(
 
     fs::create_dir_all(&root)
         .map_err(|error| format!("could not create module root {}: {error}", root.display()))?;
+
+    // B32_STALE_TRANSACTION_RECOVERY_GATE: never silently skip an orphaned
+    // installation/backup transaction from an earlier crash. Its contents may
+    // be the ONLY remaining path to physical recovery; do not delete it.
+    b32_reject_stale_module_transactions(&root, name)?;
 
     let transaction = transaction_id();
 
@@ -5375,6 +6618,47 @@ fn update_with_observer(
             )
         })?;
 
+    // B4: real update preflight, before closing the known-good canonical Open.
+    // No additional runtime instance is created and no state is mutated here.
+    crate::module_update_inventory::ModuleUpdateSnapshot::verify_candidate_canonical_open(
+        crate::module_update_inventory::ModuleUpdateSnapshot::probe_canonical_open(name)?,
+        &lifecycle,
+    )?;
+
+    // NEEBLES_B9_UPDATE_GATE: no extra may spawn between B8 preflight
+    // and physical publication/rollback. RAII holds through all return paths.
+    let _extra_update_permit = crate::module_extra_runtime_registry::governed_extra_owners()
+        .reserve_module_update(name)?;
+
+    // B28: physical owners and canonical logical states are checked in ONE
+    // persistent Boss IPC request. Kernel update gate remains held throughout.
+    // This observation does not grant update/stop authorization.
+    let capture_nonce = new_extra_capture_nonce()?;
+    let capture_response = request_persistent_boss_action(
+        "extra-update-capture",
+        vec![name.to_owned(), capture_nonce.clone()],
+    )?;
+    let physical_extra_snapshot =
+        parse_persistent_extra_capture(name, &capture_nonce, &capture_response)?;
+
+    // Until close/restore is transactional, refuse physical updates with extras.
+    if !physical_extra_snapshot.is_empty() {
+        return Err(format!(
+            "module '{}' has {} verified physical extras; close/restore is not enabled",
+            name,
+            physical_extra_snapshot.len()
+        ));
+    }
+
+    // B11: re-check the persistent authority *after* acquiring the kernel
+    // update lock. A racing spawn cannot cross this lock before publication.
+    request_persistent_boss_action("extra-update-preflight", vec![name.to_owned()])?;
+
+    // B8: never let a physical update orphan independently registered extras.
+    // The full verified close/rollback/restore path will replace this guard.
+    crate::module_extra_runtime_registry::governed_extra_owners()
+        .require_no_owned_extras_for_update(name)?;
+
     /*
      * Candidate is now completely staged and validated.
      *
@@ -5387,6 +6671,31 @@ fn update_with_observer(
      * Re-probe here as well: a process may have started
      * after the initial preflight.
      */
+    // B30: re-query the persistent owner authority immediately before any
+    // live runtime deactivation or filesystem change. This is deliberately
+    // inside the B9 kernel update permit acquired above.
+    let fresh_nonce = new_extra_capture_nonce()?;
+    if fresh_nonce == capture_nonce {
+        return Err("B30 fresh capture challenge was unexpectedly reused".into());
+    }
+    let fresh_response = request_persistent_boss_action(
+        "extra-update-capture",
+        vec![name.to_owned(), fresh_nonce.clone()],
+    )?;
+    let fresh_owners = parse_persistent_extra_capture(name, &fresh_nonce, &fresh_response)?;
+    b30_verify_fresh_capture(&physical_extra_snapshot, &fresh_owners)?;
+    // B8 still rejects every nonempty physical inventory. Recapture cannot
+    // grant authority to stop or update an active extra.
+    if !fresh_owners.is_empty() {
+        return Err("B30 physical extras remain active; destructive update forbidden".into());
+    }
+
+    // B33: durable intent exists and is synced before ANY module deactivation.
+    // The B8 zero-extra policy is still enforced above.
+    let b33_update_intent =
+        B33DurableUpdateIntent::create(&root, name, &transaction, &manifest.version)?;
+    let b36_checkpoints = B36PublicationCheckpoints::new(&root, name, &transaction)?;
+
     if module_has_active_resources(name)? {
         if !close_running {
             return Err(format!(
@@ -5405,6 +6714,23 @@ fn update_with_observer(
      * current -> backup
      * staged  -> current
      */
+    // B31_FINAL_PUBLICATION_GATE: the last authority read belongs immediately
+    // before the first filesystem rename, AFTER module deactivation. Even with
+    // the kernel launch gate held, fail closed on a stale or contradictory
+    // persistent Boss inventory. This still grants NO stop/restore authority.
+    let publication_nonce = new_extra_capture_nonce()?;
+    b31_verify_publication_challenge(&capture_nonce, &fresh_nonce, &publication_nonce)?;
+    let publication_response = request_persistent_boss_action(
+        "extra-update-capture",
+        vec![name.to_owned(), publication_nonce.clone()],
+    )?;
+    let publication_owners =
+        parse_persistent_extra_capture(name, &publication_nonce, &publication_response)?;
+    b31_require_empty_publication_inventory(&fresh_owners, &publication_owners)?;
+    crate::module_extra_runtime_registry::governed_extra_owners()
+        .require_no_owned_extras_for_update(name)?;
+
+    b36_checkpoints.record("before_backup_rename")?;
     fs::rename(&current_path, &backup_path).map_err(|error| {
         format!(
             "could not move current module '{}' into transactional backup {}: {error}",
@@ -5413,8 +6739,11 @@ fn update_with_observer(
         )
     })?;
 
+    b36_checkpoints.record("before_candidate_publish")?;
     match staging.commit(&current_path) {
-        Ok(()) => {}
+        Ok(()) => {
+            b36_checkpoints.record("candidate_published")?;
+        }
 
         Err(publication_error) => {
             let failed_update_path = root.join(format!(
@@ -5615,6 +6944,9 @@ fn update_with_observer(
         );
     }
 
+    // Success-only retirement. Any error path retains the journal for inspection.
+    b36_checkpoints.retire_after_success()?;
+    b33_update_intent.mark_success()?;
     Ok(())
 }
 fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
@@ -7635,7 +8967,6 @@ mod point2_tray_governed_runtime_tests {
     }
 }
 
-
 // NEEBLES_1036_MODULE_NOTES_GATE37_TESTS
 #[cfg(test)]
 mod module_release_notes_gate37_tests {
@@ -7716,5 +9047,45 @@ mod module_release_notes_gate37_tests {
     fn module_release_notes_gate37_rejects_unsafe_version() {
         let temp = tempfile::tempdir().unwrap();
         assert!(validate_staged_module_release_notes(temp.path(), "../1.2.4").is_err());
+    }
+}
+
+#[cfg(test)]
+mod b13_persistent_inventory_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn valid_empty_inventory_allows_empty_list() {
+        assert!(
+            parse_persistent_extra_inventory("alpha", &json!({"module":"alpha","extras":[]}))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn wrong_module_and_unknown_fields_fail_closed() {
+        assert!(
+            parse_persistent_extra_inventory("alpha", &json!({"module":"beta","extras":[]}))
+                .is_err()
+        );
+        assert!(parse_persistent_extra_inventory(
+            "alpha",
+            &json!({"module":"alpha","extras":[],"safe":true})
+        )
+        .is_err());
+        assert!(parse_persistent_extra_inventory("alpha", &Value::Null).is_err());
+    }
+
+    #[test]
+    fn physical_owners_are_strictly_typed_and_scoped() {
+        let good = json!({"module":"alpha","extras":[{"id":"worker","pid":123,"start_time_ticks":456,"session_id":"owner"}]});
+        let parsed = parse_persistent_extra_inventory("alpha", &good).unwrap();
+        assert_eq!(parsed[0].id, "worker");
+        assert_eq!(parsed[0].pid, 123);
+        assert!(parse_persistent_extra_inventory("alpha",&json!({"module":"alpha","extras":[{"id":"open","pid":123,"start_time_ticks":456,"session_id":"owner"}]})).is_err());
+        assert!(parse_persistent_extra_inventory("alpha",&json!({"module":"alpha","extras":[{"id":"worker","pid":0,"start_time_ticks":456,"session_id":"owner"}]})).is_err());
+        assert!(parse_persistent_extra_inventory("alpha",&json!({"module":"alpha","extras":[{"id":"worker","pid":123,"start_time_ticks":456,"session_id":"owner"},{"id":"worker","pid":124,"start_time_ticks":457,"session_id":"owner2"}]})).is_err());
     }
 }

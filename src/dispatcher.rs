@@ -10,6 +10,85 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+// B29: a fixed-length lowercase hexadecimal challenge; checked before
+// querying any runtime authority. It grants no privileges on its own.
+fn valid_extra_capture_nonce(nonce: &str) -> bool {
+    nonce.len() == 32
+        && nonce
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+#[cfg(test)]
+mod b29_capture_nonce_tests {
+    use super::*;
+
+    #[test]
+    fn b29_nonce_requires_exact_lowercase_hex() {
+        assert!(valid_extra_capture_nonce(
+            "0123456789abcdef0123456789abcdef"
+        ));
+        assert!(!valid_extra_capture_nonce(
+            "0123456789ABCDEF0123456789ABCDEF"
+        ));
+        assert!(!valid_extra_capture_nonce("short"));
+        assert!(!valid_extra_capture_nonce(
+            "0123456789abcdef0123456789abcdeg"
+        ));
+    }
+}
+
+// B27: observed physical ownership requires a persisted positive logical state.
+// This alone is NOT sufficient to authorize stop, restart, or publication.
+fn reconcile_extra_owner_states(
+    ids: &[String],
+    logical: Option<&BTreeMap<String, bool>>,
+) -> Result<(), String> {
+    let mut seen = std::collections::BTreeSet::new();
+    for id in ids {
+        if id.is_empty()
+            || matches!(id.as_str(), "open" | "governor.open")
+            || !seen.insert(id.as_str())
+        {
+            return Err("invalid or duplicate authenticated extra identity".into());
+        }
+        if logical.and_then(|states| states.get(id)) != Some(&true) {
+            return Err(format!(
+                "physical extra '{}' lacks active canonical logical state",
+                id
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod b27_reconcile_tests {
+    use super::*;
+
+    #[test]
+    fn b27_physical_owner_requires_canonical_true() {
+        let mut states = BTreeMap::new();
+        states.insert("cpu".to_string(), true);
+        assert!(reconcile_extra_owner_states(&["cpu".into()], Some(&states)).is_ok());
+        states.insert("cpu".to_string(), false);
+        assert!(reconcile_extra_owner_states(&["cpu".into()], Some(&states)).is_err());
+        assert!(reconcile_extra_owner_states(&["cpu".into()], None).is_err());
+    }
+
+    #[test]
+    fn b27_rejects_duplicate_and_canonical_open_and_allows_zero() {
+        assert!(reconcile_extra_owner_states(&[], None).is_ok());
+        let mut states = BTreeMap::new();
+        states.insert("cpu".into(), true);
+        assert!(
+            reconcile_extra_owner_states(&["cpu".into(), "cpu".into()], Some(&states)).is_err()
+        );
+        states.insert("governor.open".into(), true);
+        assert!(reconcile_extra_owner_states(&["governor.open".into()], Some(&states)).is_err());
+    }
+}
+
 pub fn launch_ui() -> Result<(), String> {
     match surface_state::boss_ui_state() {
         BossUiState::Open | BossUiState::Opening => {
@@ -1054,6 +1133,23 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
     match request.action.as_deref() {
         Some("version") => ExecutionResponse::ok(Some(json!({ "version": crate::VERSION }))),
 
+        // B41_DISPATCH_READ_ONLY_RECOVERY_DIAGNOSTICS
+        // Diagnostic only: neither this action nor B40 authorizes recovery,
+        // stop, restore, update or removal of durable evidence.
+        Some("recovery-diagnostics") => {
+            if request.args.len() != 1 {
+                return ExecutionResponse::fail(
+                    2,
+                    "recovery_diagnostics_arguments",
+                    "requires exactly one module name",
+                );
+            }
+            match modules::recovery_diagnostics(&request.args[0]) {
+                Ok(report) => ExecutionResponse::ok(Some(report)),
+                Err(error) => ExecutionResponse::fail(1, "recovery_diagnostics", error),
+            }
+        }
+
         Some("update-status") => match crate::boss_update::status_json() {
             Ok(status) => ExecutionResponse::ok(Some(status)),
 
@@ -1081,6 +1177,122 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
         Some("tray-provider-reconcile") => dispatch_tray_provider_reconcile(&request),
 
         Some("module-runtime-deactivate") => dispatch_module_runtime_deactivate(&request),
+
+        // B10: this query MUST run in the persistent Boss process, not CLI.
+        // B12: physical inventory from the persistent Boss address space.
+        // Never conflate an opaque extra with the singular Governor Open.
+        Some("extra-update-inventory") => {
+            if request.args.len() != 1 {
+                return ExecutionResponse::fail(
+                    2,
+                    "extra_update_inventory_arguments",
+                    "requires exactly one module name",
+                );
+            }
+            match crate::module_extra_runtime_registry::governed_extra_owners()
+                .verified_owner_snapshot(&request.args[0])
+            {
+                Ok(owners) => ExecutionResponse::ok(Some(json!({
+                    "module": request.args[0],
+                    "extras": owners.iter().map(|(id, owner)| json!({
+                        "id": id,
+                        "pid": owner.pid,
+                        "start_time_ticks": owner.start_time_ticks,
+                        "session_id": owner.session_id
+                    })).collect::<Vec<_>>()
+                }))),
+                Err(error) => ExecutionResponse::fail(1, "extra_update_inventory", error),
+            }
+        }
+
+        // B29: capture challenge; no stop or update authority granted.
+        Some("extra-update-capture") => {
+            if request.args.len() != 2 {
+                return ExecutionResponse::fail(
+                    2,
+                    "extra_update_capture_arguments",
+                    "requires module and nonce",
+                );
+            }
+            let module = &request.args[0];
+            let request_nonce = &request.args[1];
+            if !valid_extra_capture_nonce(request_nonce) {
+                return ExecutionResponse::fail(
+                    2,
+                    "extra_update_capture_nonce",
+                    "invalid capture nonce",
+                );
+            }
+            let result = (|| -> Result<Value, String> {
+                let owners = crate::module_extra_runtime_registry::governed_extra_owners()
+                    .verified_owner_snapshot(module)?;
+                let config = crate::config::load_or_initialize()?;
+                let logical = config.modules.get(module);
+                let ids: Vec<String> = owners.iter().map(|(id, _)| id.clone()).collect();
+                reconcile_extra_owner_states(&ids, logical)?;
+                let extras: Vec<Value> = owners
+                    .iter()
+                    .map(|(id, owner)| {
+                        json!({
+                            "id": id,
+                            "pid": owner.pid,
+                            "start_time_ticks": owner.start_time_ticks,
+                            "session_id": owner.session_id,
+                        })
+                    })
+                    .collect();
+                Ok(
+                    json!({"module": module, "coherent": true, "extras": extras, "request_nonce": request_nonce}),
+                )
+            })();
+            match result {
+                Ok(value) => ExecutionResponse::ok(Some(value)),
+                Err(error) => ExecutionResponse::fail(1, "extra_update_capture", error),
+            }
+        }
+
+        // B27: production read-only consistency gate. Owners originate only in
+        // the persistent Boss registry, never in a caller-supplied PID list.
+        // This action grants no right to stop an extra or to publish an update.
+        Some("extra-update-reconcile") => {
+            if request.args.len() != 1 {
+                return ExecutionResponse::fail(
+                    2,
+                    "extra_update_reconcile_arguments",
+                    "requires exactly one module name",
+                );
+            }
+            let module = &request.args[0];
+            let result = (|| -> Result<Value, String> {
+                let owners = crate::module_extra_runtime_registry::governed_extra_owners()
+                    .verified_owner_snapshot(module)?;
+                let config = crate::config::load_or_initialize()?;
+                let logical = config.modules.get(module);
+                let ids: Vec<String> = owners.iter().map(|(id, _)| id.clone()).collect();
+                reconcile_extra_owner_states(&ids, logical)?;
+                Ok(json!({"module": module, "coherent": true, "physical_count": ids.len()}))
+            })();
+            match result {
+                Ok(value) => ExecutionResponse::ok(Some(value)),
+                Err(error) => ExecutionResponse::fail(1, "extra_update_reconcile", error),
+            }
+        }
+
+        Some("extra-update-preflight") => {
+            if request.args.len() != 1 {
+                return ExecutionResponse::fail(
+                    2,
+                    "extra_update_preflight_arguments",
+                    "requires exactly one module name",
+                );
+            }
+            match crate::module_extra_runtime_registry::governed_extra_owners()
+                .persistent_update_preflight(&request.args[0])
+            {
+                Ok(()) => ExecutionResponse::ok(Some(json!({"safe": true}))),
+                Err(error) => ExecutionResponse::fail(1, "extra_update_preflight", error),
+            }
+        }
 
         Some("domestic-construction-execute") => dispatch_domestic_construction(&request),
 
@@ -1228,6 +1440,50 @@ fn dispatch_notification(request: ExecutionRequest) -> ExecutionResponse {
     match result {
         Ok(()) => ExecutionResponse::ok(None),
         Err(error) => ExecutionResponse::fail(1, "notification", error),
+    }
+}
+
+#[cfg(test)]
+mod b41_recovery_diagnostics_dispatch_tests {
+    use super::*;
+
+    fn request(arguments: &[&str]) -> ExecutionRequest {
+        ExecutionRequest {
+            target: "boss".to_owned(),
+            action: Some("recovery-diagnostics".to_owned()),
+            args: arguments.iter().map(|value| (*value).to_owned()).collect(),
+            context: crate::request::ExecutionContext::default(),
+        }
+    }
+
+    #[test]
+    fn b41_missing_argument_is_rejected_without_reading_disk() {
+        let response = dispatch_boss(request(&[]));
+        assert!(!response.ok);
+        assert_eq!(response.code, 2);
+        assert_eq!(
+            response.error.unwrap().kind,
+            "recovery_diagnostics_arguments"
+        );
+    }
+
+    #[test]
+    fn b41_extra_argument_is_rejected_without_reading_disk() {
+        let response = dispatch_boss(request(&["fixture.module", "unexpected"]));
+        assert!(!response.ok);
+        assert_eq!(response.code, 2);
+        assert_eq!(
+            response.error.unwrap().kind,
+            "recovery_diagnostics_arguments"
+        );
+    }
+
+    #[test]
+    fn b41_invalid_identity_cannot_escape_recovery_root() {
+        let response = dispatch_boss(request(&["../escape"]));
+        assert!(!response.ok);
+        assert_eq!(response.code, 1);
+        assert_eq!(response.error.unwrap().kind, "recovery_diagnostics");
     }
 }
 

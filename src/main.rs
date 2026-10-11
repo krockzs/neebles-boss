@@ -44,6 +44,8 @@ mod lifecycle_transition_executor;
 mod module_dependency_policy;
 mod module_ipc;
 mod module_preinstall;
+mod module_update_inventory;
+mod module_extra_runtime_registry;
 mod modules;
 mod network_boundary;
 pub mod nightmare;

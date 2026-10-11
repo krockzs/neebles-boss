@@ -280,7 +280,7 @@ fn workspace_operation_identity(operation: &PreparedOperation) -> Result<(String
     }
 
     for key in operation.munition.keys() {
-        if key != "step" {
+        if key != "step" && key != "extra" {
             return Err(format!(
                 "workspace execution munition contains unknown key '{}'",
                 key
@@ -288,8 +288,12 @@ fn workspace_operation_identity(operation: &PreparedOperation) -> Result<(String
         }
     }
 
-    if operation.munition.len() != 1 {
-        return Err("workspace execution requires exactly munition.step".to_string());
+    if operation.munition.len() != 1
+        && !(operation.munition.len() == 2 && operation.munition.contains_key("extra"))
+    {
+        return Err(
+            "workspace execution requires munition.step and optionally munition.extra".to_string(),
+        );
     }
 
     let subject = operation
@@ -331,6 +335,32 @@ fn workspace_operation_identity(operation: &PreparedOperation) -> Result<(String
  * async_process so Lifecycle does not turn one long domestic step
  * into a synchronous blocker for unrelated asynchronous work.
  */
+// NEEBLES_B7_EXTRA_LAUNCH: explicit object identity, not another Open.
+fn declared_workspace_extra(
+    operation: &PreparedOperation,
+    module: &str,
+) -> Result<Option<String>, String> {
+    let Some(extra) = operation.munition.get("extra") else {
+        return Ok(None);
+    };
+    if extra.is_empty()
+        || extra.len() > 128
+        || !extra
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+        || matches!(extra.as_str(), "open" | "governor.open")
+    {
+        return Err("invalid or canonical Open extra identity".to_string());
+    }
+    let lifecycle = crate::modules::installed_module_lifecycle_contract(module)?;
+    if !lifecycle.objects.contains_key(extra) {
+        return Err(format!(
+            "extra '{extra}' is not declared as a Lifecycle object of '{module}'"
+        ));
+    }
+    Ok(Some(extra.clone()))
+}
+
 fn async_domestic_command(command: std::process::Command) -> async_process::Command {
     let mut asynchronous = async_process::Command::new(command.get_program());
 
@@ -357,6 +387,7 @@ async fn execute_workspace_operation(
     let governor_execution_id = operation.execution_id.clone();
 
     let (subject, step) = workspace_operation_identity(&operation)?;
+    let extra_id = declared_workspace_extra(&operation, &subject)?;
 
     let declaration =
         neebles_backend::domestic_construction::load_module_domestic_construction_declaration(
@@ -375,6 +406,13 @@ async fn execute_workspace_operation(
     )?;
 
     let (command, runtime_lease) = prepared.into_parts();
+
+    if extra_id.is_some()
+        && execution
+            != neebles_backend::domestic_construction::DomesticConstructionExecution::Persistent
+    {
+        return Err("declared extra requires persistent DomesticConstruction execution".into());
+    }
 
     match execution {
         neebles_backend::domestic_construction::DomesticConstructionExecution::Foreground => {
@@ -412,7 +450,9 @@ async fn execute_workspace_operation(
 
             let owns_runtime_lease = runtime_lease.is_some();
 
-            let runtime_execution_id = if owns_runtime_lease {
+            // Extras are NOT canonical Open owners: only the original Open path may
+            // claim RuntimeRegistry opening ownership.
+            let runtime_execution_id = if owns_runtime_lease && extra_id.is_none() {
                 Some(governor_execution_id.clone().ok_or_else(|| {
                     "persistent domestic runtime requires Governor-owned execution identity"
                         .to_string()
@@ -421,6 +461,14 @@ async fn execute_workspace_operation(
                 None
             };
 
+            // NEEBLES_B9_UPDATE_GATE: reservation starts before process birth.
+            // It is held until verified extra registration completes or fails.
+            let extra_registry = crate::module_extra_runtime_registry::governed_extra_owners();
+            let _extra_launch_permit = if extra_id.is_some() {
+                Some(extra_registry.reserve_extra_launch(&subject)?)
+            } else {
+                None
+            };
             let mut child = command.spawn().map_err(|error| {
                 format!(
                     "persistent domestic workspace failed to start: subject={} step={} error={}",
@@ -457,9 +505,55 @@ async fn execute_workspace_operation(
             let opening_owner =
                 opening_generation.map(|generation| (subject.clone(), generation, pid));
 
+            // Boss spawned this exact child from authenticated DomesticConstruction.
+            // Never accept a PID sent by a module. Record its kernel incarnation now.
+            let extra_owner = if let Some(ref extra) = extra_id {
+                let ticks =
+                    match crate::module_extra_runtime_registry::kernel_process_start_ticks(pid) {
+                        Ok(Some(ticks)) => ticks,
+                        Ok(None) => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            return Err(format!(
+                                "persistent extra '{extra}' exited before registration"
+                            ));
+                        }
+                        Err(error) => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            return Err(error);
+                        }
+                    };
+                let identity = crate::module_extra_runtime_registry::ExtraOwnerIdentity {
+                    pid,
+                    start_time_ticks: ticks,
+                    session_id: format!("governor:{}:{}:{}", subject, extra, pid),
+                };
+                if let Err(error) = crate::module_extra_runtime_registry::governed_extra_owners()
+                    .register_kernel_verified(&subject, extra, identity.clone())
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "could not register governed extra '{extra}': {error}"
+                    ));
+                }
+                Some((subject.clone(), extra.clone(), identity))
+            } else {
+                None
+            };
+
             std::thread::spawn(move || {
                 let _runtime_lease = runtime_lease;
                 let _ = child.wait();
+                if let Some((module, extra, identity)) = extra_owner {
+                    if let Err(error) =
+                        crate::module_extra_runtime_registry::governed_extra_owners()
+                            .unregister_exact(&module, &extra, &identity)
+                    {
+                        eprintln!("N.E.E.B.L.E.S.: governed extra exit cleanup failed: {error}");
+                    }
+                }
 
                 if let Some((module, generation, owner_pid)) = opening_owner {
                     match crate::module_ipc::runtime_registry()
@@ -795,7 +889,7 @@ mod tests {
         let error = futures_lite::future::block_on(execute_workspace_operation(missing))
             .expect_err("missing step must fail before execution");
 
-        assert!(error.contains("exactly munition.step"));
+        assert!(error.contains("requires munition.step and optionally munition.extra"));
 
         let extra = PreparedOperation {
             module_id: Some("fixture".to_string()),
