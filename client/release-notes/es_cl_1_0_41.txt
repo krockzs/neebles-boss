@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.41
+
+Se aisló el handoff posterior a una actualización en un servicio independiente de systemd --user para evitar que termine junto con la interfaz antigua. Se agregaron diagnósticos de sus transiciones. La prueba real debe confirmar reinicio exclusivo de Plasma, apertura automática y modal.

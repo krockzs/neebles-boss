@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Boss 1.0.35 -> 1.0.39 desktop handoff; runs as desktop user.
+"""Independent Boss upgrade -> 1.0.41 desktop handoff; runs as desktop user.
 
 This is intentionally not called from Boss 1.0.35. Fail closed on identity
 mismatch or unavailable Plasma systemd user unit. No broad process matching.
@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-TARGET = "1.0.39"
+TARGET = "1.0.41"
 BUS_NAME = "org.neebles.Boss"
 UI_PATH = "/opt/neebles/client/ui/neebles-ui"
 BOSS_PATH = "/opt/neebles/client/bin/neebles"
@@ -193,7 +193,7 @@ def main():
     restore_graphical_environment()
     # A hard safety gate prevents a regression to the old run-p*.service.
     helper_cgroup = Path("/proc/self/cgroup").read_text(encoding="utf-8")
-    if "neebles-boss-upgrade-handoff-1-0-39.service" not in helper_cgroup:
+    if "neebles-boss-upgrade-handoff-1-0-41.service" not in helper_cgroup:
         raise RuntimeError("Handoff is not isolated in its dedicated user service")
     event("Verified isolated systemd user-service cgroup")
     old = owner_pid(bus_path)
