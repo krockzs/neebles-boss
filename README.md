@@ -2,9 +2,17 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Current source line:** **1.0.35 (X11 fixes and Critical Update test candidate; release pending)**
-**Published release status:** **1.0.34 published; 1.0.35 candidate not yet certified or published**
-**Current integration status (2026-10-10):** X11 Tray patch compiled and tested on Ryzen; Launcher rendering patched; OS/Build XAUTHORITY fix is separately synchronized. Boss 1.0.35 build, release candidate, Critical Update and VM/install certifications remain pending.
+**Versión del código fuente en desarrollo:** **1.0.42**.
+**Última versión estable de referencia:** **1.0.41** (publicada y recuperable).
+**Estado de 1.0.42 (2026-10-12):** versionado y cambios integrados en el repositorio local; todavía sin compilación certificada, publicación ni aceptación funcional.
+
+### Cambios incorporados en el código de 1.0.42
+
+- **Critical Update sin reinicio completo de Plasma:** el handoff intenta renovar de forma selectiva Launcher, Spacer y los servicios Tray, manteniendo `plasmashell` en ejecución. Pendiente de confirmar en una actualización real que los plasmoides, sus preferencias y el escritorio sobreviven correctamente.
+- **Startup de Boss UI:** preferencias separadas de inicio automático y de inicio minimizado, disponibles en **Config**, con traducciones `es_CL` y `en_US`; unidad `neebles-boss-ui-autostart.service` del usuario y camino `neebles start-session`. La apertura manual con `neebles start` sigue siendo visible. Pendiente de compilación y prueba tras reinicio de NEEBLES OS.
+- **Privilegios:** revisión de las rutas de autorización sin modificaciones a Polkit ni al Auth Agent. Las operaciones administrativas siguen requiriendo privilegios donde corresponde.
+
+**Límite de aceptación:** la presencia de código, release notes y comprobaciones estáticas no demuestra compilación ni correcto comportamiento en Plasma.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -1014,13 +1022,13 @@ Boss startup does not depend on running recovery.
 
 ---
 
-# Current local source closure evidence
+# Evidencia histórica de cierre local (versiones anteriores)
 
 Point 1 corrective work and the existing Point 2 source architecture were checked on the exact working tree before this commit.
 
 These are **local source verification gates**, not Esbirro certification, not a published Boss release and not Fresh Live / installed-system acceptance.
 
-Current local closure evidence for this source line:
+Evidencia de cierre local registrada para una línea anterior (no representa las pruebas actuales de 1.0.42):
 
 ```text
 git diff --check                                  GREEN
@@ -1106,7 +1114,7 @@ The Config/Features source closure additionally verifies:
 
 Release certification, Fresh Live acceptance and installed-system acceptance remain separate later gates.
 
-## Boss 1.0.29 CAST29 local closure
+## Boss 1.0.29 CAST29 local closure (histórico)
 
 Fresh Live acceptance of published Boss 1.0.28 proved that package transport, the 91-package material world, MaterialBinding schema 2 and native RuntimeLease hardlink materialization were no longer the blocking frontier.
 
@@ -1142,7 +1150,7 @@ cargo check --locked                              GREEN
 ```
 
 These remain source/local gates. Fresh Live and installed-system acceptance remain separate.
-## Boss 1.0.30 — CAST30 source closure
+## Boss 1.0.30 — CAST30 source closure (histórico)
 
 The CAST30 source gates close:
 
@@ -1156,7 +1164,7 @@ The recorded Gate 75 passed 665 Boss main tests, 120 library tests,
 15 ownership tests, 3 Presenter tests and 13 domesticacion tests
 (1 intentionally ignored). This does not imply installed-system acceptance.
 
-## Boss 1.0.31 — CAST30 post-Fresh-Live repairs (candidate)
+## Boss 1.0.31 — CAST30 post-Fresh-Live repairs (registro histórico)
 
 - Synchronize persistent runtime shutdown with RuntimeRegistry deregistration before disabling a module; preserve fail-closed behavior if cleanup fails.
 - Retain diagnostic errors from the Boss UI operation transport rather than replacing them with a generic failure.
@@ -1167,7 +1175,7 @@ The recorded Gate 75 passed 665 Boss main tests, 120 library tests,
 - Local evidence: 805 Rust tests passed (one intentionally ignored), 12 Test Module Python tests passed, Boss UI/Tray Host stage builds passed with controlled Esbirro Qt 6.8.2. These results precede the v1.0.31 release build and are not Fresh Live acceptance.
 - The published v1.0.30 release remains unchanged; full v1.0.31 CI and 11-asset verification precede trigger publication, then Fresh Live and installed-system acceptance.
 
-## Boss 1.0.32 — CAST30 Active/Inactive and Open cross-surface synchronization (candidate)
+## Boss 1.0.32 — CAST30 Active/Inactive and Open cross-surface synchronization (registro histórico)
 
 - Send committed module state changes from short-lived CLI callers to the persistent Boss event owner; the latter publishes `module.lifecycle` for UI/Launcher/Tray subscribers. The module state in `ui.disabled_modules` remains canonical and distinct from Settings presentation toggles.
 - Handle exited Tray process-group leaders conservatively: accept an orphaned group as quiescent only when kernel `/proc` inspection certifies that every visible member is terminated; unknown identities or live members fail closed.
@@ -1178,24 +1186,148 @@ The recorded Gate 75 passed 665 Boss main tests, 120 library tests,
 - Gate137: 815 Rust tests passed, 0 failed, 1 intentionally ignored; new tests cover single-module concurrent Open requests from three synthetic callers, independence between different modules, closed/opening/open presentation, and hidden Launcher/Tray without changing canonical state. These are **source tests, not actual GUI clicks or Fresh Live**.
 - v1.0.32 release, genuine Settings/visibility matrix and actual GUI end-to-end Active/Inactive + Open tests remain pending. No release may be accepted before the live triplet is verified.
 
-## Release policy
+## Política de release actual — 1.0.42
 
-Boss v1.0.31 was published and is immutable. Boss v1.0.32 is the next
-patch release; all previously published workflows, notes, triggers and
-release assets remain unchanged. The v1.0.32 release trigger is authorized
-only after source, packaging and controlled CI readiness gates are GREEN.
+- **Versión estable precedente:** 1.0.41. Preservar su release y punto de restauración.
+- **Versión candidata:** 1.0.42. No afirmar que está publicada o funcional antes de los resultados reales.
+- El código y el README se mantienen en `neebles-boss`; `Downloads` se utiliza únicamente para ejecuciones e informes.
+- **Esbirro / CUSTOM:** seguir `neebles-custom/portable/esbirro/README.md` y el workflow `release-1.0.42.yml`, que utiliza el laboratorio controlado Qt 6.8.2 y los materiales Rust/domésticos certificados; no sustituirlo por compilación Qt del host.
+- Antes de activar el trigger: versionado consistente (`Cargo`, CMake, C++, QML, metadata), ambas traducciones, release notes `es_CL`/`en_US`, pruebas estáticas y estado Git controlado.
+- Ejecutar el workflow de **compilación y certificación del candidato**. Comprobar su resultado y la integridad de los **11 artefactos** previstos. Una ejecución verde no implica publicación automática.
+- Publicar en un paso separado exactamente los artefactos certificados; no recompilar el candidato para publicarlo.
+- Pruebas posteriores sobre NEEBLES OS instalado: (1) Critical Update desde 1.0.41 y verificación del escritorio, Launcher, Spacer, Tray y modal; (2) habilitar inicio automático y minimizado, reiniciar sesión/equipo y comprobar apertura minimizada, persistencia y apertura manual visible.
+- Si las pruebas fallan, la 1.0.41 sigue siendo la base de recuperación. Registrar el defecto concreto; no atribuir resultados a pruebas no ejecutadas.
 
-Release prerequisites:
+### Alcance explícito de 1.0.42
 
-1. All current product-facing Cargo, CMake, C++, QML and Plasma metadata versions agree on 1.0.32.
-2. The two CAST30 Presenter source/service files are tracked and packaged.
-3. `scripts/check-release-version.py` and the controlled release pipeline pass.
-4. Installer, reinstall, rollback, and non-graphical Critical Update of the user-session Presenter are certified.
-5. The pinned CUSTOM classic/Esbirro Qt 6.8.2 world and Rust 1.98.1 produce and certify all 11 release assets.
-6. Only then create/push release/trigger-v1.0.32 and verify GitHub Release assets.
-7. Perform Fresh Live and installed-system acceptance as separate gates.
+1. Handoff de Critical Update sin `systemctl --user restart plasma-plasmashell.service`.
+2. Configuración de autostart y arranque minimizado de **Boss UI**. El inicio autónomo de otros módulos queda para cada módulo, no para esta release.
 
-Do not claim a published version on the basis of Cargo.toml or a prepared workflow.
+
+---
+
+# Evolución de versiones 1.0.36 a 1.0.42
+
+Las siguientes notas proceden de los archivos de release versionados en este repositorio.
+Se conservan como historial técnico; una nota de candidato no demuestra una prueba en máquina real.
+La 1.0.41 es la referencia estable previa y la 1.0.42 es código fuente pendiente de compilación y prueba.
+
+## Versión 1.0.36 — notas de la versión
+
+# N.E.E.B.L.E.S. Boss v1.0.36 — Critical Update handoff and release-notes candidate
+
+## Scope
+
+- Boss in-place upgrade: post-install handoff to close the authenticated old Qt UI, restart only the Plasma shell service and relaunch the updated UI.
+- Persistent user-owned Critical Update receipt and localized one-time Boss release-notes modal after a verified version transition.
+- Module update path: validate staged release notes and show localized notes only after verifying the installed version transition; no Boss or Plasma restart for ordinary module updates.
+- Keep the existing CUSTOM classic / CUSTOM V2 authority separation and the controlled Esbirro Qt 6.8.2 DESTDIR certification path.
+- Synchronize version 1.0.36 across Rust, Qt clients, Installer, Auth Agent, Tray Host, Launcher plugin and Plasma metadata.
+
+## Verification status before release
+
+- Rust tests: 896 passed, 2 ignored; release backend and static MUSL resolver compiled.
+- Controlled Esbirro Qt 6.8.2: Boss UI, Installer, Auth Agent, Launcher plugin and Tray Host built and staged, with pre-domestication certification.
+- Domestic Boss runtime transport: certified; local 1.0.36 release candidate materialized and passed `verify-release.py`.
+- In-place installed Boss 1.0.35 → 1.0.36 Critical Update, one-time modal, restart ordering and real module update flow remain unverified.
+- Qt QML import warnings and UTF-8 locale warnings occurred during controlled chroot build; runtime acceptance must assess them.
+
+## Critical Update acceptance
+
+- Keep installed Boss 1.0.35 unchanged until candidate, rollback and publication are approved.
+- Verify installed target version, receipt provenance, authenticated UI shutdown, Plasma shell-only restart and new UI launch.
+- Confirm es_CL/en_US Boss notes appear once after a true upgrade and not on a clean install or no-op.
+- Test module 1.2.3 clean install (no notes), then 1.2.4 true upgrade (localized notes) with tray operation and no Boss/Plasma restart.
+
+## Publication policy
+
+The release workflow produces a candidate artifact; it does not automatically publish a GitHub Release. Do not create or modify `release/trigger-v1.0.36` before candidate preflight approval. Publishing is a separate, explicitly authorized step after candidate certification.
+
+## Versión 1.0.37 — notas de la versión
+
+# N.E.E.B.L.E.S. Boss v1.0.37 — Post-update handoff and module release-notes correction
+
+## Scope
+- Install and validate the authenticated post-update handoff helper from packaged client-data.
+- Maintain the existing verified upgrade receipt and handoff barrier, then restart only `plasma-plasmashell.service` and launch the new Boss UI.
+- Display the one-time Boss release-notes modal after a genuine installed-version transition.
+- Display a separate module update notes dialog only after a verified module upgrade with authenticated non-empty notes. Initial installs do not show notes.
+- Preserve pinned CUSTOM Esbirro and runtime material.
+
+## Acceptance pending
+- Real Boss 1.0.36 → 1.0.37 Critical Update: installed version, receipt, handoff log, scoped Plasma restart and one-time notes modal.
+- Real module 1.2.3 → 1.2.4 update: notes must be included in the module payload; verify the popup, with no Boss or Plasma restart.
+- Do not claim runtime acceptance from build success alone.
+
+## Publication
+GitHub Actions produces only the candidate artifact. Publish a release only after candidate verification and approval.
+
+## Versión 1.0.38 — notas de la versión
+
+# N.E.E.B.L.E.S. Boss v1.0.38 — Receipt permissions and desktop handoff
+
+## Changes
+- The privileged installer validates ownership and safe filesystem nodes before acting on the desktop user's configuration tree.
+- The dedicated `~/.config/neebles` directory is automatically secured to private mode 0700, including from a legitimate user-owned mode 0775. No manual chmod or alteration of the parent `~/.config` is required.
+- Failures in receipt generation include a specific diagnostic and explicitly report that handoff was skipped.
+- A genuine Boss upgrade creates the one-time receipt, launches the installed handoff helper, restarts only `plasma-plasmashell.service`, reopens Boss, and offers localized release notes. Those runtime effects require real-device acceptance.
+- Preserves module release-notes modal functionality from 1.0.37; an actual verified module update is required to accept it.
+
+## Acceptance (not implied by candidate build)
+- Real 1.0.37 → 1.0.38 upgrade on Ryzen and VivoProBook: verified receipt, handoff log, Plasma service restart, new Boss UI and localized one-time modal.
+- Real verified module update with authenticated release notes: separate modal without restarting Boss or Plasma.
+
+GitHub Actions generates an audited candidate only. Publishing is a separate explicitly authorized step.
+
+## Versión 1.0.39 — notas de la versión
+
+# N.E.E.B.L.E.S. Boss v1.0.39 — Isolated desktop upgrade handoff
+
+- Launch post-upgrade handoff through a separate transient `systemd --user` service, outside the retiring Boss UI cgroup.
+- Fail closed if the helper is not executing in its expected dedicated service.
+- Preserve authenticated upgrade receipt, verified old-UI D-Bus identity and pidfd termination, Plasma-only restart and automatic Boss relaunch.
+- Add durable transition logging for diagnosing real-device behavior.
+- Preserve the existing Boss and module release-notes dialog functionality.
+
+The CI candidate alone cannot certify the on-device behavior. Validate a real 1.0.38 → 1.0.39 upgrade before marking desktop handoff accepted.
+
+## Versión 1.0.40 — sin notas históricas disponibles
+
+No existe el archivo de notas de esta versión en el repositorio local. Este README no reconstruye ni atribuye cambios sin una fuente verificable.
+
+## Versión 1.0.41 — notas de la versión
+
+# N.E.E.B.L.E.S. Boss v1.0.41 — Recovery baseline
+
+- Rebuild from the exact functional source baseline of v1.0.39 (commit 4a35114).
+- Restore the isolated desktop upgrade handoff and existing CAST30 packaging behavior.
+- Exclude v1.0.40 B8-B42 changes.
+- Update product, installer, UI, launcher, tray, handoff and release version identities to 1.0.41.
+- Candidate build and installed-system acceptance are pending independent verification.
+
+## Versión 1.0.42 — notas de la versión
+
+# N.E.E.B.L.E.S. Boss v1.0.42
+
+## Español (es_CL)
+
+### 1. Critical Update sin reiniciar Plasma
+Critical Update sustituye el reinicio completo de `plasma-plasmashell.service` por la renovación selectiva de Launcher, Spacer y Tray de NEEBLES. El objetivo es mantener el escritorio KDE Plasma activo y preservar las preferencias y la disposición de sus componentes.
+
+### 2. Inicio automático y minimizado de Boss
+Se incorporan dos opciones independientes en **Config**: iniciar Boss con la sesión de NEEBLES OS e iniciar su ventana minimizada. Las preferencias persisten en la configuración de Boss; abrirlo manualmente continúa mostrando la ventana normalmente. Los módulos administran su propio inicio, sin depender del arranque de Boss UI.
+
+## English (en_US)
+
+### 1. Critical Update without a Plasma restart
+Critical Update replaces a full restart of `plasma-plasmashell.service` with a selective refresh of NEEBLES Launcher, Spacer, and Tray. The goal is to keep the KDE Plasma desktop running while retaining component preferences and layout.
+
+### 2. Automatic and minimized Boss startup
+Two independent **Config** options control whether Boss starts with the NEEBLES OS desktop session and whether its window starts minimized. Settings persist across sessions; manual launches still open the window normally. Modules manage their own startup independently of Boss UI.
+
+## Estado de validación / Validation status
+Los cambios están integrados en el código fuente; compilación, prueba funcional y publicación de 1.0.42 siguen pendientes.
+Changes are integrated in source; the 1.0.42 build, functional verification, and publication are still pending.
 
 ---
 

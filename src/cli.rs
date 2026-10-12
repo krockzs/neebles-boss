@@ -10,7 +10,7 @@ use serde_json::Value;
 
 pub fn run(args: Vec<String>) -> i32 {
     if args.is_empty() {
-        return result(start_boss());
+        return result(start_boss(false));
     }
 
     match args[0].as_str() {
