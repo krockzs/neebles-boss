@@ -18,7 +18,7 @@ PlasmoidItem {
     property bool refreshBusy: false
     property bool refreshAgain: false
     property string commandError: ""
-    property string bossVersion: "1.0.43"
+    property string bossVersion: "1.0.44"
 
     component NeeblesSwitch: QQC2.Switch {
         id: control

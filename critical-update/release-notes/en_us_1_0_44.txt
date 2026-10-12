@@ -1,0 +1,5 @@
+NEEBLES Boss 1.0.44
+
+Minimized startup: candidate fix to create a real mapped Boss window and allow restoration using Open.
+Preserves previous Plasma and Startup settings repairs.
+Certified build and installed-system verification pending.

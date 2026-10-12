@@ -1,0 +1,5 @@
+NEEBLES Boss 1.0.44
+
+Inicio minimizado: corrección candidata para mapear la ventana real de Boss y permitir su recuperación desde Open.
+Conserva las reparaciones previas de Plasma y las opciones de Startup.
+Pendiente de compilación certificada y prueba en sistema instalado.

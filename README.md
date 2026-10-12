@@ -2,7 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión del código fuente en desarrollo:** **1.0.43**.
+**Versión del código fuente en desarrollo:** **1.0.44**.
 **Última versión estable de referencia:** **1.0.41** (publicada y recuperable).
 **Estado de 1.0.43 (2026-10-12):** correcciones de fuente integradas localmente; pendientes de compilación certificada, publicación y aceptación funcional.
 
@@ -1448,3 +1448,11 @@ The intended model is:
 - UI: una invocación manual `neebles start` intenta recuperar y mostrar la ventana de una instancia previamente oculta mediante D-Bus.
 
 Importante: esta versión debe compilarse con Esbirro Qt 6.8.2 y probarse en NEEBLES OS. No afirmar correcciones verificadas en runtime hasta probarlas.
+
+## Boss 1.0.44 — Inicio minimizado (candidato)
+
+- Inicio minimizado: solicitar showMinimized() después de registrar /BossWindow en D-Bus, para crear una ventana minimizada real y recuperable.
+- Mantiene correcciones 1.0.43 de Critical Update y de los interruptores Startup.
+- Servicio de sesión conserva After=graphical-session.target: no se ha demostrado que sea necesaria una espera adicional específica de KWin o Plasma.
+
+Validación pendiente: compilación certificada Esbirro Qt 6.8.2, Rust 1.98.1, pruebas instaladas en X11 y eventualmente Wayland. No afirmar resolución hasta aceptación real.

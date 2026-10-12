@@ -199,7 +199,7 @@ int main(int argc, char *argv[])
     );
 
     app.setApplicationVersion(
-        QStringLiteral("1.0.43")
+        QStringLiteral("1.0.44")
     );
 
     app.setOrganizationName(
@@ -283,6 +283,13 @@ int main(int argc, char *argv[])
     BossWindowControl windowControl(window);
     if (!bus.registerObject(QStringLiteral("/BossWindow"), &windowControl,
                             QDBusConnection::ExportAllSlots)) return 1;
+
+    // A hidden QML window is not an actual minimized X11/Wayland window.
+    // Map it as minimized *after* installing the Show D-Bus endpoint, so
+    // desktop activation can restore the same process/window normally.
+    if (qEnvironmentVariable("NEEBLES_BOSS_START_MINIMIZED") == QStringLiteral("1")) {
+        window->showMinimized();
+    }
 
     const int result = app.exec();
 
