@@ -3,6 +3,10 @@
 #include <QCoreApplication>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
+#include <QDBusInterface>
+#include <QDBusReply>
+#include <QQuickWindow>
+#include <QPointer>
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -16,6 +20,22 @@
 #include <QQmlContext>
 
 static constexpr auto BOSS_DBUS_SERVICE = "org.neebles.Boss";
+
+class BossWindowControl final : public QObject {
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.neebles.Boss.Window")
+public:
+    explicit BossWindowControl(QWindow *window) : m_window(window) {}
+public slots:
+    void Show() {
+        if (!m_window) return;
+        m_window->showNormal();
+        m_window->raise();
+        m_window->requestActivate();
+    }
+private:
+    QPointer<QWindow> m_window;
+};
 
 static QString bossSocketPath()
 {
@@ -179,7 +199,7 @@ int main(int argc, char *argv[])
     );
 
     app.setApplicationVersion(
-        QStringLiteral("1.0.42")
+        QStringLiteral("1.0.43")
     );
 
     app.setOrganizationName(
@@ -199,7 +219,12 @@ int main(int argc, char *argv[])
     if (!bus.registerService(
             QString::fromLatin1(BOSS_DBUS_SERVICE)
         )) {
-        return 0;
+        // A second manual launch must reveal an already-running minimized UI.
+        QDBusInterface remote(QString::fromLatin1(BOSS_DBUS_SERVICE),
+                              QStringLiteral("/BossWindow"),
+                              QStringLiteral("org.neebles.Boss.Window"), bus);
+        const QDBusMessage result = remote.call(QStringLiteral("Show"));
+        return result.type() == QDBusMessage::ErrorMessage ? 1 : 0;
     }
 
     QLocalSocket bossUiLease;
@@ -253,6 +278,12 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    auto *window = qobject_cast<QWindow *>(engine.rootObjects().first());
+    if (!window) return 1;
+    BossWindowControl windowControl(window);
+    if (!bus.registerObject(QStringLiteral("/BossWindow"), &windowControl,
+                            QDBusConnection::ExportAllSlots)) return 1;
+
     const int result = app.exec();
 
     bus.unregisterService(
@@ -263,3 +294,5 @@ int main(int argc, char *argv[])
 
     return result;
 }
+
+#include "main.moc"

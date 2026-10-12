@@ -1,0 +1,7 @@
+NEEBLES Boss 1.0.43
+
+Corrección Critical Update: preserva Launcher y Spacer vivos. No elimina ni recrea plasmoides; el nuevo QML entra en uso en la siguiente sesión de Plasma.
+Startup: al desactivar inicio automático, minimizado se apaga y se deshabilita automáticamente.
+Interfaz: abrir Boss manualmente recupera la ventana si ya estaba iniciada y oculta.
+
+Cambios pendientes de validación en sistema instalado.

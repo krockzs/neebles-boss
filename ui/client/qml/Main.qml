@@ -1217,8 +1217,11 @@ ApplicationWindow {
                             NeeblesSwitch {
                                 id: startupMinimizedSwitch
                                 text: root.t("config.startup_minimized")
-                                checked: typeof boss !== "undefined" ? boss.startupMinimized : false
-                                onToggled: root.saveConfigValue("startup_minimized", checked)
+                                enabled: typeof boss !== "undefined" && boss.startupEnabled
+                                checked: typeof boss !== "undefined" && boss.startupEnabled && boss.startupMinimized
+                                onToggled: {
+                                    if (enabled) root.saveConfigValue("startup_minimized", checked)
+                                }
                             }
 
                             Rectangle {

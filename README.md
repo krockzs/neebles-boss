@@ -2,9 +2,9 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión del código fuente en desarrollo:** **1.0.42**.
+**Versión del código fuente en desarrollo:** **1.0.43**.
 **Última versión estable de referencia:** **1.0.41** (publicada y recuperable).
-**Estado de 1.0.42 (2026-10-12):** versionado y cambios integrados en el repositorio local; todavía sin compilación certificada, publicación ni aceptación funcional.
+**Estado de 1.0.43 (2026-10-12):** correcciones de fuente integradas localmente; pendientes de compilación certificada, publicación y aceptación funcional.
 
 ### Cambios incorporados en el código de 1.0.42
 
@@ -1439,3 +1439,12 @@ If adding a normal new module requires a module-specific branch in Boss, the abs
 The intended model is:
 
 > **Declare the module, certify its material/worlds in CUSTOM/Esbirro, expose required OS authority, let Boss govern the generic contract, and keep module implementation outside the core.**
+
+## NEEBLES Boss 1.0.43 — Correcciones pendientes de prueba
+
+
+- Critical Update: evita la destrucción/recreación de plasmoides Launcher/Spacer activos mediante evaluateScript. Las instancias y geometría de Plasma quedan preservadas. El nuevo QML se recarga al iniciar una nueva sesión de Plasma, sin reiniciar Plasma durante el update.
+- Startup: al desactivar inicio automático fuerza `startup.minimized=false`; imposibilita activar minimizado sin autostart y bloquea el switch desactivado en UI.
+- UI: una invocación manual `neebles start` intenta recuperar y mostrar la ventana de una instancia previamente oculta mediante D-Bus.
+
+Importante: esta versión debe compilarse con Esbirro Qt 6.8.2 y probarse en NEEBLES OS. No afirmar correcciones verificadas en runtime hasta probarlas.

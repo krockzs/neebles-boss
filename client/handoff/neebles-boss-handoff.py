@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Boss upgrade -> 1.0.41 desktop handoff; runs as desktop user.
+"""Independent Boss upgrade -> 1.0.43 desktop handoff; runs as desktop user.
 
 This is intentionally not called from Boss 1.0.35. Fail closed on identity
 mismatch or unavailable Plasma systemd user unit. No broad process matching.
@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-TARGET = "1.0.42"
+TARGET = "1.0.43"
 BUS_NAME = "org.neebles.Boss"
 UI_PATH = "/opt/neebles/client/ui/neebles-ui"
 BOSS_PATH = "/opt/neebles/client/bin/neebles"
@@ -193,7 +193,7 @@ def main():
     restore_graphical_environment()
     # A hard safety gate prevents a regression to the old run-p*.service.
     helper_cgroup = Path("/proc/self/cgroup").read_text(encoding="utf-8")
-    if "neebles-boss-upgrade-handoff-1-0-42.service" not in helper_cgroup:
+    if "neebles-boss-upgrade-handoff-1-0-43.service" not in helper_cgroup:
         raise RuntimeError("Handoff is not isolated in its dedicated user service")
     event("Verified isolated systemd user-service cgroup")
     old = owner_pid(bus_path)
@@ -258,77 +258,12 @@ def main():
             raise RuntimeError("Tray service did not stay active: " + unit)
         event("Started and verified " + unit)
 
-    # Keep the existing panel and geometry. Never search for Kickoff or
-    # relocate existing NEEBLES widgets during an upgrade.
-    # Preserve per-widget popup preferences before disposing instances.
-    # Failure to validate existing widgets blocks a destructive rewrite.
-    script = r"""
-var ps = panels();
-var expectedTypes = ["org.neebles.launcher", "org.neebles.spacer"];
-var snapshot = [];
-for (var p = 0; p < ps.length; ++p) {
-    var items = ps[p].widgets();
-    for (var i = 0; i < items.length; ++i) {
-        var widget = items[i];
-        if (expectedTypes.indexOf(widget.type) < 0) continue;
-        var record = {panel: ps[p], widget: widget, type: widget.type,
-                      x: widget.geometry.x, y: widget.geometry.y,
-                      width: widget.geometry.width, height: widget.geometry.height,
-                      settings: {}};
-        if (widget.type == "org.neebles.launcher") {
-            widget.currentConfigGroup = ["General"];
-            var keys = ["PreloadWeight", "popupHeight", "popupWidth"];
-            for (var k = 0; k < keys.length; ++k)
-                record.settings[keys[k]] = widget.readConfig(keys[k], "");
-        }
-        snapshot.push(record);
-    }
-}
-if (snapshot.length != 2 ||
-    snapshot.filter(function(x) { return x.type == expectedTypes[0]; }).length != 1 ||
-    snapshot.filter(function(x) { return x.type == expectedTypes[1]; }).length != 1) {
-    throw new Error("Unexpected launcher/spacer instance count; no widgets removed");
-}
-for (var j = snapshot.length - 1; j >= 0; --j)
-    snapshot[j].widget.remove();
-for (var j = 0; j < snapshot.length; ++j) {
-    var t = snapshot[j];
-    var added = t.panel.addWidget(t.type, t.x, t.y, t.width, t.height);
-    if (!added) throw new Error("Failed to recreate " + t.type);
-    if (t.type == "org.neebles.launcher") {
-        added.currentConfigGroup = ["General"];
-        for (var key in t.settings) {
-            if (t.settings[key] !== "") added.writeConfig(key, t.settings[key]);
-        }
-    }
-}
-var found = [];
-for (var p = 0; p < ps.length; ++p) {
-    var items = ps[p].widgets();
-    for (var i = 0; i < items.length; ++i)
-        if (expectedTypes.indexOf(items[i].type) >= 0) found.push(items[i].type);
-}
-if (found.length != 2 || found.indexOf(expectedTypes[0]) < 0 ||
-    found.indexOf(expectedTypes[1]) < 0)
-    throw new Error("NEEBLES widgets were not restored");
-print("NEEBLES_SURFACES_REBUILT=2");
-"""
-    # Resolve qdbus from the installed, certified runtime rather than guessing
-    # a system path: runtime may use the domesticated qdbus6 build.
-    resolver = "/opt/neebles/client/runtime/neebles-runtime-resolve"
-    manifest = "/opt/neebles/client/runtime/boss/domestic-runtime.json"
-    resolution = run([resolver, "--manifest", manifest,
-                      "--world", "boss.qdbus6", "--category", "executable"])
-    if resolution.returncode:
-        raise RuntimeError("Could not resolve certified qdbus6 runtime")
-    qdbus = resolution.stdout.strip()
-    if not qdbus.startswith("/") or not Path(qdbus).is_file():
-        raise RuntimeError("Resolved qdbus6 executable unavailable")
-    result = run([qdbus, "org.kde.plasmashell", "/PlasmaShell",
-                  "org.kde.PlasmaShell.evaluateScript", script], timeout=25)
-    if result.returncode:
-        raise RuntimeError("Plasma widget refresh failed: " + result.stderr.strip())
-    event("Rebuilt NEEBLES Launcher and Spacer without restarting Plasma")
+    # 1.0.43: never delete/recreate live Plasma applets inside evaluateScript.
+    # Qt/Plasma asynchronously destroy widgets; replacing them during update
+    # produced an applet-destructor heap corruption crash on 1.0.42.
+    # Existing Launcher/Spacer keep their exact placement and configuration.
+    # Updated QML is loaded by Plasma at the next graphical session startup.
+    event("Preserved live Launcher/Spacer; updated QML applies at next Plasma session")
     event("Selective refresh complete; starting new Boss entrypoint")
     launch = subprocess.Popen([BOSS_PATH, "start"], stdin=subprocess.DEVNULL,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

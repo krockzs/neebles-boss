@@ -515,7 +515,7 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
         launcher_enabled: boss_bool(&local, "launcher.enabled")?,
 
         startup_enabled: optional_boss_bool(&local, "startup.enabled", false)?,
-        startup_minimized: optional_boss_bool(&local, "startup.minimized", false)?,
+        startup_minimized: optional_boss_bool(&local, "startup.enabled", false)? && optional_boss_bool(&local, "startup.minimized", false)?,
 
         normal_notifications: boss_bool(&local, "ui.normal_notifications")?,
 
@@ -583,8 +583,13 @@ pub fn set_bool(key: &str, value: bool) -> Result<BossConfig, String> {
         }
     };
 
+    if key == "startup_minimized" && value && !load_or_initialize()?.startup_enabled {
+        return Err("cannot enable minimized UI without session autostart".to_string());
+    }
     write_setting(path, value.to_string())?;
-
+    if key == "startup_enabled" && !value {
+        write_setting("startup.minimized", "false".to_string())?;
+    }
     load_or_initialize()
 }
 

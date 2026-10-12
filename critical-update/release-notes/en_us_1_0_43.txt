@@ -1,0 +1,7 @@
+NEEBLES Boss 1.0.43
+
+Critical Update fix: preserves running Launcher and Spacer applets. Does not remove/recreate widgets; new QML is loaded on the next Plasma session.
+Startup: disabling autostart automatically resets and disables minimized startup.
+UI: manually launching Boss raises an already running hidden window.
+
+Changes require validation on an installed system.

@@ -753,7 +753,7 @@ void BossController::loadConfig()
         ).toBool();
 
     m_startupEnabled = map.value(QStringLiteral("startup_enabled")).toBool();
-    m_startupMinimized = map.value(QStringLiteral("startup_minimized")).toBool();
+    m_startupMinimized = m_startupEnabled && map.value(QStringLiteral("startup_minimized")).toBool();
 
     m_normalNotifications =
         map.value(

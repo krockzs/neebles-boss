@@ -11,12 +11,12 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 pub fn launch_ui(session_autostart: bool) -> Result<(), String> {
-    match surface_state::boss_ui_state() {
-        BossUiState::Open | BossUiState::Opening => {
-            return Ok(());
-        }
-
-        BossUiState::Closed => {}
+    let existing_ui = surface_state::boss_ui_state() == BossUiState::Open;
+    if surface_state::boss_ui_state() == BossUiState::Opening {
+        return Ok(());
+    }
+    if existing_ui && session_autostart {
+        return Ok(());
     }
 
     // Only the session-autostart action may request the minimized presentation.
@@ -59,7 +59,7 @@ pub fn launch_ui(session_autostart: bool) -> Result<(), String> {
         ));
     }
 
-    let opening_generation = surface_state::begin_boss_ui_opening()?;
+    let opening_generation = if existing_ui { None } else { Some(surface_state::begin_boss_ui_opening()?) };
 
     let setpriv =
         neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.setpriv")?;
@@ -106,12 +106,12 @@ pub fn launch_ui(session_autostart: bool) -> Result<(), String> {
 
     match result {
         Ok(status) if status.success() => {
-            surface_state::watch_boss_ui_opening(opening_generation);
+            if let Some(generation) = opening_generation { surface_state::watch_boss_ui_opening(generation); }
             Ok(())
         }
 
         Ok(status) => {
-            surface_state::cancel_boss_ui_opening(opening_generation);
+            if let Some(generation) = opening_generation { surface_state::cancel_boss_ui_opening(generation); }
 
             Err(format!(
                 "desktop user manager rejected Boss UI launch with status {status}"
@@ -119,7 +119,7 @@ pub fn launch_ui(session_autostart: bool) -> Result<(), String> {
         }
 
         Err(error) => {
-            surface_state::cancel_boss_ui_opening(opening_generation);
+            if let Some(generation) = opening_generation { surface_state::cancel_boss_ui_opening(generation); }
 
             Err(format!(
                 "could not launch Boss UI through the desktop user manager: {error}"
