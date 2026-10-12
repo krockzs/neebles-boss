@@ -2,7 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión del código fuente en desarrollo:** **1.0.45**.
+**Versión del código fuente en desarrollo:** **1.0.46**.
 **Última versión estable de referencia:** **1.0.41** (publicada y recuperable).
 **Estado de 1.0.43 (2026-10-12):** correcciones de fuente integradas localmente; pendientes de compilación certificada, publicación y aceptación funcional.
 
@@ -1460,3 +1460,7 @@ Validación pendiente: compilación certificada Esbirro Qt 6.8.2, Rust 1.98.1, p
 ## Boss 1.0.45 — Critical Update cgroup handoff
 
 La identidad de la unidad transitoria aislada se deriva de TARGET; deja de depender de la versión anterior fija. Compilación Esbirro y aceptación instalada pendientes.
+
+## Boss 1.0.46 — Launcher/Spacer surfaces and Tray
+
+Las superficies gráficas se regeneran con Loader tras detectar cambios estables en los archivos instalados, sin eliminar applets. Se verifica mediante la próxima actualización 1.0.46 → 1.0.47.

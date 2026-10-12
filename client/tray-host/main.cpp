@@ -1043,6 +1043,16 @@ int main(
     char *argv[]
 )
 {
+    // The user manager can start this service before Plasma has exported
+    // DISPLAY/WAYLAND_DISPLAY. Avoid constructing QGuiApplication (and a Qt
+    // fatal abort/core dump) until a display is advertised. systemd retries.
+    const QByteArray x11Display = qgetenv("DISPLAY");
+    const QByteArray waylandDisplay = qgetenv("WAYLAND_DISPLAY");
+    if (x11Display.isEmpty() && waylandDisplay.isEmpty()) {
+        qCritical() << "NEEBLES_TRAY_GRAPHICS_NOT_READY: no graphical display";
+        return 75;
+    }
+
     QGuiApplication app(
         argc,
         argv

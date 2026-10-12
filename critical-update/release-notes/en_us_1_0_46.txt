@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.46
+
+Adds self-reloading Launcher and Spacer visual surfaces while preserving Plasma applets and improves Tray startup. Hot-update behavior will be tested with Critical Update 1.0.46 to 1.0.47.

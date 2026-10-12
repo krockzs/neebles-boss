@@ -27,13 +27,9 @@ PlasmoidItem {
 
     preferredRepresentation: fullRepresentation
 
-    fullRepresentation: Item {
-        implicitWidth:
-            bossEvents.launcherEnabled ? 20 : 0
-
-        implicitHeight: 38
-
-        visible:
-            bossEvents.launcherEnabled
+    fullRepresentation: Loader {
+        id: spacerLoader
+        property var bossSettings: bossEvents
+        source: "SpacerSurface.qml?neeblesRevision=" + bossEvents.surfaceRevision
     }
 }

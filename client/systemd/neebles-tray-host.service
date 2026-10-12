@@ -1,6 +1,6 @@
 [Unit]
 Description=N.E.E.B.L.E.S. Tray Host
-After=graphical-session-pre.target neebles-tray-manager.service
+After=graphical-session.target neebles-tray-manager.service
 Requires=neebles-tray-manager.service
 PartOf=graphical-session.target
 

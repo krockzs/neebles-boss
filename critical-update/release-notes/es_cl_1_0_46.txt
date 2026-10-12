@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.46
+
+Incorpora recarga de superficies visuales Launcher y Spacer conservando los applets, y mejora el arranque de Tray. La comprobación efectiva de actualización en caliente se realizará con Critical Update 1.0.46 a 1.0.47.

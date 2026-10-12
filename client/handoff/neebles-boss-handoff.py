@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-TARGET = "1.0.45"
+TARGET = "1.0.46"
 BUS_NAME = "org.neebles.Boss"
 UI_PATH = "/opt/neebles/client/ui/neebles-ui"
 BOSS_PATH = "/opt/neebles/client/bin/neebles"
@@ -268,7 +268,7 @@ def main():
     # produced an applet-destructor heap corruption crash on 1.0.42.
     # Existing Launcher/Spacer keep their exact placement and configuration.
     # Updated QML is loaded by Plasma at the next graphical session startup.
-    event("Preserved live Launcher/Spacer; updated QML applies at next Plasma session")
+    event("Preserved applet IDs; 1.0.46+ surfaces poll revised QML and reload visual children")
     event("Selective refresh complete; starting new Boss entrypoint")
     launch = subprocess.Popen([BOSS_PATH, "start"], stdin=subprocess.DEVNULL,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
