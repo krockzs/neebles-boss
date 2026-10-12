@@ -6,6 +6,7 @@
 #include <QCryptographicHash>
 #include <QFile>
 #include <QTimer>
+#include <QDebug>
 #include <QByteArray>
 #include <QStringList>
 
@@ -27,6 +28,7 @@ public:
         m_paths = {
             QStringLiteral("/usr/share/plasma/plasmoids/org.neebles.launcher/contents/ui/main.qml"),
             QStringLiteral("/usr/share/plasma/plasmoids/org.neebles.spacer/contents/ui/main.qml"),
+                        QStringLiteral("/usr/share/plasma/plasmoids/org.neebles.launcher/contents/ui/NeeblesSwitch.qml"),
             QStringLiteral("/usr/share/plasma/plasmoids/org.neebles.launcher/contents/ui/LauncherCompactSurface.qml"),
             QStringLiteral("/usr/share/plasma/plasmoids/org.neebles.launcher/contents/ui/LauncherFullSurface.qml"),
             QStringLiteral("/usr/share/plasma/plasmoids/org.neebles.spacer/contents/ui/SpacerSurface.qml"),
@@ -48,6 +50,7 @@ public:
             m_digest = next;
             m_candidate.clear();
             ++m_surfaceRevision;
+            qInfo("NEEBLES_SURFACE_RELOAD revision=%d", m_surfaceRevision);
             emit surfaceRevisionChanged();
         });
         poll->start();

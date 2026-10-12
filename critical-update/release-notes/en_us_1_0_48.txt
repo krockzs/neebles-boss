@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.48
+
+Complete Launcher/Spacer QML change detection, including NeeblesSwitch.qml and root main.qml files. Trace NEEBLES_SURFACE_RELOAD during updates.

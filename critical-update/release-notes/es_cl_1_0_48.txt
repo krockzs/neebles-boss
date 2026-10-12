@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.48
+
+Corrección del detector de recarga visual de Launcher y Spacer, incluyendo NeeblesSwitch.qml y los main.qml. Traza NEEBLES_SURFACE_RELOAD durante las actualizaciones.

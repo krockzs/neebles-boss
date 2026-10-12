@@ -2,7 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión del código fuente en desarrollo:** **1.0.47**.
+**Versión del código fuente en desarrollo:** **1.0.48**.
 **Última versión estable de referencia:** **1.0.41** (publicada y recuperable).
 **Estado de 1.0.43 (2026-10-12):** correcciones de fuente integradas localmente; pendientes de compilación certificada, publicación y aceptación funcional.
 

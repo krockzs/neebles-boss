@@ -20,3 +20,5 @@ Item {
             onClicked: bossRoot.expanded = !bossRoot.expanded
         }
     }
+
+// NEEBLES 1.0.48: update boundary for prior-version surface detector.
