@@ -15,10 +15,12 @@ PlasmoidItem {
     property var strings: ({})
     property var callbacks: ({})
     property var pendingActions: ({})
+    // Fresh canonical Surface Model availability; independent of delegate modelData caching.
+    property var canonicalOpenActions: ({})
     property bool refreshBusy: false
     property bool refreshAgain: false
     property string commandError: ""
-    property string bossVersion: "1.0.50"
+    property string bossVersion: "1.0.51"
 
 
 
@@ -76,6 +78,11 @@ PlasmoidItem {
     // Pending controls are per module. Opening module A must never block B.
     function modulePending(moduleName) {
         return pendingActions[moduleName] === true
+    }
+
+    function canonicalOpenAvailable(moduleName, itemId) {
+        const actions = canonicalOpenActions[moduleName]
+        return !!actions && actions[itemId] === true
     }
 
     function setModulePending(moduleName, value) {
@@ -232,10 +239,32 @@ PlasmoidItem {
                 const installed = JSON.parse(output)
                 if (!Array.isArray(installed))
                     throw new Error("Surface model is not an array")
+                // Rebuild from every authenticated, fresh Boss Surface Model read.
+                // Open is permitted only while the runtime is closed and the
+                // module-declared action is canonically available. This also
+                // works for object-owned Surface Open without governor.open.
+                const openActions = ({})
+                for (const module of installed) {
+                    if (!module || !module.name)
+                        continue
+                    const actions = ({})
+                    for (const item of (module.surface_content || [])) {
+                        if (item && item.surface === "launcher" && item.item_id
+                            && item.data && item.data.action === "open") {
+                            actions[item.item_id] =
+                                module.runtime_state === "closed"
+                                && item.action_available === true
+                        }
+                    }
+                    openActions[module.name] = actions
+                }
+                canonicalOpenActions = openActions
                 installedModules = installed
                 applyModuleFilter()
             } catch (e) {
-                // Never erase a valid model because one refresh failed.
+                // Fail closed for actions on read errors; retain only the last
+                // visual model to avoid a disappearing Launcher panel.
+                canonicalOpenActions = ({})
                 console.warn("N.E.E.B.L.E.S. Launcher canonical refresh failed:", String(e))
             } finally {
                 refreshBusy = false

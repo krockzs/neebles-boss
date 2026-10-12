@@ -1,6 +1,6 @@
 [package]
 name = "neebles-backend"
-version = "1.0.50"
+version = "1.0.51"
 edition = "2021"
 authors = ["Olate Stark and Jarvis"]
 description = "N.E.E.B.L.E.S. Boss backend"

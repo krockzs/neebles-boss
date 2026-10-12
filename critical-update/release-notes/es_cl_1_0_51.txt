@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.51
+
+El botón Open del Launcher refleja el estado gobernado del módulo y se deshabilita mientras se abre o permanece abierto. El botón Open de Boss UI ya no muestra el diálogo Module Transaction. Las transacciones de instalación y actualización se mantienen.

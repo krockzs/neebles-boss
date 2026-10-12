@@ -2457,6 +2457,7 @@ boss.updateModule(
 
             if (
                 transaction.started === true
+                && transaction.operation !== "open"
                 && id.length > 0
                 && id !== root.lastPresentedTransactionId
             ) {

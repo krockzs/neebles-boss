@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.51
+
+The Launcher Open button follows the module's governed runtime availability and is disabled while opening or open. Boss UI Open no longer displays the Module Transaction dialog. Installation and update transactions remain intact.

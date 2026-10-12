@@ -257,20 +257,24 @@ Item {
                                           ? moduleRow.declaredOpen.label : ""
                                     enabled: moduleRow.declaredOpen !== null
                                              && !bossRoot.modulePending(moduleRow.modelData.name)
-                                             && moduleRow.declaredOpen.action_available === true
+                                             && bossRoot.canonicalOpenAvailable(
+                                                 moduleRow.modelData.name,
+                                                 moduleRow.declaredOpen.item_id
+                                             )
                                     hoverEnabled: true
                                     QQC2.ToolTip.visible: hovered && visible
                                     QQC2.ToolTip.text: text
                                     background: Rectangle {
                                         radius: 7
-                                        color: declaredOpenButton.down ? "#0B1220"
+                                        color: !declaredOpenButton.enabled ? "#101014"
+                                               : declaredOpenButton.down ? "#0B1220"
                                                : declaredOpenButton.hovered ? "#172033" : "#10131A"
                                         border.width: 2
-                                        border.color: "#22D3EE"
+                                        border.color: declaredOpenButton.enabled ? "#22D3EE" : "#52525B"
                                     }
                                     contentItem: Text {
                                         text: declaredOpenButton.text
-                                        color: "#67E8F9"
+                                        color: declaredOpenButton.enabled ? "#67E8F9" : "#71717A"
                                         font.pixelSize: 11
                                         font.bold: true
                                         elide: Text.ElideRight

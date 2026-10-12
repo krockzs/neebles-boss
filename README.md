@@ -2,7 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión del código fuente en desarrollo:** **1.0.50**.
+**Versión del código fuente en desarrollo:** **1.0.51**.
 **Última versión estable de referencia:** **1.0.41** (publicada y recuperable).
 **Estado de 1.0.43 (2026-10-12):** correcciones de fuente integradas localmente; pendientes de compilación certificada, publicación y aceptación funcional.
 
@@ -1483,3 +1483,11 @@ Las superficies gráficas se regeneran con Loader tras detectar cambios estables
 - Instalador, recibo y handoff usan el destino 1.0.50 y conservan sus verificaciones.
 - Nightmare, motor Rust de Critical Update, módulos y Esbirro/Qt 6.8.2 sin cambios.
 - Pendiente: prueba real de actualización en Ryzen.
+
+
+## Boss 1.0.51 — Launcher Open y presentación de transacciones
+
+- El Launcher vincula su botón Open con la disponibilidad gobernada desde una lectura nueva del Surface Model (`closed`, `opening`, `open`), sin alterar contratos ni Governor.
+- El módulo puede abrirse desde Boss UI, Launcher o Tray; la apertura única permanece defendida por RuntimeRegistry.
+- La acción Open de Boss UI no muestra Module Transaction; Install, Update, Uninstall y Critical Update mantienen sus transacciones.
+- Requiere certificación del pipeline Esbirro/Qt y validación visual real antes de declararse estable.
