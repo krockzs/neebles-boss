@@ -18,7 +18,7 @@ PlasmoidItem {
     property bool refreshBusy: false
     property bool refreshAgain: false
     property string commandError: ""
-    property string bossVersion: "1.0.49"
+    property string bossVersion: "1.0.50"
 
 
 

@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.50
+
+Solo se actualiza Boss si la versión disponible es mayor que la instalada. Se corrige el instalador para evitar downgrades y se alinea el handoff con esta versión sin exigir una versión anterior fija.

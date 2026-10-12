@@ -2,7 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión del código fuente en desarrollo:** **1.0.49**.
+**Versión del código fuente en desarrollo:** **1.0.50**.
 **Última versión estable de referencia:** **1.0.41** (publicada y recuperable).
 **Estado de 1.0.43 (2026-10-12):** correcciones de fuente integradas localmente; pendientes de compilación certificada, publicación y aceptación funcional.
 
@@ -1474,3 +1474,12 @@ Las superficies gráficas se regeneran con Loader tras detectar cambios estables
 - `critical-update/manifest.json` de módulos se valida ANTES de desactivar la versión anterior: `[]`/ausencia legada permitidos, instrucciones sin ejecutor rechazadas. Nightmare de Boss permanece intacto.
 - B5/R3 local Rust: 714/714 pruebas del binario; 171/171 pruebas activas de biblioteca (una ignorada); build Rust release GREEN con toolchain 1.98.1.
 - **No certificar por estos tests:** Qt 6.8.2/Esbirro, DESTDIR, 11 assets, release publicada y aceptación instalada siguen pendientes. Test Module 1.2.3 permanece para el salto real a 1.2.4.
+
+
+## Boss 1.0.50 — actualización de versión y handoff
+
+- Critical Update solo desde una versión instalada inferior a la versión candidata, sin origen fijo.
+- Igual versión no genera transición de actualización; los downgrades se rechazan.
+- Instalador, recibo y handoff usan el destino 1.0.50 y conservan sus verificaciones.
+- Nightmare, motor Rust de Critical Update, módulos y Esbirro/Qt 6.8.2 sin cambios.
+- Pendiente: prueba real de actualización en Ryzen.

@@ -25,6 +25,8 @@ checks = {
     'client/spacer/metadata.json': '"Version": "' + v + '"',
     '.github/workflows/release-' + v + '.yml': 'release/trigger-v' + v,
     'release/notes-v' + v + '.md': '# N.E.E.B.L.E.S. Boss v' + v,
+    'scripts/install.sh': 'NEEBLES_BOSS_TARGET_VERSION="' + v + '"',
+    'client/handoff/neebles-boss-handoff.py': 'TARGET = "' + v + '"',
 }
 for path, value in checks.items():
     content = (ROOT / path).read_text(encoding='utf-8')
@@ -62,6 +64,11 @@ for staged_path in ('--ui neebles-custom/build_sysroot_6.8.2/work/neebles-boss-u
 if not (ROOT / 'scripts/certify-qt-executable-stage.py').is_file():
     raise SystemExit('QT STAGE CERTIFIER MISSING')
 installer_script = (ROOT / 'scripts/install.sh').read_text(encoding='utf-8')
+if installer_script.count("LC_ALL=C sort -V") != 1:
+    raise SystemExit("INSTALLER NEWER-ONLY VERSION CHECK MISSING")
+expected_receipt_guard = "[[ \"$NEEBLES_BOSS_TARGET_VERSION\" == '" + v + "' ]] || return 1"
+if installer_script.count(expected_receipt_guard) != 1:
+    raise SystemExit("INSTALLER RECEIPT TARGET VERSION MISMATCH")
 for marker in ('PRESENTER_USER_MANAGER_AUTHORITY',
                'activate_desktop_notification_presenter ||',
                '--world boss.setpriv --category executable',

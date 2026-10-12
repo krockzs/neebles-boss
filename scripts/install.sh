@@ -299,7 +299,7 @@ fi
 # installation the old binary is absent, so there is no update handoff or notes.
 # The probe happens BEFORE replacing client/. No process is stopped here.
 NEEBLES_BOSS_PREVIOUS_VERSION=""
-NEEBLES_BOSS_TARGET_VERSION="1.0.48"
+NEEBLES_BOSS_TARGET_VERSION="1.0.50"
 NEEBLES_BOSS_IS_UPGRADE=0
 if [[ -z "$DESTDIR" && -f "$BIN_DIR/neebles" && -x "$BIN_DIR/neebles" ]]; then
     neebles_boss_previous_version_output="$("$BIN_DIR/neebles" --version)" || {
@@ -312,6 +312,16 @@ if [[ -z "$DESTDIR" && -f "$BIN_DIR/neebles" && -x "$BIN_DIR/neebles" ]]; then
         exit 1
     fi
     if [[ "$NEEBLES_BOSS_PREVIOUS_VERSION" != "$NEEBLES_BOSS_TARGET_VERSION" ]]; then
+        # Compare numeric version components; a downgrade must fail before staging.
+        neebles_boss_version_first="$(printf '%s\n%s\n' "$NEEBLES_BOSS_PREVIOUS_VERSION" "$NEEBLES_BOSS_TARGET_VERSION" | LC_ALL=C sort -V | head -n 1)" || {
+            echo "Refusing Boss update transition: version comparison failed." >&2
+            exit 1
+        }
+        if [[ "$neebles_boss_version_first" != "$NEEBLES_BOSS_PREVIOUS_VERSION" ]]; then
+            printf 'Refusing Boss downgrade: installed=%s requested=%s\n' \
+                "$NEEBLES_BOSS_PREVIOUS_VERSION" "$NEEBLES_BOSS_TARGET_VERSION" >&2
+            exit 1
+        fi
         NEEBLES_BOSS_IS_UPGRADE=1
     fi
 fi
@@ -1230,7 +1240,7 @@ publish_boss_upgrade_receipt() {
     local passwd_record home_dir config_root neebles_config receipt temporary mode
     [[ -z "$DESTDIR" && "$NEEBLES_BOSS_IS_UPGRADE" == 1 ]] || return 0
     [[ "$NEEBLES_BOSS_PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.48' ]] || return 1
+    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.50' ]] || return 1
     [[ "$DESKTOP_UID" =~ ^[0-9]+$ && "$DESKTOP_GID" =~ ^[0-9]+$ && "$DESKTOP_UID" != '0' ]] || return 1
     passwd_record="$(getent passwd "$DESKTOP_UID")" || return 1
     IFS=: read -r _ _ _ _ _ home_dir _ <<< "$passwd_record"
