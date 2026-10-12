@@ -1,0 +1,5 @@
+NEEBLES Boss 1.0.49
+
+Release Notes unificadas para Boss y módulos; advertencia para guardar el trabajo y botón Reiniciar, que solicita el reinicio después de cerrar el diálogo.
+Actualización de módulos con identidad correcta y versión disponible visible. Los manifiestos críticos vacíos o ausentes siguen siendo compatibles; las instrucciones no soportadas se rechazan antes de alterar el módulo instalado.
+Se conservan Nightmare y Critical Update de Boss.

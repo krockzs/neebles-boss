@@ -144,5 +144,8 @@
   "modules.transaction.close": "Close",
   "config.startup_title": "Startup",
   "config.startup_enabled": "Start N.E.E.B.L.E.S. Boss with NEEBLES OS",
-  "config.startup_minimized": "Start minimized"
+  "config.startup_minimized": "Start minimized",
+  "release_notes.reboot": "Reboot",
+  "release_notes.reboot_warning": "Save your work and close open applications before rebooting the system.",
+  "modules.critical_update": "Critical Update"
 }

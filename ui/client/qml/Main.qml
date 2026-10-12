@@ -595,7 +595,7 @@ ApplicationWindow {
         if (typeof boss !== "undefined"
             && boss.pendingBossUpdate
             && boss.pendingBossUpdate.to_version) {
-            bossUpdateSuccessDialog.open()
+            releaseNotesDialog.showBoss()
         }
     }
 
@@ -2172,10 +2172,12 @@ if (
                                                     moduleCard.effectiveInstalled
                                                     && !!modelData.update_available
 
+                                                Layout.preferredWidth: 177
+                                                Layout.preferredHeight: 34
+
                                                 text:
-                                                    root.t(
-                                                        "common.update"
-                                                    )
+                                                    root.t("modules.critical_update")
+                                                    + " " + String(modelData.remote_version || "")
 
                                                 enabled:
                                                     typeof boss !== "undefined"
@@ -2183,17 +2185,19 @@ if (
 
                                                 background: Rectangle {
                                                     radius: 7
-                                                    color: "#1B1027"
+                                                    color: "#180B0B"
 
                                                     border.width: 2
-                                                    border.color: "#A855F7"
+                                                    border.color: "#EF4444"
                                                 }
 
                                                 contentItem: Text {
                                                     text:
                                                         moduleUpdateButton.text
 
-                                                    color: "#E9D5FF"
+                                                    color: "#FCA5A5"
+                                                    font.pixelSize: 12
+                                                    font.bold: true
 
                                                     horizontalAlignment:
                                                         Text.AlignHCenter
@@ -2944,83 +2948,31 @@ boss.updateModule(
             transactionHideButton.forceActiveFocus()
     }
 
-    // Module notes appear only when a verified update produces non-empty notes.
-    // They are not emitted on initial installation, no-op or failure.
+    // Release Notes: UN diálogo para Boss y para cualquier módulo.
+    // Boss conserva su recibo persistente; los módulos requieren update confirmado.
     Connections {
         target: boss
         property string lastModuleNotesToken: ""
         function onTransactionOperationChanged() {
             const tx = boss.transactionOperation
             if (!tx || tx.operation !== "update" || tx.running === true
-                || tx.success !== true || !tx.confirmedVersion || !tx.releaseNotes
-                || !tx.fromVersion || tx.fromVersion === tx.confirmedVersion)
+                || tx.success !== true || !tx.confirmedVersion
+                || !tx.module || !tx.fromVersion || tx.fromVersion === tx.confirmedVersion)
                 return
-            const token = String(tx.name) + ":" + String(tx.fromVersion)
+            const token = String(tx.module) + ":" + String(tx.fromVersion)
                 + ":" + String(tx.confirmedVersion)
             if (token === lastModuleNotesToken)
                 return
             lastModuleNotesToken = token
-            moduleUpdateSuccessDialog.moduleName = String(tx.name || "")
-            moduleUpdateSuccessDialog.moduleVersion = String(tx.confirmedVersion)
-            moduleUpdateSuccessDialog.notesText = String(tx.releaseNotes)
-            moduleUpdateSuccessDialog.open()
+            releaseNotesDialog.showModule(
+                String(tx.module), String(tx.fromVersion),
+                String(tx.confirmedVersion), String(tx.releaseNotes || "")
+            )
         }
     }
 
     Dialog {
-        id: moduleUpdateSuccessDialog
-        parent: Overlay.overlay
-        modal: true
-        focus: true
-        width: Math.min(680, root.width - 64)
-        height: Math.min(480, root.height - 64)
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
-        padding: 24
-        property string moduleName: ""
-        property string moduleVersion: ""
-        property string notesText: ""
-        background: Rectangle {
-            radius: 12
-            color: "#18181B"
-            border.color: "#7C3AED"
-            border.width: 1
-        }
-        contentItem: ColumnLayout {
-            spacing: 14
-            Text {
-                Layout.fillWidth: true
-                font.pixelSize: 21
-                font.bold: true
-                color: "#F5F3FF"
-                wrapMode: Text.WordWrap
-                text: (boss.language.startsWith("es") ? "Módulo actualizado: " : "Module updated: ")
-                    + moduleUpdateSuccessDialog.moduleName + " " + moduleUpdateSuccessDialog.moduleVersion
-            }
-            ScrollView {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                TextArea {
-                    readOnly: true
-                    selectByMouse: true
-                    wrapMode: TextEdit.Wrap
-                    color: "#E4E4E7"
-                    text: moduleUpdateSuccessDialog.notesText
-                    background: Rectangle { color: "#09090B"; radius: 6 }
-                }
-            }
-            Button {
-                Layout.alignment: Qt.AlignRight
-                text: boss.language.startsWith("es") ? "Entendido" : "Got it"
-                onClicked: moduleUpdateSuccessDialog.close()
-            }
-        }
-    }
-
-    // This dialog acknowledges only a verified installed-version record.
-    // A close without accepting keeps it pending for the next launch.
-    Dialog {
-        id: bossUpdateSuccessDialog
+        id: releaseNotesDialog
         parent: Overlay.overlay
         modal: true
         focus: true
@@ -3030,6 +2982,55 @@ boss.updateModule(
         y: Math.round((parent.height - height) / 2)
         closePolicy: Popup.NoAutoClose
         padding: 24
+
+        property string contextKind: "boss"
+        property string moduleName: ""
+        property string fromVersion: ""
+        property string toVersion: ""
+        property string notesText: ""
+        property bool rebootAfterClose: false
+
+        function showBoss() {
+            const pending = boss.pendingBossUpdate
+            if (!pending || !pending.to_version)
+                return
+            contextKind = "boss"
+            moduleName = ""
+            fromVersion = String(pending.from_version || "")
+            toVersion = String(pending.to_version)
+            notesText = String(pending.release_notes || "")
+            rebootAfterClose = false
+            open()
+        }
+
+        function showModule(name, previous, current, notes) {
+            // No reemplazar las notas pendientes de Boss ni mezclar recibos.
+            if (opened && contextKind === "boss")
+                return
+            contextKind = "module"
+            moduleName = name
+            fromVersion = previous
+            toVersion = current
+            notesText = notes
+            rebootAfterClose = false
+            open()
+        }
+
+        function finish(shouldReboot) {
+            // Nunca cerrar/confirmar un recibo de Boss si su escritura falla.
+            if (contextKind === "boss" && !boss.acknowledgeBossUpdate())
+                return
+            rebootAfterClose = shouldReboot
+            close()
+        }
+
+        onClosed: {
+            if (rebootAfterClose) {
+                rebootAfterClose = false
+                boss.requestSystemReboot()
+            }
+        }
+
         background: Rectangle {
             radius: 12
             color: "#18181B"
@@ -3044,21 +3045,26 @@ boss.updateModule(
                 font.pixelSize: 23
                 font.bold: true
                 wrapMode: Text.WordWrap
-                text: boss.language.startsWith("es")
-                    ? "NEEBLES Boss actualizado correctamente"
-                    : "NEEBLES Boss updated successfully"
+                text: releaseNotesDialog.contextKind === "boss"
+                    ? (boss.language.startsWith("es")
+                        ? "NEEBLES Boss actualizado correctamente"
+                        : "NEEBLES Boss updated successfully")
+                    : (boss.language.startsWith("es")
+                        ? "Módulo actualizado: " : "Module updated: ")
+                        + releaseNotesDialog.moduleName
             }
             Text {
                 Layout.fillWidth: true
                 color: "#C4B5FD"
                 font.pixelSize: 15
-                text: boss.pendingBossUpdate.from_version + "  →  "
-                    + boss.pendingBossUpdate.to_version
+                text: releaseNotesDialog.fromVersion + "  →  "
+                    + releaseNotesDialog.toVersion
             }
             Text {
                 Layout.fillWidth: true
                 color: "#D4D4D8"
-                text: boss.language.startsWith("es") ? "Novedades de esta versión" : "What's new"
+                text: boss.language.startsWith("es")
+                    ? "Novedades de esta versión" : "What's new"
                 font.bold: true
             }
             ScrollView {
@@ -3071,19 +3077,28 @@ boss.updateModule(
                     wrapMode: TextEdit.Wrap
                     color: "#E4E4E7"
                     background: Rectangle { color: "#09090B"; radius: 6 }
-                    text: boss.pendingBossUpdate.release_notes
-                        ? boss.pendingBossUpdate.release_notes
+                    text: releaseNotesDialog.notesText.length > 0
+                        ? releaseNotesDialog.notesText
                         : (boss.language.startsWith("es")
-                           ? "No hay notas de versión disponibles."
-                           : "No release notes available.")
+                            ? "No hay notas de versión disponibles."
+                            : "No release notes available.")
                 }
             }
-            Button {
+            Text {
+                Layout.fillWidth: true
+                color: "#E4E4E7"
+                wrapMode: Text.WordWrap
+                text: root.t("release_notes.reboot_warning")
+            }
+            RowLayout {
                 Layout.alignment: Qt.AlignRight
-                text: boss.language.startsWith("es") ? "Entendido" : "Got it"
-                onClicked: {
-                    if (boss.acknowledgeBossUpdate())
-                        bossUpdateSuccessDialog.close()
+                Button {
+                    text: boss.language.startsWith("es") ? "Entendido" : "Got it"
+                    onClicked: releaseNotesDialog.finish(false)
+                }
+                Button {
+                    text: root.t("release_notes.reboot")
+                    onClicked: releaseNotesDialog.finish(true)
                 }
             }
         }

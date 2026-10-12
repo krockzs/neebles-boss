@@ -57,6 +57,7 @@ public:
     Q_INVOKABLE void reload();
     Q_INVOKABLE void installBossUpdate();
     Q_INVOKABLE bool acknowledgeBossUpdate();
+    Q_INVOKABLE bool requestSystemReboot();
     Q_INVOKABLE void saveConfig(const QString &language,
                                 bool trayEnabled,
                                 bool launcherEnabled,

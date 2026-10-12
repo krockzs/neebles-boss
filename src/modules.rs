@@ -5135,6 +5135,53 @@ fn format_live_update_failure_with_binding(
 }
 
 
+// NEEBLES_MODULE_CRITICAL_MANIFEST_GATE_B4
+// This gate does NOT execute module critical instructions. It prevents a
+// non-empty manifest from being silently ignored until a separate, scoped
+// module executor has been designed and certified. Boss Nightmare is untouched.
+fn validate_staged_module_critical_manifest(candidate: &Path) -> Result<(), String> {
+    let critical = candidate.join("critical-update");
+    let critical_meta = match fs::symlink_metadata(&critical) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("module critical-update directory: {error}")),
+    };
+    if critical_meta.file_type().is_symlink() || !critical_meta.is_dir() {
+        return Err("module critical-update parent must be a real directory".to_string());
+    }
+
+    let manifest = critical.join("manifest.json");
+    let metadata = match fs::symlink_metadata(&manifest) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("module critical-update manifest metadata: {error}")),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("module critical-update manifest must be a regular file".to_string());
+    }
+    if metadata.len() > 65536 {
+        return Err("module critical-update manifest exceeds 64 KiB".to_string());
+    }
+    let bytes = fs::read(&manifest)
+        .map_err(|error| format!("module critical-update manifest read: {error}"))?;
+    if bytes.len() > 65536 {
+        return Err("module critical-update manifest exceeds 64 KiB".to_string());
+    }
+    // Same legacy empty-file compatibility as the existing Boss manifest reader.
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let instructions: Vec<String> = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("module critical-update expects an array of strings: {error}"))?;
+    if instructions.iter().any(|instruction| instruction.trim().is_empty()) {
+        return Err("module critical-update contains an empty instruction".to_string());
+    }
+    if !instructions.is_empty() {
+        return Err("module critical-update instructions require a certified module-specific executor; update refused before touching the installed module".to_string());
+    }
+    Ok(())
+}
+
 // NEEBLES_MODULE_NOTES_STAGING_15
 // The git checkout is authenticated/pinned by checkout_registry_commit.
 // Never retrieve release notes from a second, mutable network endpoint.
@@ -5345,6 +5392,10 @@ fn update_with_observer(
             name, manifest.version, entry.version
         ));
     }
+
+    // Critical instructions are validated on the authenticated staged source,
+    // BEFORE closing active module processes or moving the live installation.
+    validate_staged_module_critical_manifest(staging.path())?;
 
     // Validate optional notes while candidate still belongs to the immutable
     // Registry checkout. Publication will preserve the same module directory.
@@ -7635,6 +7686,72 @@ mod point2_tray_governed_runtime_tests {
     }
 }
 
+
+// NEEBLES_MODULE_CRITICAL_MANIFEST_GATE_B4_TESTS
+#[cfg(test)]
+mod module_critical_manifest_gate_b4_tests {
+    use super::validate_staged_module_critical_manifest;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn absent_legacy_manifest_is_compatible() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(validate_staged_module_critical_manifest(temp.path()).is_ok());
+    }
+
+    #[test]
+    fn empty_array_and_empty_file_are_compatible() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("critical-update");
+        fs::create_dir(&parent).unwrap();
+        let manifest = parent.join("manifest.json");
+        fs::write(&manifest, b"[]").unwrap();
+        assert!(validate_staged_module_critical_manifest(temp.path()).is_ok());
+        fs::write(&manifest, b"").unwrap();
+        assert!(validate_staged_module_critical_manifest(temp.path()).is_ok());
+    }
+
+    #[test]
+    fn rejects_nonempty_instructions_before_implementation() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("critical-update");
+        fs::create_dir(&parent).unwrap();
+        fs::write(parent.join("manifest.json"), br#"["module.op.v1"]"#).unwrap();
+        let error = validate_staged_module_critical_manifest(temp.path()).unwrap_err();
+        assert!(error.contains("certified module-specific executor"));
+    }
+
+    #[test]
+    fn rejects_invalid_types_and_empty_instruction() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("critical-update");
+        fs::create_dir(&parent).unwrap();
+        let manifest = parent.join("manifest.json");
+        fs::write(&manifest, br#"[{"instruction":"x"}]"#).unwrap();
+        assert!(validate_staged_module_critical_manifest(temp.path()).is_err());
+        fs::write(&manifest, br#"["   "]"#).unwrap();
+        assert!(validate_staged_module_critical_manifest(temp.path()).is_err());
+    }
+
+    #[test]
+    fn rejects_symlinks_and_oversized_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        let other = temp.path().join("other");
+        fs::create_dir(&other).unwrap();
+        symlink(&other, temp.path().join("critical-update")).unwrap();
+        assert!(validate_staged_module_critical_manifest(temp.path()).is_err());
+        fs::remove_file(temp.path().join("critical-update")).unwrap();
+        let parent = temp.path().join("critical-update");
+        fs::create_dir(&parent).unwrap();
+        fs::write(other.join("manifest.json"), b"[]").unwrap();
+        symlink(other.join("manifest.json"), parent.join("manifest.json")).unwrap();
+        assert!(validate_staged_module_critical_manifest(temp.path()).is_err());
+        fs::remove_file(parent.join("manifest.json")).unwrap();
+        fs::write(parent.join("manifest.json"), vec![b' '; 65537]).unwrap();
+        assert!(validate_staged_module_critical_manifest(temp.path()).is_err());
+    }
+}
 
 // NEEBLES_1036_MODULE_NOTES_GATE37_TESTS
 #[cfg(test)]

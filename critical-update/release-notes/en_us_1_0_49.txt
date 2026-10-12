@@ -1,0 +1,5 @@
+NEEBLES Boss 1.0.49
+
+A shared Release Notes dialog for Boss and modules, including a save-your-work warning and a Reboot button that requests the reboot after closing the dialog.
+Module updates show the correct module identity and available version. Empty or absent critical manifests remain compatible; unsupported instructions fail closed before changing the installed module.
+Boss Nightmare and Boss Critical Update remain unchanged.

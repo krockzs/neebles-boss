@@ -2,7 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión del código fuente en desarrollo:** **1.0.48**.
+**Versión del código fuente en desarrollo:** **1.0.49**.
 **Última versión estable de referencia:** **1.0.41** (publicada y recuperable).
 **Estado de 1.0.43 (2026-10-12):** correcciones de fuente integradas localmente; pendientes de compilación certificada, publicación y aceptación funcional.
 
@@ -1464,3 +1464,13 @@ La identidad de la unidad transitoria aislada se deriva de TARGET; deja de depen
 ## Boss 1.0.46 — Launcher/Spacer surfaces and Tray
 
 Las superficies gráficas se regeneran con Loader tras detectar cambios estables en los archivos instalados, sin eliminar applets. Se verifica mediante la próxima actualización 1.0.46 → 1.0.47.
+
+
+## Boss 1.0.49 — Release Notes compartidas y actualización segura de módulos
+
+- Una única presentación localizada de Release Notes para Boss y módulos, siempre con advertencia previa y botón de reinicio. El reinicio se solicita al cerrar el diálogo; no se añade un segundo modal.
+- Mantiene intactos la confirmación del recibo de Boss y el requisito de transición verificada de versión de módulo.
+- Corrige identidad de actualización de módulo (`transactionOperation.module`), y la tarjeta muestra Critical Update con la versión remota sin reemplazar el updater transaccional.
+- `critical-update/manifest.json` de módulos se valida ANTES de desactivar la versión anterior: `[]`/ausencia legada permitidos, instrucciones sin ejecutor rechazadas. Nightmare de Boss permanece intacto.
+- B5/R3 local Rust: 714/714 pruebas del binario; 171/171 pruebas activas de biblioteca (una ignorada); build Rust release GREEN con toolchain 1.98.1.
+- **No certificar por estos tests:** Qt 6.8.2/Esbirro, DESTDIR, 11 assets, release publicada y aceptación instalada siguen pendientes. Test Module 1.2.3 permanece para el salto real a 1.2.4.

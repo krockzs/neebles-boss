@@ -1531,6 +1531,21 @@ bool BossController::acknowledgeBossUpdate()
     return true;
 }
 
+bool BossController::requestSystemReboot()
+{
+    // Ordinary, non-forced reboot; logind/polkit retains authorization control.
+    const QString program = QStringLiteral("/usr/bin/systemctl");
+    if (!QFileInfo(program).isExecutable()) {
+        qWarning() << "NEEBLES reboot unavailable:" << program;
+        return false;
+    }
+    if (!QProcess::startDetached(program, {QStringLiteral("reboot")})) {
+        qWarning() << "NEEBLES could not launch reboot request";
+        return false;
+    }
+    return true;
+}
+
 void BossController::installBossUpdate()
 {
     if (
