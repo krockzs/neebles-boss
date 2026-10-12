@@ -18,7 +18,7 @@ PlasmoidItem {
     property bool refreshBusy: false
     property bool refreshAgain: false
     property string commandError: ""
-    property string bossVersion: "1.0.46"
+    property string bossVersion: "1.0.47"
 
 
 
@@ -295,7 +295,7 @@ PlasmoidItem {
 
     preferredRepresentation: compactRepresentation
 
-    // 1.0.46: Plasmoid identity remains stable; only child QML is replaceable.
+    // 1.0.47: Plasmoid identity remains stable; only child QML is replaceable.
     compactRepresentation: Loader {
         id: compactLoader
         property var bossRoot: root

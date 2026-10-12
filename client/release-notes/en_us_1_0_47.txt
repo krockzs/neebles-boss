@@ -1,0 +1,3 @@
+NEEBLES Boss 1.0.47
+
+Launcher QML NeeblesSwitch component fix. Verifies Critical Update from 1.0.46 and Launcher/Spacer/Tray reload according to Settings.
