@@ -179,7 +179,7 @@ int main(int argc, char *argv[])
     );
 
     app.setApplicationVersion(
-        QStringLiteral("1.0.41")
+        QStringLiteral("1.0.42")
     );
 
     app.setOrganizationName(
@@ -227,6 +227,11 @@ int main(int argc, char *argv[])
     BossController boss;
 
     QQmlApplicationEngine engine;
+
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("startupMinimized"),
+        qEnvironmentVariable("NEEBLES_BOSS_START_MINIMIZED") == QStringLiteral("1")
+    );
 
     engine.rootContext()->setContextProperty(
         QStringLiteral("boss"),

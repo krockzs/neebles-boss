@@ -1,0 +1,14 @@
+N.E.E.B.L.E.S. Boss 1.0.42
+
+What's new
+
+1. Critical Update without restarting Plasma
+- Updating Boss no longer restarts the plasma-plasmashell service.
+- NEEBLES Launcher, Spacer, and Tray components are refreshed selectively instead.
+- This change is designed to keep the KDE Plasma desktop running while preserving component layout and preferences during handoff.
+
+2. Start Boss with NEEBLES OS
+- New options in Config to start Boss automatically when the NEEBLES OS desktop session begins and to start its window minimized.
+- Both preferences are saved in Boss settings and can be changed independently.
+- Opening Boss manually still shows its window normally.
+- Module startup remains independent of Boss UI startup.

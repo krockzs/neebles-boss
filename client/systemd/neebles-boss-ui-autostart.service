@@ -1,0 +1,12 @@
+[Unit]
+Description=N.E.E.B.L.E.S. Boss UI session autostart
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/neebles/client/bin/neebles start-session
+TimeoutStartSec=30
+
+[Install]
+WantedBy=graphical-session.target

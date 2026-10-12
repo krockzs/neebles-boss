@@ -707,6 +707,8 @@ void BossController::loadConfig()
         QStringLiteral("language"),
         QStringLiteral("tray_enabled"),
         QStringLiteral("launcher_enabled"),
+        QStringLiteral("startup_enabled"),
+        QStringLiteral("startup_minimized"),
         QStringLiteral("normal_notifications"),
         QStringLiteral("telemetry_enabled")
     };
@@ -749,6 +751,9 @@ void BossController::loadConfig()
         map.value(
             QStringLiteral("launcher_enabled")
         ).toBool();
+
+    m_startupEnabled = map.value(QStringLiteral("startup_enabled")).toBool();
+    m_startupMinimized = map.value(QStringLiteral("startup_minimized")).toBool();
 
     m_normalNotifications =
         map.value(
@@ -2670,6 +2675,8 @@ void BossController::saveConfigValue(
         QStringLiteral("language"),
         QStringLiteral("tray_enabled"),
         QStringLiteral("launcher_enabled"),
+        QStringLiteral("startup_enabled"),
+        QStringLiteral("startup_minimized"),
         QStringLiteral("normal_notifications"),
         QStringLiteral("telemetry_enabled")
     };
@@ -2723,6 +2730,24 @@ void BossController::saveConfigValue(
             5000,
             &notificationOk
         );
+    }
+
+    // Synchronize the session user service before persisting the switch.
+    // No sudo, pkexec or system service is involved.
+    if (key == QStringLiteral("startup_enabled")) {
+        QProcess service;
+        service.start(QStringLiteral("/usr/bin/systemctl"), {
+            QStringLiteral("--user"),
+            normalized == QStringLiteral("true") ? QStringLiteral("enable") : QStringLiteral("disable"),
+            QStringLiteral("neebles-boss-ui-autostart.service")
+        });
+        if (!service.waitForStarted(5000) || !service.waitForFinished(10000)
+            || service.exitStatus() != QProcess::NormalExit || service.exitCode() != 0) {
+            setStatusText(QStringLiteral("Unable to update Boss session autostart service: ")
+                + QString::fromUtf8(service.readAllStandardError()));
+            reload();
+            return;
+        }
     }
 
     setBusy(true);

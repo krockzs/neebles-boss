@@ -42,6 +42,7 @@ GLOBAL_DESKTOP="${DESTDIR}/usr/share/applications/org.neebles.Boss.desktop"
 GLOBAL_INSTALLER_DESKTOP="${DESTDIR}/usr/share/applications/org.neebles.Installer.desktop"
 SYSTEMD_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-manager.service"
 TRAY_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-host.service"
+BOSS_UI_AUTOSTART_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-boss-ui-autostart.service"
 TRAY_SNI_HOST_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-tray-sni-host.service"
 NOTIFICATION_PRESENTER_SERVICE="${DESTDIR}/usr/lib/systemd/user/neebles-notification-presenter.service"
 RUNTIME_SERVICE="${DESTDIR}/usr/lib/systemd/system/neebles-runtime.service"
@@ -298,7 +299,7 @@ fi
 # installation the old binary is absent, so there is no update handoff or notes.
 # The probe happens BEFORE replacing client/. No process is stopped here.
 NEEBLES_BOSS_PREVIOUS_VERSION=""
-NEEBLES_BOSS_TARGET_VERSION="1.0.41"
+NEEBLES_BOSS_TARGET_VERSION="1.0.42"
 NEEBLES_BOSS_IS_UPGRADE=0
 if [[ -z "$DESTDIR" && -f "$BIN_DIR/neebles" && -x "$BIN_DIR/neebles" ]]; then
     neebles_boss_previous_version_output="$("$BIN_DIR/neebles" --version)" || {
@@ -925,6 +926,10 @@ ln -sfnT \
 install -d -m 0755 "$(dirname "$SYSTEMD_SERVICE")"
 
 install -m 0644 \
+    "$CLIENT_DATA_SOURCE/systemd/neebles-boss-ui-autostart.service" \
+    "$BOSS_UI_AUTOSTART_SERVICE"
+
+install -m 0644 \
     "$CLIENT_DATA_SOURCE/systemd/neebles-tray-manager.service" \
     "$SYSTEMD_SERVICE"
 
@@ -1225,7 +1230,7 @@ publish_boss_upgrade_receipt() {
     local passwd_record home_dir config_root neebles_config receipt temporary mode
     [[ -z "$DESTDIR" && "$NEEBLES_BOSS_IS_UPGRADE" == 1 ]] || return 0
     [[ "$NEEBLES_BOSS_PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.41' ]] || return 1
+    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '1.0.42' ]] || return 1
     [[ "$DESKTOP_UID" =~ ^[0-9]+$ && "$DESKTOP_GID" =~ ^[0-9]+$ && "$DESKTOP_UID" != '0' ]] || return 1
     passwd_record="$(getent passwd "$DESKTOP_UID")" || return 1
     IFS=: read -r _ _ _ _ _ home_dir _ <<< "$passwd_record"

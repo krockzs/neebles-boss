@@ -23,7 +23,8 @@ pub fn run(args: Vec<String>) -> i32 {
             0
         }
         "--request-json" => request_json(&args),
-        "start" => result(start_boss()),
+        "start" => result(start_boss(false)),
+        "start-session" => result(start_boss(true)),
         "config" => config_command(&args[1..]),
         "domestic" => domestic_command(&args[1..]),
         "external" => external_command(&args[1..]),
@@ -43,10 +44,10 @@ pub fn run(args: Vec<String>) -> i32 {
     }
 }
 
-fn start_boss() -> Result<(), String> {
+fn start_boss(session_autostart: bool) -> Result<(), String> {
     let request = ExecutionRequest {
         target: "boss".to_string(),
-        action: Some("start".to_string()),
+        action: Some(if session_autostart { "start-session" } else { "start" }.to_string()),
         args: Vec::new(),
         context: ExecutionContext {
             caller: "cli".to_string(),
@@ -139,6 +140,8 @@ fn config_command(args: &[String]) -> i32 {
                 "language" => config::set_language(value),
                 "tray_enabled"
                 | "launcher_enabled"
+                | "startup_enabled"
+                | "startup_minimized"
                 | "normal_notifications"
                 | "telemetry_enabled" => {
                     match parse_bool(value) {

@@ -10,13 +10,20 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-pub fn launch_ui() -> Result<(), String> {
+pub fn launch_ui(session_autostart: bool) -> Result<(), String> {
     match surface_state::boss_ui_state() {
         BossUiState::Open | BossUiState::Opening => {
             return Ok(());
         }
 
         BossUiState::Closed => {}
+    }
+
+    // Only the session-autostart action may request the minimized presentation.
+    // A manual start is always a normal visible launch.
+    let minimized = session_autostart && config::load_or_initialize()?.startup_minimized;
+    if session_autostart && !config::load_or_initialize()?.startup_enabled {
+        return Ok(());
     }
 
     let desktop_session =
@@ -93,6 +100,7 @@ pub fn launch_ui() -> Result<(), String> {
             "--setenv=NEEBLES_AUTHORITY_SUPPLY={}",
             authority_supply.display()
         ))
+        .arg(format!("--setenv=NEEBLES_BOSS_START_MINIMIZED={}", if minimized { "1" } else { "0" }))
         .arg(&ui_path)
         .status();
 
@@ -1127,7 +1135,12 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
             }
         }
 
-        Some("start") | Some("open") => match launch_ui() {
+        Some("start") | Some("open") => match launch_ui(false) {
+            Ok(()) => ExecutionResponse::ok(None),
+            Err(error) => ExecutionResponse::fail(1, "ui_launch", error),
+        },
+
+        Some("start-session") => match launch_ui(true) {
             Ok(()) => ExecutionResponse::ok(None),
             Err(error) => ExecutionResponse::fail(1, "ui_launch", error),
         },

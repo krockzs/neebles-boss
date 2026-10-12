@@ -141,5 +141,8 @@
   "modules.transaction.running": "Processing...",
   "modules.transaction.success": "Transaction completed",
   "modules.transaction.failed": "Transaction finished with an error",
-  "modules.transaction.close": "Close"
+  "modules.transaction.close": "Close",
+  "config.startup_title": "Startup",
+  "config.startup_enabled": "Start N.E.E.B.L.E.S. Boss with NEEBLES OS",
+  "config.startup_minimized": "Start minimized"
 }

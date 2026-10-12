@@ -69,7 +69,7 @@ ApplicationWindow {
     height: 640
     minimumWidth: 820
     minimumHeight: 520
-    visible: true
+    visible: !startupMinimized
 
     title: root.t("app.title") + " " + Qt.application.version
     color: "#09090B"
@@ -1199,6 +1199,33 @@ ApplicationWindow {
 
                             width: parent.width
                             spacing: 14
+
+                            Text {
+                                text: root.t("config.startup_title")
+                                color: "#A1A1AA"
+                                font.bold: true
+                                font.pixelSize: 13
+                            }
+
+                            NeeblesSwitch {
+                                id: startupEnabledSwitch
+                                text: root.t("config.startup_enabled")
+                                checked: typeof boss !== "undefined" ? boss.startupEnabled : false
+                                onToggled: root.saveConfigValue("startup_enabled", checked)
+                            }
+
+                            NeeblesSwitch {
+                                id: startupMinimizedSwitch
+                                text: root.t("config.startup_minimized")
+                                checked: typeof boss !== "undefined" ? boss.startupMinimized : false
+                                onToggled: root.saveConfigValue("startup_minimized", checked)
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: "#18181B"
+                            }
 
                             NeeblesSwitch {
                                 id: traySwitch

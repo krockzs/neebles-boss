@@ -17,6 +17,10 @@ pub struct BossConfig {
     pub language: String,
     pub tray_enabled: bool,
     pub launcher_enabled: bool,
+    #[serde(default)]
+    pub startup_enabled: bool,
+    #[serde(default)]
+    pub startup_minimized: bool,
     pub normal_notifications: bool,
     pub telemetry_enabled: bool,
 
@@ -91,6 +95,11 @@ fn schema_json() -> Result<Value, String> {
             "item_visibility": "{}"
         },
 
+        "startup": {
+            "enabled": "false",
+            "minimized": "false"
+        },
+
         "telemetry": {
             "enabled": "false"
         },
@@ -124,6 +133,11 @@ fn seed_local_json_from(seed: BossSeed, language: String) -> Result<Value, Strin
 
         "telemetry": {
             "enabled": seed.telemetry_enabled.to_string()
+        },
+
+        "startup": {
+            "enabled": "false",
+            "minimized": "false"
         },
 
         "ui": {
@@ -200,6 +214,15 @@ fn local_string(local: &Value, path: &str) -> Result<Option<String>, String> {
 fn required_string(local: &Value, path: &str) -> Result<String, String> {
     local_string(local, path)?
         .ok_or_else(|| format!("Boss settings are missing required path '{}'", path))
+}
+
+fn optional_boss_bool(local: &Value, path: &str, fallback: bool) -> Result<bool, String> {
+    match local_string(local, path)? {
+        None => Ok(fallback),
+        Some(value) if value == "true" => Ok(true),
+        Some(value) if value == "false" => Ok(false),
+        Some(value) => Err(format!("Boss setting '{}' contains invalid value '{}'", path, value)),
+    }
 }
 
 fn boss_bool(local: &Value, path: &str) -> Result<bool, String> {
@@ -491,6 +514,9 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
 
         launcher_enabled: boss_bool(&local, "launcher.enabled")?,
 
+        startup_enabled: optional_boss_bool(&local, "startup.enabled", false)?,
+        startup_minimized: optional_boss_bool(&local, "startup.minimized", false)?,
+
         normal_notifications: boss_bool(&local, "ui.normal_notifications")?,
 
         telemetry_enabled: boss_bool(&local, "telemetry.enabled")?,
@@ -544,6 +570,9 @@ pub fn set_bool(key: &str, value: bool) -> Result<BossConfig, String> {
         "tray_enabled" => "tray.enabled",
 
         "launcher_enabled" => "launcher.enabled",
+
+        "startup_enabled" => "startup.enabled",
+        "startup_minimized" => "startup.minimized",
 
         "normal_notifications" => "ui.normal_notifications",
 
@@ -1006,6 +1035,8 @@ mod surface_module_visibility_tests {
             language: "es_CL".to_string(),
             tray_enabled: true,
             launcher_enabled: true,
+            startup_enabled: false,
+            startup_minimized: false,
             normal_notifications: true,
             telemetry_enabled: false,
             modules: BTreeMap::new(),
