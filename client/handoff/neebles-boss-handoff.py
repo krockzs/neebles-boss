@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-TARGET = "1.0.44"
+TARGET = "1.0.45"
 BUS_NAME = "org.neebles.Boss"
 UI_PATH = "/opt/neebles/client/ui/neebles-ui"
 BOSS_PATH = "/opt/neebles/client/bin/neebles"
@@ -193,7 +193,12 @@ def main():
     restore_graphical_environment()
     # A hard safety gate prevents a regression to the old run-p*.service.
     helper_cgroup = Path("/proc/self/cgroup").read_text(encoding="utf-8")
-    if "neebles-boss-upgrade-handoff-1-0-43.service" not in helper_cgroup:
+    # Match the exact versioned transient unit, not a hardcoded prior release.
+    # Prefixes/suffixes must not authorize a different or untrusted cgroup.
+    handoff_unit = f"neebles-boss-upgrade-handoff-{TARGET.replace('.', '-')}.service"
+    cgroup_paths = [line.partition('::')[2] for line in helper_cgroup.splitlines() if '::' in line]
+    if not any(path.endswith('/' + handoff_unit) or ('/' + handoff_unit + '/') in path
+               for path in cgroup_paths):
         raise RuntimeError("Handoff is not isolated in its dedicated user service")
     event("Verified isolated systemd user-service cgroup")
     old = owner_pid(bus_path)

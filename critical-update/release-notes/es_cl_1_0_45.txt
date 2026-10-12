@@ -1,0 +1,5 @@
+NEEBLES Boss 1.0.45
+
+Critical Update: corrige la verificación del servicio aislado de handoff para usar la versión objetivo, sin una versión anterior fija.
+Mantiene la protección de Plasma y los cambios de inicio minimizado.
+Pendiente de aceptación en sistema instalado.

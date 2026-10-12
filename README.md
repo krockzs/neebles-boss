@@ -2,7 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión del código fuente en desarrollo:** **1.0.44**.
+**Versión del código fuente en desarrollo:** **1.0.45**.
 **Última versión estable de referencia:** **1.0.41** (publicada y recuperable).
 **Estado de 1.0.43 (2026-10-12):** correcciones de fuente integradas localmente; pendientes de compilación certificada, publicación y aceptación funcional.
 
@@ -1456,3 +1456,7 @@ Importante: esta versión debe compilarse con Esbirro Qt 6.8.2 y probarse en NEE
 - Servicio de sesión conserva After=graphical-session.target: no se ha demostrado que sea necesaria una espera adicional específica de KWin o Plasma.
 
 Validación pendiente: compilación certificada Esbirro Qt 6.8.2, Rust 1.98.1, pruebas instaladas en X11 y eventualmente Wayland. No afirmar resolución hasta aceptación real.
+
+## Boss 1.0.45 — Critical Update cgroup handoff
+
+La identidad de la unidad transitoria aislada se deriva de TARGET; deja de depender de la versión anterior fija. Compilación Esbirro y aceptación instalada pendientes.

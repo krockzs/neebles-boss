@@ -1,0 +1,5 @@
+NEEBLES Boss 1.0.45
+
+Critical Update: fix the handoff isolated-service verification to derive its name from the target release instead of a hardcoded older version.
+Preserve Plasma safety and minimized startup changes.
+Installed-system acceptance pending.
