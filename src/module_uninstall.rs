@@ -705,7 +705,14 @@ impl UninstallServiceRecovery {
     }
 
     pub fn reactivate(&self, module: &str) -> Result<(), String> {
-        self.restore_with(|entry| restart_originally_active_service(module, entry))
+        self.restore_with(|entry| {
+            crate::module_uninstall_arsenal::systemd_user_restore(
+                module,
+                &entry.unit,
+                &entry.exec_start,
+                entry.timeout_ms,
+            )
+        })
     }
 }
 
@@ -803,6 +810,26 @@ fn restart_originally_active_service(
     }
 }
 
+// Only UninstallServiceRecovery may request this, after TXN V5 verifies
+// the original installation is intact. The Rust adapter reauthenticates the
+// exact unit and effective manager state before any systemctl start.
+pub(crate) fn reactivate_certified_service(
+    module: &str,
+    unit: &str,
+    exec_start: &str,
+    timeout_ms: u64,
+) -> Result<(), String> {
+    restart_originally_active_service(
+        module,
+        &ServicePriorState {
+            unit: unit.to_string(),
+            exec_start: exec_start.to_string(),
+            timeout_ms,
+            was_active: true,
+        },
+    )
+}
+
 pub fn run_extras(
     contract: &UninstallContract,
     module: &str,
@@ -832,7 +859,9 @@ pub fn run_extras(
                     // Register BEFORE issuing stop so a partial stop failure
                     // can also be compensated.
                     recovery.entries.push(state);
-                    stop_service(module, &unit, &command, *required, stop, false)
+                    crate::module_uninstall_arsenal::systemd_user_service(
+                        module, &unit, &command, *required, stop, false,
+                    )
                 })()
             }
         };
@@ -861,7 +890,7 @@ pub fn finalize_service_units(contract: &UninstallContract, module: &str) -> Res
             ..
         } = extra
         {
-            stop_service(
+            crate::module_uninstall_arsenal::systemd_user_service(
                 module,
                 &resolve(name, contract, module)?,
                 &resolve(exec_start, contract, module)?,
