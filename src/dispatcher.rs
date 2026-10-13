@@ -59,7 +59,11 @@ pub fn launch_ui(session_autostart: bool) -> Result<(), String> {
         ));
     }
 
-    let opening_generation = if existing_ui { None } else { Some(surface_state::begin_boss_ui_opening()?) };
+    let opening_generation = if existing_ui {
+        None
+    } else {
+        Some(surface_state::begin_boss_ui_opening()?)
+    };
 
     let setpriv =
         neebles_backend::domestic_runtime_authority::resolve_boss_executable("boss.setpriv")?;
@@ -100,18 +104,25 @@ pub fn launch_ui(session_autostart: bool) -> Result<(), String> {
             "--setenv=NEEBLES_AUTHORITY_SUPPLY={}",
             authority_supply.display()
         ))
-        .arg(format!("--setenv=NEEBLES_BOSS_START_MINIMIZED={}", if minimized { "1" } else { "0" }))
+        .arg(format!(
+            "--setenv=NEEBLES_BOSS_START_MINIMIZED={}",
+            if minimized { "1" } else { "0" }
+        ))
         .arg(&ui_path)
         .status();
 
     match result {
         Ok(status) if status.success() => {
-            if let Some(generation) = opening_generation { surface_state::watch_boss_ui_opening(generation); }
+            if let Some(generation) = opening_generation {
+                surface_state::watch_boss_ui_opening(generation);
+            }
             Ok(())
         }
 
         Ok(status) => {
-            if let Some(generation) = opening_generation { surface_state::cancel_boss_ui_opening(generation); }
+            if let Some(generation) = opening_generation {
+                surface_state::cancel_boss_ui_opening(generation);
+            }
 
             Err(format!(
                 "desktop user manager rejected Boss UI launch with status {status}"
@@ -119,7 +130,9 @@ pub fn launch_ui(session_autostart: bool) -> Result<(), String> {
         }
 
         Err(error) => {
-            if let Some(generation) = opening_generation { surface_state::cancel_boss_ui_opening(generation); }
+            if let Some(generation) = opening_generation {
+                surface_state::cancel_boss_ui_opening(generation);
+            }
 
             Err(format!(
                 "could not launch Boss UI through the desktop user manager: {error}"

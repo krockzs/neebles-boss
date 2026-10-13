@@ -1,0 +1,5 @@
+NEEBLES Boss 1.0.52
+
+Transactional Uninstall: authority checks for module-owned services, compensation on reversible aborts, and explicit handling of post-commit cleanup failures.
+
+Save your work before using Reboot.

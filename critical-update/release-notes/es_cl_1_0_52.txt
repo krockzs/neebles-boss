@@ -1,0 +1,5 @@
+NEEBLES Boss 1.0.52
+
+Uninstall transaccional reforzado: comprobación de propiedad de servicios systemd-user, restauración de servicios previamente activos tras abortos verificables y limpieza post-commit que informa fallos sin simular rollback completo.
+
+Antes de reiniciar, guarda tu trabajo. El botón Reboot debe permanecer disponible en Release Notes.

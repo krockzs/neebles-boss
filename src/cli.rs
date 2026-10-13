@@ -47,7 +47,14 @@ pub fn run(args: Vec<String>) -> i32 {
 fn start_boss(session_autostart: bool) -> Result<(), String> {
     let request = ExecutionRequest {
         target: "boss".to_string(),
-        action: Some(if session_autostart { "start-session" } else { "start" }.to_string()),
+        action: Some(
+            if session_autostart {
+                "start-session"
+            } else {
+                "start"
+            }
+            .to_string(),
+        ),
         args: Vec::new(),
         context: ExecutionContext {
             caller: "cli".to_string(),

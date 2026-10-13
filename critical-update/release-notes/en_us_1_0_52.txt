@@ -1,0 +1,5 @@
+NEEBLES Boss 1.0.52
+
+Hardened transactional Uninstall: explicit ownership checks for systemd-user services, recovery of previously active services after verified aborts, and post-commit cleanup errors reported without implying complete rollback.
+
+Save your work before restarting. The Reboot button must remain available in Release Notes.

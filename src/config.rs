@@ -221,7 +221,10 @@ fn optional_boss_bool(local: &Value, path: &str, fallback: bool) -> Result<bool,
         None => Ok(fallback),
         Some(value) if value == "true" => Ok(true),
         Some(value) if value == "false" => Ok(false),
-        Some(value) => Err(format!("Boss setting '{}' contains invalid value '{}'", path, value)),
+        Some(value) => Err(format!(
+            "Boss setting '{}' contains invalid value '{}'",
+            path, value
+        )),
     }
 }
 
@@ -515,7 +518,8 @@ pub fn load_or_initialize() -> Result<BossConfig, String> {
         launcher_enabled: boss_bool(&local, "launcher.enabled")?,
 
         startup_enabled: optional_boss_bool(&local, "startup.enabled", false)?,
-        startup_minimized: optional_boss_bool(&local, "startup.enabled", false)? && optional_boss_bool(&local, "startup.minimized", false)?,
+        startup_minimized: optional_boss_bool(&local, "startup.enabled", false)?
+            && optional_boss_bool(&local, "startup.minimized", false)?,
 
         normal_notifications: boss_bool(&local, "ui.normal_notifications")?,
 

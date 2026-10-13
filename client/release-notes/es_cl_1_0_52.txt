@@ -1,0 +1,5 @@
+NEEBLES Boss 1.0.52
+
+Uninstall transaccional: verificación de autoridad para servicios del módulo, compensación durante abortos reversibles y tratamiento explícito de errores después del commit.
+
+Guarda tu trabajo antes de pulsar Reboot.

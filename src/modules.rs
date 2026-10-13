@@ -222,6 +222,10 @@ pub struct ModuleManifest {
      */
     #[serde(default)]
     pub settings: Option<String>,
+
+    /* Optional schema-1 declarative teardown checklist. */
+    #[serde(default)]
+    pub uninstall: Option<crate::module_uninstall::UninstallContract>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1945,7 +1949,10 @@ fn install_require_tree(
             &candidate.manifest.version,
         ) {
             return Err(require_install_failure(
-                format!("module '{}' release notes validation failed: {}", module_id, error),
+                format!(
+                    "module '{}' release notes validation failed: {}",
+                    module_id, error
+                ),
                 &mut transaction,
             ));
         }
@@ -2975,9 +2982,11 @@ fn tray_runtime_marker_path(name: &str) -> PathBuf {
 }
 
 fn clear_tray_runtime_marker_if_identity(name: &str, identity: ProcessIdentity) {
-    let path = tray_runtime_marker_path(name);
+    clear_tray_runtime_marker_if_identity_at(&tray_runtime_marker_path(name), identity);
+}
 
-    let matches = fs::read_to_string(&path)
+fn clear_tray_runtime_marker_if_identity_at(path: &Path, identity: ProcessIdentity) {
+    let matches = fs::read_to_string(path)
         .ok()
         .and_then(|value| serde_json::from_str::<ProcessIdentity>(&value).ok())
         == Some(identity);
@@ -2997,8 +3006,14 @@ fn write_tray_runtime_marker(name: &str, identity: ProcessIdentity) -> Result<()
         )
     })?;
 
-    let path = tray_runtime_marker_path(name);
+    write_tray_runtime_marker_at(&tray_runtime_marker_path(name), name, identity)
+}
 
+fn write_tray_runtime_marker_at(
+    path: &Path,
+    name: &str,
+    identity: ProcessIdentity,
+) -> Result<(), String> {
     let payload = serde_json::to_string(&identity).map_err(|error| {
         format!(
             "could not serialize tray runtime ownership for module '{}': {error}",
@@ -3091,6 +3106,46 @@ fn tray_process_group_zombies_only(process_group: u32) -> Result<bool, String> {
 }
 
 #[cfg(test)]
+mod tray_shutdown_grace_regressions {
+    use super::{wait_for_tray_group_quiescence_with, TrayRuntimeGroupObservation as State};
+    use std::time::Duration;
+
+    #[test]
+    fn leader_exit_before_children_is_observed_until_quiescence() {
+        let mut observations = [
+            State::AuthenticatedLeader,
+            State::DrainingWithoutLeader,
+            State::Quiescent,
+        ]
+        .into_iter();
+
+        let result = wait_for_tray_group_quiescence_with(Duration::from_secs(1), || {
+            Ok(observations.next().unwrap_or(State::Quiescent))
+        });
+
+        assert_eq!(result.unwrap(), true);
+    }
+
+    #[test]
+    fn an_unowned_group_still_alive_at_deadline_is_not_treated_as_stopped() {
+        let result = wait_for_tray_group_quiescence_with(Duration::ZERO, || {
+            Ok(State::DrainingWithoutLeader)
+        });
+
+        assert_eq!(result.unwrap(), false);
+    }
+
+    #[test]
+    fn observation_failure_remains_fail_closed() {
+        let result = wait_for_tray_group_quiescence_with(Duration::from_secs(1), || {
+            Err("unreadable /proc group".to_string())
+        });
+
+        assert_eq!(result.unwrap_err(), "unreadable /proc group");
+    }
+}
+
+#[cfg(test)]
 mod tray_proc_group_lifetime_regressions {
     use super::tray_proc_group_state;
 
@@ -3142,12 +3197,34 @@ fn tray_process_group_exists(process_group: u32) -> Result<bool, String> {
     }
 }
 
-fn tray_runtime_group_alive(identity: ProcessIdentity) -> Result<bool, String> {
+/*
+ * A group can be terminating after its authenticated leader has exited.
+ * This is NOT authority to signal it: it is only a read-only observation
+ * for a bounded graceful shutdown window. The distinction is independent
+ * of the executable/interpreter inside the governed group.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrayRuntimeGroupObservation {
+    Quiescent,
+    AuthenticatedLeader,
+    DrainingWithoutLeader,
+}
+
+fn observe_tray_runtime_group(
+    identity: ProcessIdentity,
+) -> Result<TrayRuntimeGroupObservation, String> {
+    use TrayRuntimeGroupObservation::*;
+
     let group_exists = tray_process_group_exists(identity.pid)?;
 
     match process_start_time_ticks(identity.pid)? {
-        Some(start_time_ticks) if start_time_ticks == identity.start_time_ticks => Ok(group_exists),
-
+        Some(start_time_ticks) if start_time_ticks == identity.start_time_ticks => {
+            Ok(if group_exists {
+                AuthenticatedLeader
+            } else {
+                Quiescent
+            })
+        }
         Some(start_time_ticks) => {
             if group_exists {
                 return Err(format!(
@@ -3157,32 +3234,49 @@ fn tray_runtime_group_alive(identity: ProcessIdentity) -> Result<bool, String> {
                     start_time_ticks
                 ));
             }
-
-            Ok(false)
+            Ok(Quiescent)
         }
-
+        None if !group_exists => Ok(Quiescent),
         None => {
-            if group_exists {
-                /*
-                 * After leader reaping, kill(-pgid, 0) also sees zombies.
-                 * Zombies have no execution capacity. Accept quiescence
-                 * ONLY when a complete /proc scan finds group members and
-                 * every one is a terminated zombie/dead process. Any live
-                 * member, unreadable stat or uncertain scan stays fail-closed.
-                 * No signal is ever sent without the authenticated leader.
-                 */
-                if tray_process_group_zombies_only(identity.pid)? {
-                    return Ok(false);
-                }
-
-                return Err(format!(
-                    "tray runtime process group {} remains live after its authenticated leader exited; ownership is unknown",
-                    identity.pid
-                ));
+            /* A live orphan is still unsafe to signal, but may exit on its own. */
+            if tray_process_group_zombies_only(identity.pid)? {
+                Ok(Quiescent)
+            } else {
+                Ok(DrainingWithoutLeader)
             }
-
-            Ok(false)
         }
+    }
+}
+
+/* Preserve fail-closed semantics for callers that need active ownership. */
+fn tray_runtime_group_alive(identity: ProcessIdentity) -> Result<bool, String> {
+    match observe_tray_runtime_group(identity)? {
+        TrayRuntimeGroupObservation::Quiescent => Ok(false),
+        TrayRuntimeGroupObservation::AuthenticatedLeader => Ok(true),
+        TrayRuntimeGroupObservation::DrainingWithoutLeader => Err(format!(
+            "tray runtime process group {} remains live after its authenticated leader exited; ownership is unknown",
+            identity.pid
+        )),
+    }
+}
+
+/* Never signal from this helper: it may outlive the authenticated leader. */
+fn wait_for_tray_group_quiescence_with<F>(
+    timeout: std::time::Duration,
+    mut observe: F,
+) -> Result<bool, String>
+where
+    F: FnMut() -> Result<TrayRuntimeGroupObservation, String>,
+{
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if observe()? == TrayRuntimeGroupObservation::Quiescent {
+            return Ok(true);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 
@@ -3266,13 +3360,15 @@ fn probe_tray_provider_identity(name: &str) -> Result<Option<ProcessIdentity>, S
     }
 
     if !process_identity_is_alive(identity)? {
-        if tray_runtime_group_alive(identity)? {
-            return Ok(Some(identity));
+        match observe_tray_runtime_group(identity)? {
+            TrayRuntimeGroupObservation::Quiescent => {
+                clear_tray_runtime_marker_if_identity(name, identity);
+                return Ok(None);
+            }
+            /* Keep exact marker until termination is certified. */
+            TrayRuntimeGroupObservation::AuthenticatedLeader
+            | TrayRuntimeGroupObservation::DrainingWithoutLeader => return Ok(Some(identity)),
         }
-
-        clear_tray_runtime_marker_if_identity(name, identity);
-
-        return Ok(None);
     }
 
     let contract = resolved_tray_contract(name)?;
@@ -3587,48 +3683,78 @@ pub fn start_tray_provider(name: &str) -> Result<bool, String> {
 }
 
 pub fn stop_tray_provider(name: &str) -> Result<bool, String> {
+    use TrayRuntimeGroupObservation::*;
+
     let Some(identity) = probe_tray_provider_identity(name)? else {
         return Ok(false);
     };
 
-    if !tray_runtime_group_alive(identity)? {
+    let initial = observe_tray_runtime_group(identity)?;
+    if initial == Quiescent {
         clear_tray_runtime_marker_if_identity(name, identity);
-
         return Ok(false);
     }
 
-    signal_tray_runtime_group(identity, libc::SIGTERM)?;
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-
-    while tray_runtime_group_alive(identity)? && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    /* A missing leader never authorizes a group signal. */
+    if initial == AuthenticatedLeader {
+        if let Err(error) = signal_tray_runtime_group(identity, libc::SIGTERM) {
+            /* The leader may have disappeared between the two probes. */
+            if observe_tray_runtime_group(identity)? != DrainingWithoutLeader {
+                return Err(error);
+            }
+        }
     }
 
-    if !tray_runtime_group_alive(identity)? {
+    /*
+     * The leader may exit before bwrap or any arbitrary child executable.
+     * Keep observing within the existing five-second grace period. Never
+     * turn an unowned group into a signal target.
+     */
+    if wait_for_tray_group_quiescence_with(std::time::Duration::from_secs(5), || {
+        observe_tray_runtime_group(identity)
+    })? {
         clear_tray_runtime_marker_if_identity(name, identity);
-
         return Ok(true);
     }
 
-    signal_tray_runtime_group(identity, libc::SIGKILL)?;
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-
-    while tray_runtime_group_alive(identity)? && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    match observe_tray_runtime_group(identity)? {
+        Quiescent => {
+            clear_tray_runtime_marker_if_identity(name, identity);
+            return Ok(true);
+        }
+        DrainingWithoutLeader => {
+            return Err(format!(
+                "tray runtime process group {} still has live members after the graceful shutdown deadline, but its authenticated leader exited; ownership is unknown (no further signal sent)",
+                identity.pid
+            ));
+        }
+        AuthenticatedLeader => {}
     }
 
-    if tray_runtime_group_alive(identity)? {
-        return Err(format!(
-            "tray runtime for module '{}' process group {} did not terminate after SIGKILL",
+    /* SIGKILL is allowed only if the *same* leader still authenticates it. */
+    if let Err(error) = signal_tray_runtime_group(identity, libc::SIGKILL) {
+        if observe_tray_runtime_group(identity)? != DrainingWithoutLeader {
+            return Err(error);
+        }
+    }
+
+    if wait_for_tray_group_quiescence_with(std::time::Duration::from_secs(2), || {
+        observe_tray_runtime_group(identity)
+    })? {
+        clear_tray_runtime_marker_if_identity(name, identity);
+        return Ok(true);
+    }
+
+    match observe_tray_runtime_group(identity)? {
+        Quiescent => {
+            clear_tray_runtime_marker_if_identity(name, identity);
+            Ok(true)
+        }
+        AuthenticatedLeader | DrainingWithoutLeader => Err(format!(
+            "tray runtime for module '{}' process group {} did not terminate after the authenticated shutdown window",
             name, identity.pid
-        ));
+        )),
     }
-
-    clear_tray_runtime_marker_if_identity(name, identity);
-
-    Ok(true)
 }
 
 pub fn start_enabled_tray_providers() -> Result<(), String> {
@@ -4635,6 +4761,217 @@ fn uninstall_without_lifecycle(name: &str, remove_settings: bool) -> Result<(), 
     uninstall_internal(name, remove_settings, None, None)
 }
 
+// Only an unchanged, restored physical installation is eligible to resume
+// user services after an aborted Uninstall. Capturing the prior paths makes
+// missing data and failed staging cleanup observable (Drop alone only logs).
+struct UninstallRecoveryEvidence {
+    module_dir: PathBuf,
+    manifest_bytes: Vec<u8>,
+    data_paths: Vec<PathBuf>,
+    settings_path: Option<PathBuf>,
+    material_root: PathBuf,
+    module: String,
+    had_binding: bool,
+}
+
+impl UninstallRecoveryEvidence {
+    fn capture(
+        module: &str,
+        remove_settings: bool,
+        material_root: &Path,
+        manifest: &ModuleManifest,
+    ) -> Result<Self, String> {
+        let module_dir = find_module_dir(module)?;
+        let manifest_bytes = fs::read(module_dir.join("manifest.json"))
+            .map_err(|error| format!("cannot snapshot uninstall manifest: {error}"))?;
+        let cleanup = match manifest.uninstall.as_ref() {
+            Some(contract) => crate::module_uninstall::cleanup_directories(
+                contract,
+                module,
+                remove_settings,
+                &neebles_root(),
+            )?,
+            None => Vec::new(),
+        };
+        let mut data_paths = Vec::new();
+        for path in cleanup {
+            match fs::symlink_metadata(&path) {
+                Ok(meta) if meta.file_type().is_dir() => data_paths.push(path),
+                Ok(_) => {
+                    return Err("uninstall original cleanup data is not a real directory".into())
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("cannot snapshot uninstall data: {error}")),
+            }
+        }
+        let settings = settings::module_settings_path(&neebles_root(), module);
+        let settings_path = match fs::symlink_metadata(&settings) {
+            Ok(meta) if meta.file_type().is_file() => Some(settings),
+            Ok(_) => return Err("uninstall original settings are not a real file".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(format!("cannot snapshot uninstall settings: {error}")),
+        };
+        let binding_path = material_root.join(module);
+        let had_binding = match fs::symlink_metadata(&binding_path) {
+            Ok(meta) if meta.file_type().is_dir() => true,
+            Ok(_) => {
+                return Err("uninstall original material binding is not a real directory".into())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => {
+                return Err(format!(
+                    "cannot snapshot uninstall material binding: {error}"
+                ))
+            }
+        };
+        Ok(Self {
+            module_dir,
+            manifest_bytes,
+            data_paths,
+            settings_path,
+            material_root: material_root.to_path_buf(),
+            module: module.into(),
+            had_binding,
+        })
+    }
+
+    fn verify(&self) -> Result<(), String> {
+        let installed = find_module_dir(&self.module)?;
+        self.verify_files(&installed)
+    }
+
+    fn verify_files(&self, installed: &Path) -> Result<(), String> {
+        if installed != self.module_dir {
+            return Err("physical module installation returned at a different path".into());
+        }
+        let meta = fs::symlink_metadata(&self.module_dir)
+            .map_err(|error| format!("restored module metadata unavailable: {error}"))?;
+        if !meta.file_type().is_dir() {
+            return Err("restored module is not a real directory".into());
+        }
+        let manifest = fs::read(self.module_dir.join("manifest.json"))
+            .map_err(|error| format!("restored manifest unreadable: {error}"))?;
+        if manifest != self.manifest_bytes {
+            return Err("installed manifest changed during failed uninstall".into());
+        }
+        for path in &self.data_paths {
+            let meta = fs::symlink_metadata(path).map_err(|error| {
+                format!(
+                    "original cleanup data not restored at {}: {error}",
+                    path.display()
+                )
+            })?;
+            if !meta.file_type().is_dir() {
+                return Err(format!(
+                    "original cleanup data is not a real directory: {}",
+                    path.display()
+                ));
+            }
+        }
+        if let Some(path) = &self.settings_path {
+            let meta = fs::symlink_metadata(path).map_err(|error| {
+                format!(
+                    "original settings not restored at {}: {error}",
+                    path.display()
+                )
+            })?;
+            if !meta.file_type().is_file() {
+                return Err(format!(
+                    "original settings no longer a real file: {}",
+                    path.display()
+                ));
+            }
+        }
+        if self.had_binding {
+            neebles_backend::module_material_binding::load_installed_material_binding(
+                &self.material_root,
+                &self.module,
+            )
+            .map_err(|error| format!("original material binding not restored: {error}"))?;
+        } else if fs::symlink_metadata(self.material_root.join(&self.module)).is_ok() {
+            return Err("uninstall created unexpected active material binding".into());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod uninstall_service_rollback_integrity_tests {
+    use super::*;
+
+    fn fixture(root: &Path) -> UninstallRecoveryEvidence {
+        let module_dir = root.join("module");
+        fs::create_dir_all(&module_dir).unwrap();
+        let manifest_bytes = br#"{"name":"fixture"}"#.to_vec();
+        fs::write(module_dir.join("manifest.json"), &manifest_bytes).unwrap();
+        let data = root.join("original-data");
+        fs::create_dir_all(&data).unwrap();
+        let settings = root.join("original-settings.json");
+        fs::write(&settings, "original").unwrap();
+        UninstallRecoveryEvidence {
+            module_dir,
+            manifest_bytes,
+            data_paths: vec![data],
+            settings_path: Some(settings),
+            material_root: root.join("material"),
+            module: "fixture".into(),
+            had_binding: false,
+        }
+    }
+
+    #[test]
+    fn recovery_requires_every_original_resource_to_be_present() {
+        let temp = tempfile::tempdir().unwrap();
+        let evidence = fixture(temp.path());
+        evidence.verify_files(&evidence.module_dir).unwrap();
+        fs::remove_dir_all(&evidence.data_paths[0]).unwrap();
+        let error = evidence.verify_files(&evidence.module_dir).unwrap_err();
+        assert!(error.contains("original cleanup data not restored"));
+        fs::create_dir_all(&evidence.data_paths[0]).unwrap();
+        fs::remove_file(evidence.settings_path.as_ref().unwrap()).unwrap();
+        let error = evidence.verify_files(&evidence.module_dir).unwrap_err();
+        assert!(error.contains("original settings not restored"));
+    }
+
+    #[test]
+    fn recovery_refuses_modified_manifest_and_unsafe_binding() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut evidence = fixture(temp.path());
+        fs::write(evidence.module_dir.join("manifest.json"), "{} tampered").unwrap();
+        assert!(evidence
+            .verify_files(&evidence.module_dir)
+            .unwrap_err()
+            .contains("manifest changed"));
+        fs::write(
+            evidence.module_dir.join("manifest.json"),
+            &evidence.manifest_bytes,
+        )
+        .unwrap();
+        evidence.had_binding = true;
+        // No binding was restored. Do not restart a module missing its
+        // authenticated material, even though module/manifest are present.
+        assert!(evidence
+            .verify_files(&evidence.module_dir)
+            .unwrap_err()
+            .contains("material binding not restored"));
+    }
+
+    #[test]
+    fn recovery_refuses_detached_or_relocated_module() {
+        let temp = tempfile::tempdir().unwrap();
+        let evidence = fixture(temp.path());
+        assert!(evidence
+            .verify_files(&temp.path().join("detached-module"))
+            .unwrap_err()
+            .contains("different path"));
+        fs::remove_dir_all(&evidence.module_dir).unwrap();
+        assert!(evidence
+            .verify_files(&evidence.module_dir)
+            .unwrap_err()
+            .contains("metadata unavailable"));
+    }
+}
+
 fn uninstall_internal(
     name: &str,
     remove_settings: bool,
@@ -4664,7 +5001,59 @@ fn uninstall_internal(
         )?;
     }
 
+    let uninstall_manifest = installed_module_manifest(name)?;
+    // Capture proof of a physically intact installed module *before* stopping
+    // any extra. Rollback recovery is forbidden if any original authority was
+    // not restored, even when the module path happens to exist again.
+    let evidence = UninstallRecoveryEvidence::capture(
+        name,
+        remove_settings,
+        &material_root,
+        &uninstall_manifest,
+    )?;
+    let recovery = if let Some(contract) = uninstall_manifest.uninstall.as_ref() {
+        crate::module_uninstall::run_extras(contract, name, uninstall_manifest.tray.is_some())?
+    } else {
+        crate::module_uninstall::UninstallServiceRecovery::default()
+    };
+
+    let mut commit_started = false;
+    let result = uninstall_after_extras(
+        name,
+        remove_settings,
+        &material_root,
+        &uninstall_manifest,
+        &mut commit_started,
+    );
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if commit_started => Err(error),
+        Err(error) => match evidence.verify() {
+            Err(integrity) => Err(format!(
+                "CRITICAL: uninstall '{name}' failed: {error}; original installation integrity not restored; services NOT restarted: {integrity}"
+            )),
+            Ok(()) => match recovery.reactivate(name) {
+                Ok(()) => Err(format!("uninstall '{name}' aborted: {error}; originally active services restored")),
+                Err(restore) => Err(format!("CRITICAL: uninstall '{name}' aborted: {error}; {restore}")),
+            },
+        },
+    }
+}
+
+// The irreversible marker is set before any material binding finalization or
+// recursive deletion. The caller cannot attempt service recovery after it.
+fn uninstall_after_extras(
+    name: &str,
+    remove_settings: bool,
+    material_root: &Path,
+    uninstall_manifest: &ModuleManifest,
+    commit_started: &mut bool,
+) -> Result<(), String> {
     deactivate_module(name, "uninstall")?;
+
+    // Keep the stopped user unit intact (and enabled if it was enabled) until
+    // the module's reversible staging and deletion have completed. A later
+    // rollback must not restore a module whose service file was already lost.
 
     let path = find_module_dir(name)?;
 
@@ -4699,6 +5088,17 @@ fn uninstall_internal(
         )
     })?;
 
+    let cleanup_paths = if let Some(contract) = uninstall_manifest.uninstall.as_ref() {
+        crate::module_uninstall::cleanup_directories(
+            contract,
+            name,
+            remove_settings,
+            &neebles_root(),
+        )?
+    } else {
+        Vec::new()
+    };
+
     let removal_path = removal_root.join(format!("uninstall-{name}-{}", transaction_id()));
 
     if removal_path.exists() {
@@ -4715,6 +5115,22 @@ fn uninstall_internal(
             removal_path.display()
         )
     })?;
+
+    // Extra module-data directories follow the same rollback boundary as the
+    // active module directory. The guard restores them if any later step fails.
+    let staged_extra_cleanup = match crate::module_uninstall::stage_cleanup(
+        &cleanup_paths,
+        &removal_root,
+        name,
+    ) {
+        Ok(staged) => staged,
+        Err(error) => {
+            return match fs::rename(&removal_path, &path) {
+                Ok(()) => Err(format!("could not stage module cleanup '{name}': {error}; installation restored")),
+                Err(rollback_error) => Err(format!("CRITICAL: module cleanup '{name}' failed: {error}; installation rollback failed: {rollback_error}")),
+            };
+        }
+    };
 
     /*
      * When settings must be removed, stage them instead of
@@ -4763,7 +5179,7 @@ fn uninstall_internal(
 
     let mut staged_material_binding =
         match neebles_backend::module_material_binding::stage_material_binding_removal(
-            &material_root,
+            material_root,
             name,
         ) {
             Ok(removal) => removal,
@@ -4840,45 +5256,40 @@ fn uninstall_internal(
      * The material binding must therefore stop being active before
      * destruction of the detached module copy is attempted.
      */
+    *commit_started = true;
     if let Some(binding) = staged_material_binding.take() {
         binding.finalize();
     }
 
     /*
-     * Installation and Boss state are now detached.
-     * Destroy the staged copy last.
+     * Every step from this point is POST-COMMIT. A failure deleting the
+     * detached installation must not trigger StagedCleanup::drop() rollback:
+     * that could resurrect user data after irreversible module removal.
+     * Independent cleanups and service-unit retirement must still run.
      */
-    if let Err(error) = fs::remove_dir_all(&removal_path) {
-        /*
-         * Module files could not be destroyed.
-         * Do not destroy staged local settings either.
-         */
-        if let Some(staged) = staged_settings_path.as_ref() {
-            let _ = fs::rename(staged, &local_settings_path);
-        }
+    let mut post_commit_errors = finalize_uninstall_files_after_commit(
+        &removal_path,
+        staged_settings_path.as_deref(),
+        &local_settings_path,
+        staged_extra_cleanup,
+    );
 
-        return Err(format!(
-            "module '{}' was removed from the active installation and its Boss state was cleaned, but uninstall staging {} could not be deleted: {error}",
-            name,
-            removal_path.display()
-        ));
+    // Only now retire the module-owned desktop service. Rollback before this
+    // point has always retained the original unit file and enablement.
+    if let Some(contract) = uninstall_manifest.uninstall.as_ref() {
+        if let Err(error) = crate::module_uninstall::finalize_service_units(contract, name) {
+            post_commit_errors.push(format!("systemd-user unit cleanup incomplete: {error}"));
+        }
     }
 
-    /*
-     * Module uninstall is finalized.
-     *
-     * Only now destroy local settings that were selected for
-     * removal. Preserved settings never left their final path.
-     */
-    if let Some(staged) = staged_settings_path.as_ref() {
-        if let Err(error) = fs::remove_file(staged) {
-            let _ = fs::rename(staged, &local_settings_path);
-
-            return Err(format!(
-                "module '{}' was uninstalled, but its local settings could not be removed and were preserved instead: {error}",
-                name
-            ));
-        }
+    if !post_commit_errors.is_empty() {
+        // The module really is absent; surface ownership must not stay stale
+        // merely because a post-commit cleanup was incomplete.
+        broadcast_surface_module_change(name, "uninstall");
+        return Err(format!(
+            "CRITICAL: module '{name}' has already been uninstalled; post-commit cleanup incomplete: {}",
+            post_commit_errors.join("; ")
+        ));
     }
 
     if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
@@ -4896,6 +5307,130 @@ fn uninstall_internal(
     }
 
     Ok(())
+}
+
+// This phase begins ONLY after the irreversible commit marker is set.
+// Consume the cleanup guard on every path, even when the main staged module
+// cannot be completely deleted; otherwise its Drop would restore data.
+fn finalize_uninstall_files_after_commit(
+    removal_path: &Path,
+    staged_settings_path: Option<&Path>,
+    local_settings_path: &Path,
+    staged_extra_cleanup: crate::module_uninstall::StagedCleanup,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    let module_cleanup_failed = match fs::remove_dir_all(removal_path) {
+        Ok(()) => false,
+        Err(error) => {
+            errors.push(format!(
+                "detached module staging {} cleanup incomplete: {error}",
+                removal_path.display()
+            ));
+            true
+        }
+    };
+
+    if let Some(staged) = staged_settings_path {
+        // If deleting the detached module failed, preserve its user settings
+        // for manual recovery, without suggesting the installation rolled back.
+        if module_cleanup_failed {
+            if let Err(error) = fs::rename(staged, local_settings_path) {
+                errors.push(format!(
+                    "local settings {} could not be preserved after partial module deletion: {error}",
+                    staged.display()
+                ));
+            }
+        } else if let Err(error) = fs::remove_file(staged) {
+            if let Err(restore_error) = fs::rename(staged, local_settings_path) {
+                errors.push(format!(
+                    "local settings could not be deleted ({error}) or restored ({restore_error})"
+                ));
+            } else {
+                errors.push(format!(
+                    "local settings could not be deleted and were preserved: {error}"
+                ));
+            }
+        }
+    }
+
+    // Always consume/finalize the guard. On any error it remains detached;
+    // cleanup can fail independently, but user data must never reappear.
+    if let Err(error) = staged_extra_cleanup.finalize() {
+        errors.push(error);
+    }
+    errors
+}
+
+#[cfg(test)]
+mod uninstall_post_commit_files_tests {
+    use super::*;
+
+    fn prepared_data(root: &Path) -> (PathBuf, PathBuf, crate::module_uninstall::StagedCleanup) {
+        let original = root.join("original-user-data");
+        fs::create_dir(&original).unwrap();
+        fs::write(original.join("value"), "DATA").unwrap();
+        let staging = root.join("staging");
+        fs::create_dir(&staging).unwrap();
+        let guard =
+            crate::module_uninstall::stage_cleanup(&[original.clone()], &staging, "fixture")
+                .unwrap();
+        assert!(!original.exists());
+        (original, staging, guard)
+    }
+
+    #[test]
+    fn failed_main_staging_deletion_does_not_resurrect_data() {
+        let temp = tempfile::tempdir().unwrap();
+        let (original, staging, guard) = prepared_data(temp.path());
+        let detached_module = temp.path().join("detached-module");
+        fs::write(&detached_module, "BLOCKER").unwrap();
+        let staged_settings = temp.path().join("settings.staged");
+        let original_settings = temp.path().join("settings.json");
+        fs::write(&staged_settings, "USER-VALUES").unwrap();
+
+        // remove_dir_all of a file fails deterministically regardless of UID.
+        let errors = finalize_uninstall_files_after_commit(
+            &detached_module,
+            Some(&staged_settings),
+            &original_settings,
+            guard,
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("detached module staging"));
+        assert!(detached_module.is_file());
+        assert!(!original.exists(), "never restore data after commit");
+        assert_eq!(fs::read_dir(&staging).unwrap().count(), 0);
+        assert_eq!(
+            fs::read_to_string(original_settings).unwrap(),
+            "USER-VALUES"
+        );
+        assert!(!staged_settings.exists());
+    }
+
+    #[test]
+    fn successful_post_commit_cleanup_removes_all_detached_resources() {
+        let temp = tempfile::tempdir().unwrap();
+        let (original, staging, guard) = prepared_data(temp.path());
+        let detached_module = temp.path().join("detached-module");
+        fs::create_dir(&detached_module).unwrap();
+        fs::write(detached_module.join("payload"), "MODULE").unwrap();
+        let staged_settings = temp.path().join("settings.staged");
+        let original_settings = temp.path().join("settings.json");
+        fs::write(&staged_settings, "USER-VALUES").unwrap();
+
+        let errors = finalize_uninstall_files_after_commit(
+            &detached_module,
+            Some(&staged_settings),
+            &original_settings,
+            guard,
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(!detached_module.exists());
+        assert!(!original.exists());
+        assert_eq!(fs::read_dir(&staging).unwrap().count(), 0);
+        assert!(!staged_settings.exists());
+        assert!(!original_settings.exists());
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5134,7 +5669,6 @@ fn format_live_update_failure_with_binding(
     }
 }
 
-
 // NEEBLES_MODULE_CRITICAL_MANIFEST_GATE_B4
 // This gate does NOT execute module critical instructions. It prevents a
 // non-empty manifest from being silently ignored until a separate, scoped
@@ -5173,7 +5707,10 @@ fn validate_staged_module_critical_manifest(candidate: &Path) -> Result<(), Stri
     }
     let instructions: Vec<String> = serde_json::from_slice(&bytes)
         .map_err(|error| format!("module critical-update expects an array of strings: {error}"))?;
-    if instructions.iter().any(|instruction| instruction.trim().is_empty()) {
+    if instructions
+        .iter()
+        .any(|instruction| instruction.trim().is_empty())
+    {
         return Err("module critical-update contains an empty instruction".to_string());
     }
     if !instructions.is_empty() {
@@ -5195,7 +5732,9 @@ fn validate_staged_module_release_notes(
     // 'version' has already passed manifest semver + immutable Registry comparison.
     // Limit the possible filename surface further, regardless of manifest parser.
     if !version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
-        || version.is_empty() || version.starts_with('.') || version.ends_with('.')
+        || version.is_empty()
+        || version.starts_with('.')
+        || version.ends_with('.')
         || version.contains("..")
     {
         return Err(format!("unsafe module release-notes version: {version}"));
@@ -5223,9 +5762,7 @@ fn validate_staged_module_release_notes(
     // Current release notes may be absent for legacy modules, but all
     // notes that are present must be valid.
     let _version_suffix = version_suffix;
-    for entry in fs::read_dir(&subdir)
-        .map_err(|e| format!("release-notes inventory: {e}"))?
-    {
+    for entry in fs::read_dir(&subdir).map_err(|e| format!("release-notes inventory: {e}"))? {
         let entry = entry.map_err(|e| format!("release-notes entry: {e}"))?;
         let name = entry.file_name();
         let name = name.to_str().ok_or("release-notes filename not UTF-8")?;
@@ -5239,8 +5776,8 @@ fn validate_staged_module_release_notes(
         let recognized = ["es_cl_", "en_us_"].iter().any(|prefix| {
             if let Some(rest) = name.strip_prefix(prefix) {
                 if let Some(stem) = rest.strip_suffix(".txt") {
-                    return !stem.is_empty() && stem.bytes().all(|c|
-                        c.is_ascii_digit() || c == b'_');
+                    return !stem.is_empty()
+                        && stem.bytes().all(|c| c.is_ascii_digit() || c == b'_');
                 }
             }
             false
@@ -5253,8 +5790,8 @@ fn validate_staged_module_release_notes(
         }
         // Every historical note is part of the published inventory.
         // Do not accept malformed old files just because the new version differs.
-        let bytes = fs::read(entry.path())
-            .map_err(|e| format!("release-notes read error {name}: {e}"))?;
+        let bytes =
+            fs::read(entry.path()).map_err(|e| format!("release-notes read error {name}: {e}"))?;
         if bytes.len() > 65536 || std::str::from_utf8(&bytes).is_err() {
             return Err(format!("release-notes invalid content: {name}"));
         }
@@ -6450,6 +6987,10 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
         }
     }
 
+    if let Some(uninstall) = manifest.uninstall.as_ref() {
+        crate::module_uninstall::validate(uninstall, &manifest.name, manifest.tray.is_some())?;
+    }
+
     validate_module_language_contract(module_dir)?;
 
     /*
@@ -6607,6 +7148,7 @@ mod require_candidate_contract_tests {
             notifications: None,
 
             settings: None,
+            uninstall: None,
         }
     }
 
@@ -6767,6 +7309,7 @@ mod lifecycle_contract_reference_tests {
             tray: None,
             notifications: None,
             settings: None,
+            uninstall: None,
         }
     }
 
@@ -7507,6 +8050,8 @@ mod point2_tray_governed_runtime_tests {
     #[test]
     fn stale_waiter_cannot_clear_newer_tray_runtime_marker() {
         let name = unique_marker_name("marker");
+        let temp = tempfile::tempdir().expect("isolated tray marker fixture");
+        let path = temp.path().join(format!("{name}.tray.pid"));
 
         let old = ProcessIdentity {
             pid: 10001,
@@ -7518,26 +8063,23 @@ mod point2_tray_governed_runtime_tests {
             start_time_ticks: 222,
         };
 
-        write_tray_runtime_marker(&name, old).expect("old marker must write");
+        write_tray_runtime_marker_at(&path, &name, old).expect("old marker must write");
 
-        write_tray_runtime_marker(&name, new).expect("new marker must replace old marker");
+        write_tray_runtime_marker_at(&path, &name, new)
+            .expect("new marker must replace old marker");
 
-        clear_tray_runtime_marker_if_identity(&name, old);
+        clear_tray_runtime_marker_if_identity_at(&path, old);
 
-        let raw = fs::read_to_string(tray_runtime_marker_path(&name))
-            .expect("new marker must survive stale waiter cleanup");
+        let raw = fs::read_to_string(&path).expect("new marker must survive stale waiter cleanup");
 
         let observed: ProcessIdentity =
             serde_json::from_str(&raw).expect("marker must remain valid");
 
         assert_eq!(observed, new);
 
-        clear_tray_runtime_marker_if_identity(&name, new);
+        clear_tray_runtime_marker_if_identity_at(&path, new);
 
-        assert!(
-            !tray_runtime_marker_path(&name).exists(),
-            "exact current identity must clear marker"
-        );
+        assert!(!path.exists(), "exact current identity must clear marker");
     }
 
     #[test]
@@ -7685,7 +8227,6 @@ mod point2_tray_governed_runtime_tests {
         let _ = child.wait();
     }
 }
-
 
 // NEEBLES_MODULE_CRITICAL_MANIFEST_GATE_B4_TESTS
 #[cfg(test)]

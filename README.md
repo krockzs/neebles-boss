@@ -2,17 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión del código fuente en desarrollo:** **1.0.51**.
-**Última versión estable de referencia:** **1.0.41** (publicada y recuperable).
-**Estado de 1.0.43 (2026-10-12):** correcciones de fuente integradas localmente; pendientes de compilación certificada, publicación y aceptación funcional.
-
-### Cambios incorporados en el código de 1.0.42
-
-- **Critical Update sin reinicio completo de Plasma:** el handoff intenta renovar de forma selectiva Launcher, Spacer y los servicios Tray, manteniendo `plasmashell` en ejecución. Pendiente de confirmar en una actualización real que los plasmoides, sus preferencias y el escritorio sobreviven correctamente.
-- **Startup de Boss UI:** preferencias separadas de inicio automático y de inicio minimizado, disponibles en **Config**, con traducciones `es_CL` y `en_US`; unidad `neebles-boss-ui-autostart.service` del usuario y camino `neebles start-session`. La apertura manual con `neebles start` sigue siendo visible. Pendiente de compilación y prueba tras reinicio de NEEBLES OS.
-- **Privilegios:** revisión de las rutas de autorización sin modificaciones a Polkit ni al Auth Agent. Las operaciones administrativas siguen requiriendo privilegios donde corresponde.
-
-**Límite de aceptación:** la presencia de código, release notes y comprobaciones estáticas no demuestra compilación ni correcto comportamiento en Plasma.
+**Version:** **1.0.52**.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -986,11 +976,53 @@ NoActiveModule
 
 The rollback classification is derived from the filesystem reality that survives the failed operation, not from a guessed textual phase.
 
-### Uninstall
+### Uninstall — transactional teardown (TXN V5)
 
-Binding removal is staged transactionally. If uninstall does not finalize, the previous binding can be restored. Once uninstall is committed and the module is no longer active, the active binding is removed.
+Uninstall is a Boss-governed, fail-closed transaction. A module declares the resources it owns; Boss authenticates their identity, coordinates their shutdown, detaches installed material, and retires module state. A module's implementation language does not create a technology-specific uninstall path.
 
-This keeps installed module state, physical module state and authenticated runtime-material truth synchronized.
+The optional `manifest.uninstall` contract uses schema **1**. Its `main` authority is `governor`; the `hardcoded` values are resolved through the existing Battlefield resolver. Its `extras` describe additional governed resources or module-owned `systemd-user` services; `cleanup` describes module-data directories and optional local settings. `failure.unknown_process_owner`, `failure.resource_still_running`, and `failure.cleanup_error` use the `abort` policy. The declared contract is validated before resource shutdown begins.
+
+#### Resource ownership and shutdown
+
+- Installed dependents are checked before Lifecycle or filesystem mutation. An installed module required by another installed module cannot be uninstalled.
+- Governor executes the module's declared `uninstall` Lifecycle transition. Boss then quiesces additional declared resources and deactivates the governed module runtime. A Tray provider already managed by Boss is not stopped a second time.
+- A declared `systemd-user` unit must belong to the module's `neebles-<module>-*.service` namespace. Boss checks the desktop-user identity, unit ownership, file contents, `ExecStart`, manager fragment and service state instead of trusting a process name or arbitrary unit path. Stop is bounded by the declared timeout and verifies inactivity.
+- Desktop service units are stopped while their original definitions remain available for compensation. Final disabling and unit-file retirement occur only after the uninstall crosses the commit boundary.
+- Cleanup directories are restricted to normal relative paths under the module's `shared/data/<module>` territory. Path traversal, symlinked parents, non-directory paths, overlapping cleanup declarations and foreign service resources are rejected.
+
+#### Transaction boundaries
+
+```text
+installed dependency check
+    -> Governor uninstall transition
+    -> capture original installation and service identity
+    -> validate and quiesce declared extras
+    -> deactivate governed runtime
+    -> stage module installation outside the active modules tree
+    -> stage selected module-data directories and local settings
+    -> stage authenticated MaterialBinding removal
+    -> remove Boss-owned module state
+    -> irreversible commit boundary
+    -> finalize detached filesystem material
+    -> retire declared systemd-user units
+    -> report lifecycle result
+```
+
+The detached installation, selected module-data directories, local settings, and active MaterialBinding participate in the same transaction. Meaningful local settings are preserved unless removal is explicitly requested; `cleanup` entries marked `user-choice` follow that decision. Permanent, verified Essential and module-delta DEB pools are reusable material and are not erased merely because a module is uninstalled.
+
+#### Abort and service compensation
+
+Before commit, a failed uninstall restores staged resources instead of treating a partially detached module as absent. Boss records which declared user services were originally active and compensates them **in reverse order**, restarting only those that were active before shutdown. A partially failed service stop is included in that recovery record.
+
+Service reactivation requires the original module path, byte-identical module manifest, previously existing data and settings paths, and authenticated MaterialBinding state to be restored. Boss also revalidates the original user unit, ownership, contents, `ExecStart` and systemd manager identity. If any authority or physical resource cannot be re-established, reactivation is refused and a `CRITICAL` error is returned rather than launching an unknown or incomplete installation. Individual service recovery failures are accumulated rather than masking other compensations.
+
+#### Post-commit cleanup
+
+The irreversible boundary is entered before MaterialBinding finalization or destructive deletion. **Once deletion begins, rollback is forbidden.** Detached data must never be silently resurrected after a partial removal.
+
+Filesystem cleanup continues across independent resources and collects failures instead of aborting on the first `remove_dir_all` error. The module-data staging guard is always consumed/finalized, including when deletion of the detached main module fails, so its destructor cannot restore user data after commit. If the main detached module cannot be fully deleted, selected local settings are preserved for manual recovery where possible. Service-unit retirement is still attempted independently; cleanup failures are surfaced as post-commit errors, not mislabeled as a successful rollback.
+
+This contract distinguishes a **reversible abort** from a **committed uninstall with incomplete residual cleanup**. Boss does not substitute host tools, follow arbitrary symlinks or execute module-supplied privileged shell cleanup in order to make either result appear successful.
 
 ---
 
