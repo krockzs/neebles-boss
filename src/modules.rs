@@ -5274,11 +5274,13 @@ fn uninstall_after_extras(
         staged_extra_cleanup,
     );
 
-    // Only now retire the module-owned desktop service. Rollback before this
+    // Only now retire module-owned startup resources. Rollback before this
     // point has always retained the original unit file and enablement.
     if let Some(contract) = uninstall_manifest.uninstall.as_ref() {
         if let Err(error) = crate::module_uninstall::finalize_service_units(contract, name) {
-            post_commit_errors.push(format!("systemd-user unit cleanup incomplete: {error}"));
+            post_commit_errors.push(format!(
+                "module startup resources cleanup incomplete: {error}"
+            ));
         }
     }
 

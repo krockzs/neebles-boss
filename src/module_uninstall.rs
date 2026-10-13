@@ -80,6 +80,16 @@ pub enum Extra {
         #[serde(default)]
         remove: bool,
     },
+    // A desktop startup registration is an executable resource, NEVER user data.
+    // Uninstall retires it irrespective of the decision to preserve Settings.
+    Autostart {
+        id: String,
+        provider: String,
+        name: String,
+        exec_start: String,
+        #[serde(default)]
+        required: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +186,67 @@ fn validate_service_name(module: &str, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+// Identical ownership namespace to systemd-user, but different artifact type.
+fn validate_autostart_name(module: &str, name: &str) -> Result<(), String> {
+    let prefix = format!("neebles-{module}-");
+    if !name.starts_with(&prefix)
+        || !name.ends_with(".desktop")
+        || name.len() <= prefix.len() + ".desktop".len()
+        || name.contains("..")
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return Err(format!(
+            "uninstall autostart '{name}' is outside owned module namespace"
+        ));
+    }
+    Ok(())
+}
+
+// No shell grammar or XDG field codes; each artifact must identify a literal
+// command whose executable or direct script is inside this module.
+fn validate_autostart_text(contents: &str, expected: &str) -> Result<(), String> {
+    let mut in_desktop = false;
+    let mut sections = 0usize;
+    let mut entry_type = 0usize;
+    let mut entry_exec = 0usize;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_desktop = line == "[Desktop Entry]";
+            if in_desktop {
+                sections += 1;
+            }
+            continue;
+        }
+        if !in_desktop {
+            continue;
+        }
+        if let Some((key, val)) = line.split_once('=') {
+            if key == "Type" {
+                entry_type += 1;
+                if val != "Application" {
+                    return Err("autostart Type must be Application".into());
+                }
+            }
+            if key == "Exec" {
+                entry_exec += 1;
+                if val != expected {
+                    return Err("autostart Exec differs from owned module declaration".into());
+                }
+            }
+        }
+    }
+    if sections != 1 || entry_type != 1 || entry_exec != 1 {
+        return Err("autostart requires exactly one Desktop Entry, Type and Exec".into());
+    }
+    Ok(())
+}
+
 fn validate_service_exec_start(expected: &str, module: &str) -> Result<(), String> {
     // Systemd's quoting/escaping grammar is deliberately not guessed here.
     // Schema 1 accepts an unambiguous argv spelling. More complex launchers
@@ -265,7 +336,9 @@ pub fn validate(contract: &UninstallContract, module: &str, has_tray: bool) -> R
     let mut ids = BTreeSet::new();
     for extra in &contract.extras {
         let id = match extra {
-            Extra::Governed { id, .. } | Extra::Service { id, .. } => id,
+            Extra::Governed { id, .. }
+            | Extra::Service { id, .. }
+            | Extra::Autostart { id, .. } => id,
         };
         if id.trim().is_empty() || !ids.insert(id.as_str()) {
             return Err(format!("duplicate/empty uninstall resource id: {id}"));
@@ -311,9 +384,26 @@ pub fn validate(contract: &UninstallContract, module: &str, has_tray: bool) -> R
                 }
                 validate_service_name(module, &resolve(name, contract, module)?)?;
                 validate_service_exec_start(&resolve(exec_start, contract, module)?, module)?;
-                if *remove && !stop.disable {
-                    return Err("uninstall service removal requires stop.disable=true".into());
+                // A module being UNINSTALLED must never retain an enabled
+                // service, even when Settings are kept by the user.
+                if !*remove || !stop.disable {
+                    return Err(
+                        "uninstall always requires service remove=true and stop.disable=true"
+                            .into(),
+                    );
                 }
+            }
+            Extra::Autostart {
+                provider,
+                name,
+                exec_start,
+                ..
+            } => {
+                if provider != "xdg-user" {
+                    return Err("uninstall autostart requires provider=xdg-user".into());
+                }
+                validate_autostart_name(module, &resolve(name, contract, module)?)?;
+                validate_service_exec_start(&resolve(exec_start, contract, module)?, module)?;
             }
         }
     }
@@ -830,6 +920,91 @@ pub(crate) fn reactivate_certified_service(
     )
 }
 
+// Checked at pre-commit and again at retirement. No arbitrary startup
+// directories, symlink following, foreign executables or foreign ownership.
+fn inspect_owned_autostart(
+    module: &str,
+    name: &str,
+    exec_start: &str,
+    required: bool,
+) -> Result<Option<PathBuf>, String> {
+    validate_autostart_name(module, name)?;
+    validate_service_exec_start(exec_start, module)?;
+    let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+    if uid == 0 {
+        return Err("uninstall cannot manage root XDG autostart".into());
+    }
+    let home = desktop_home(uid)?;
+    let mut parent = home.clone();
+    for part in [".config", "autostart"] {
+        parent.push(part);
+        match fs::symlink_metadata(&parent) {
+            Ok(meta)
+                if meta.file_type().is_dir()
+                    && meta.uid() == uid
+                    && meta.gid() == gid
+                    && meta.mode() & 0o002 == 0 => {}
+            Ok(_) => {
+                return Err(format!(
+                    "uninstall autostart parent not owned real directory: {}",
+                    parent.display()
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if required {
+                    return Err(format!("required autostart '{name}' is missing"));
+                }
+                return Ok(None);
+            }
+            Err(error) => return Err(format!("uninstall autostart parent inspection: {error}")),
+        }
+    }
+    let path = parent.join(name);
+    let meta = match fs::symlink_metadata(&path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if required {
+                return Err(format!("required autostart '{name}' is absent"));
+            }
+            return Ok(None);
+        }
+        Err(error) => return Err(format!("uninstall autostart inspection: {error}")),
+    };
+    if !meta.file_type().is_file()
+        || meta.uid() != uid
+        || meta.gid() != gid
+        || meta.mode() & 0o002 != 0
+    {
+        return Err(format!(
+            "uninstall autostart '{name}' owner/type/mode mismatch"
+        ));
+    }
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| format!("uninstall autostart read failed: {error}"))?;
+    validate_autostart_text(&contents, exec_start)?;
+    Ok(Some(path))
+}
+
+// Post-commit only: a successful uninstall may not retain a module-owned
+// desktop autostart; the user Settings choice is deliberately not an input.
+pub(crate) fn retire_owned_autostart(
+    module: &str,
+    name: &str,
+    exec_start: &str,
+    required: bool,
+) -> Result<(), String> {
+    if let Some(path) = inspect_owned_autostart(module, name, exec_start, required)? {
+        fs::remove_file(&path).map_err(|e| format!("cannot retire owned autostart: {e}"))?;
+        if fs::symlink_metadata(&path).is_ok() {
+            return Err(format!(
+                "uninstall autostart '{}' remains after retirement",
+                name
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn run_extras(
     contract: &UninstallContract,
     module: &str,
@@ -843,6 +1018,21 @@ pub fn run_extras(
             Extra::Governed { .. } => {
                 // The governed Tray is stopped by Boss's existing lifecycle.
                 Ok(())
+            }
+            Extra::Autostart {
+                name,
+                exec_start,
+                required,
+                ..
+            } => {
+                // Pre-commit only validates; it never deletes on this path.
+                inspect_owned_autostart(
+                    module,
+                    &resolve(name, contract, module)?,
+                    &resolve(exec_start, contract, module)?,
+                    *required,
+                )
+                .map(|_| ())
             }
             Extra::Service {
                 name,
@@ -880,27 +1070,50 @@ pub fn run_extras(
 }
 
 pub fn finalize_service_units(contract: &UninstallContract, module: &str) -> Result<(), String> {
+    // Best-effort *all independent* retirements after irreversible commit.
+    // Report every failure; NEVER call rollback once the module is gone.
+    let mut errors = Vec::new();
     for extra in &contract.extras {
-        if let Extra::Service {
-            name,
-            exec_start,
-            required,
-            stop,
-            remove: true,
-            ..
-        } = extra
-        {
-            crate::module_uninstall_arsenal::systemd_user_service(
+        let result = match extra {
+            Extra::Governed { .. } => Ok(()),
+            Extra::Service {
+                name,
+                exec_start,
+                required,
+                stop,
+                ..
+            } => crate::module_uninstall_arsenal::systemd_user_service(
                 module,
                 &resolve(name, contract, module)?,
                 &resolve(exec_start, contract, module)?,
                 *required,
                 stop,
                 true,
-            )?;
+            ),
+            Extra::Autostart {
+                name,
+                exec_start,
+                required,
+                ..
+            } => crate::module_uninstall_arsenal::xdg_user_autostart(
+                module,
+                &resolve(name, contract, module)?,
+                &resolve(exec_start, contract, module)?,
+                *required,
+            ),
+        };
+        if let Err(error) = result {
+            errors.push(error);
         }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "CRITICAL: module startup resource retirement incomplete: {}",
+            errors.join("; ")
+        ))
+    }
 }
 
 pub fn cleanup_directories(
@@ -995,6 +1208,60 @@ mod tests {
             "$hardcoded.cache"
         );
     }
+    #[test]
+    fn uninstall_services_must_always_be_removed_even_with_settings_preserved() {
+        let mut contract = example();
+        if let Extra::Service { remove, .. } = &mut contract.extras[1] {
+            *remove = false;
+        }
+        assert!(validate(&contract, "test-module", true)
+            .unwrap_err()
+            .contains("remove=true"));
+        let mut contract = example();
+        if let Extra::Service { stop, .. } = &mut contract.extras[1] {
+            stop.disable = false;
+        }
+        assert!(validate(&contract, "test-module", true)
+            .unwrap_err()
+            .contains("disable=true"));
+        // The only user-choice branch is Cleanup::Settings / Cleanup::Directory.
+        let contract = example();
+        assert!(matches!(
+            &contract.extras[1],
+            Extra::Service { remove: true, .. }
+        ));
+        validate(&contract, "test-module", true).unwrap();
+    }
+
+    #[test]
+    fn xdg_autostart_requires_module_owned_name_and_exec() {
+        let mut contract = example();
+        contract.extras.push(Extra::Autostart {
+            id: "ui-startup".into(),
+            provider: "xdg-user".into(),
+            name: "neebles-test-module-ui.desktop".into(),
+            exec_start: "/opt/neebles/modules/test-module/runtime.py".into(),
+            required: false,
+        });
+        validate(&contract, "test-module", true).unwrap();
+        let len = contract.extras.len();
+        if let Extra::Autostart { name, .. } = &mut contract.extras[len - 1] {
+            *name = "neebles-othermodule-ui.desktop".into();
+        }
+        assert!(validate(&contract, "test-module", true).is_err());
+    }
+
+    #[test]
+    fn xdg_autostart_rejects_ambiguous_desktop_entries() {
+        let exec = "/opt/neebles/modules/test-module/runtime.py";
+        let valid = format!("[Desktop Entry]\nType=Application\nName=NEEBLES Test\nExec={exec}\n");
+        validate_autostart_text(&valid, exec).unwrap();
+        let duplicate = format!("{valid}Exec={exec}\n");
+        assert!(validate_autostart_text(&duplicate, exec).is_err());
+        let foreign = "[Desktop Entry]\nType=Application\nExec=/usr/bin/other-program\n";
+        assert!(validate_autostart_text(foreign, exec).is_err());
+    }
+
     #[test]
     fn recovery_only_restarts_previously_active_units_in_reverse_order() {
         let recovery = UninstallServiceRecovery {

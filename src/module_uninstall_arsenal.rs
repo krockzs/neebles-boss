@@ -262,6 +262,74 @@ pub(crate) fn systemd_user_restore(
     )
 }
 
+// This artillery is ONLY available inside the private TXN V5 coordinator.
+const XDG_AUTOSTART_ARTILLERY: &str = "boss.uninstall.xdg-user";
+const XDG_AUTOSTART_RETIRE: &str = "autostart.retire";
+
+fn xdg_autostart_handler(operation: PreparedOperation) -> CapabilityFuture {
+    Box::pin(async move {
+        if operation.artillery != XDG_AUTOSTART_ARTILLERY
+            || operation.objective != XDG_AUTOSTART_RETIRE
+            || !operation.tactics.is_empty()
+            || !operation.intelligence.is_empty()
+        {
+            return Err("TXN V5 invalid private XDG artillery/objective".into());
+        }
+        const KEYS: [&str; 3] = ["name", "exec_start", "required"];
+        if operation.munition.len() != KEYS.len()
+            || operation
+                .munition
+                .keys()
+                .any(|k| !KEYS.contains(&k.as_str()))
+        {
+            return Err("TXN V5 XDG munition is not exact".into());
+        }
+        let module = operation
+            .module_id
+            .ok_or_else(|| "TXN V5 XDG requires Governor module identity".to_string())?;
+        let name = operation
+            .munition
+            .get("name")
+            .ok_or("missing munition.name")?;
+        let exec_start = operation
+            .munition
+            .get("exec_start")
+            .ok_or("missing munition.exec_start")?;
+        let required = parse_bool(
+            "required",
+            operation
+                .munition
+                .get("required")
+                .ok_or("missing munition.required")?,
+        )?;
+        module_uninstall::retire_owned_autostart(&module, name, exec_start, required)?;
+        Ok(ExecutionPayload::from([
+            ("name".to_string(), name.clone()),
+            ("phase".to_string(), XDG_AUTOSTART_RETIRE.to_string()),
+        ]))
+    })
+}
+
+pub(crate) fn xdg_user_autostart(
+    module: &str,
+    name: &str,
+    exec_start: &str,
+    required: bool,
+) -> Result<(), String> {
+    execute_private_operation(
+        module,
+        XDG_AUTOSTART_ARTILLERY,
+        XDG_AUTOSTART_RETIRE,
+        BTreeMap::from([
+            ("name".into(), name.into()),
+            ("exec_start".into(), exec_start.into()),
+            ("required".into(), required.to_string()),
+        ]),
+        "rust.boss.uninstall.xdg-user",
+        Arc::new(xdg_autostart_handler),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
