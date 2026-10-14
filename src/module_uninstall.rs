@@ -441,6 +441,18 @@ pub fn validate(contract: &UninstallContract, module: &str, has_tray: bool) -> R
     Ok(())
 }
 
+// A login user's HOME is an authority boundary for both XDG autostart
+// and systemd-user. Check the actual filesystem entry; metadata() would
+// follow a symlink even though our startup-resource policy rejects it.
+fn validate_desktop_home_path(path: &Path, uid: libc::uid_t) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("user home cannot be inspected: {error}"))?;
+    if !metadata.file_type().is_dir() || metadata.uid() != uid || metadata.mode() & 0o002 != 0 {
+        return Err("desktop user home must be an owned, non-world-writable real directory".into());
+    }
+    Ok(())
+}
+
 fn desktop_home(uid: libc::uid_t) -> Result<PathBuf, String> {
     let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
     let mut result: *mut libc::passwd = std::ptr::null_mut();
@@ -466,11 +478,7 @@ fn desktop_home(uid: libc::uid_t) -> Result<PathBuf, String> {
     if !path.is_absolute() || path == Path::new("/") {
         return Err("invalid desktop user home".into());
     }
-    let metadata =
-        fs::metadata(&path).map_err(|error| format!("user home cannot be inspected: {error}"))?;
-    if !metadata.is_dir() || metadata.uid() != uid {
-        return Err("desktop user home owner mismatch".into());
-    }
+    validate_desktop_home_path(&path, uid)?;
     Ok(path)
 }
 
@@ -1024,16 +1032,18 @@ pub fn run_extras(
                 exec_start,
                 required,
                 ..
-            } => {
+            } => (|| -> Result<(), String> {
                 // Pre-commit only validates; it never deletes on this path.
+                // Keep resolution errors inside the result so prior service
+                // quiescence is compensated rather than bypassed with `?`.
                 inspect_owned_autostart(
                     module,
                     &resolve(name, contract, module)?,
                     &resolve(exec_start, contract, module)?,
                     *required,
-                )
-                .map(|_| ())
-            }
+                )?;
+                Ok(())
+            })(),
             Extra::Service {
                 name,
                 exec_start,
@@ -1069,51 +1079,70 @@ pub fn run_extras(
     Ok(recovery)
 }
 
-pub fn finalize_service_units(contract: &UninstallContract, module: &str) -> Result<(), String> {
-    // Best-effort *all independent* retirements after irreversible commit.
-    // Report every failure; NEVER call rollback once the module is gone.
-    let mut errors = Vec::new();
-    for extra in &contract.extras {
-        let result = match extra {
-            Extra::Governed { .. } => Ok(()),
-            Extra::Service {
-                name,
-                exec_start,
-                required,
-                stop,
-                ..
-            } => crate::module_uninstall_arsenal::systemd_user_service(
-                module,
-                &resolve(name, contract, module)?,
-                &resolve(exec_start, contract, module)?,
-                *required,
-                stop,
-                true,
-            ),
-            Extra::Autostart {
-                name,
-                exec_start,
-                required,
-                ..
-            } => crate::module_uninstall_arsenal::xdg_user_autostart(
-                module,
-                &resolve(name, contract, module)?,
-                &resolve(exec_start, contract, module)?,
-                *required,
-            ),
-        };
-        if let Err(error) = result {
-            errors.push(error);
+// In post-commit retirement there is no safe rollback. Every independent
+// resource must get its attempt even when its predecessor returns Err.
+fn retire_independent_resources<T, F>(resources: &[T], mut retire: F) -> Result<(), String>
+where
+    F: FnMut(&T) -> Result<(), String>,
+{
+    let mut failures = Vec::new();
+    for resource in resources {
+        if let Err(error) = retire(resource) {
+            failures.push(error);
         }
     }
-    if errors.is_empty() {
+    if failures.is_empty() {
         Ok(())
     } else {
         Err(format!(
             "CRITICAL: module startup resource retirement incomplete: {}",
-            errors.join("; ")
+            failures.join("; ")
         ))
     }
+}
+
+pub fn finalize_service_units(contract: &UninstallContract, module: &str) -> Result<(), String> {
+    // Each closure call independently resolves declared strings and invokes
+    // the private Governor/Arsenal adapter. A failed resolve() must NOT skip
+    // the next systemd-user service or XDG autostart after the commit marker.
+    retire_independent_resources(&contract.extras, |extra| -> Result<(), String> {
+        let id = match extra {
+            Extra::Governed { id, .. }
+            | Extra::Service { id, .. }
+            | Extra::Autostart { id, .. } => id,
+        };
+        let result = (|| -> Result<(), String> {
+            match extra {
+                Extra::Governed { .. } => Ok(()),
+                Extra::Service {
+                    name,
+                    exec_start,
+                    required,
+                    stop,
+                    ..
+                } => crate::module_uninstall_arsenal::systemd_user_service(
+                    module,
+                    &resolve(name, contract, module)?,
+                    &resolve(exec_start, contract, module)?,
+                    *required,
+                    stop,
+                    true,
+                ),
+                Extra::Autostart {
+                    name,
+                    exec_start,
+                    required,
+                    ..
+                } => crate::module_uninstall_arsenal::xdg_user_autostart(
+                    module,
+                    &resolve(name, contract, module)?,
+                    &resolve(exec_start, contract, module)?,
+                    *required,
+                ),
+            }
+        })();
+        result.map_err(|error| format!("resource '{id}': {error}"))
+    })
 }
 
 pub fn cleanup_directories(
@@ -1573,6 +1602,53 @@ mod tests {
         fs::create_dir_all(&data).unwrap();
         std::os::unix::fs::symlink("/tmp", data.join("cache")).unwrap();
         assert!(cleanup_directories(&example(), "test-module", false, root).is_err());
+    }
+
+    #[test]
+    fn postcommit_retirement_attempts_all_resources_and_aggregates_failures() {
+        let entries = ["first", "middle", "last"];
+        let mut attempted = Vec::new();
+        let failure = retire_independent_resources(&entries, |resource| {
+            attempted.push(*resource);
+            if *resource == "first" || *resource == "last" {
+                Err(format!("injected {resource} failure"))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        assert_eq!(attempted, ["first", "middle", "last"]);
+        assert!(failure.starts_with("CRITICAL:"));
+        assert!(failure.contains("injected first failure"));
+        assert!(failure.contains("injected last failure"));
+    }
+
+    #[test]
+    fn postcommit_retirement_accepts_all_successful_resources() {
+        let mut attempted = Vec::new();
+        retire_independent_resources(&[1, 2, 3], |resource| {
+            attempted.push(*resource);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(attempted, [1, 2, 3]);
+    }
+
+    #[test]
+    fn home_validator_rejects_symlink_and_world_writable_home() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir(&home).unwrap();
+        let uid = unsafe { libc::geteuid() };
+        validate_desktop_home_path(&home, uid).unwrap();
+
+        let linked = temp.path().join("home-link");
+        symlink(&home, &linked).unwrap();
+        assert!(validate_desktop_home_path(&linked, uid).is_err());
+
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(validate_desktop_home_path(&home, uid).is_err());
     }
 }
 
