@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-TARGET = "1.0.52"
+TARGET = "1.0.53"
 BUS_NAME = "org.neebles.Boss"
 UI_PATH = "/opt/neebles/client/ui/neebles-ui"
 BOSS_PATH = "/opt/neebles/client/bin/neebles"
