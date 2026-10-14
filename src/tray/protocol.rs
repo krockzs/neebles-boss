@@ -167,6 +167,19 @@ pub enum TrayMessage {
         value: String,
     },
 
+    // Only the currently registered, authenticated provider may query or
+    // execute its OWN declared Tray Surface item. No arbitrary Boss actions.
+    SurfaceQuery {
+        tray_id: String,
+        item_id: String,
+    },
+
+    SurfaceAction {
+        tray_id: String,
+        item_id: String,
+        action: String,
+    },
+
     StopProvider {
         tray_id: String,
     },
@@ -212,6 +225,23 @@ pub enum TrayMessage {
         tray: TrayRecord,
     },
 
+    SurfaceSnapshot {
+        tray_id: String,
+        item_id: String,
+        enabled: bool,
+        runtime_state: String,
+        open_available: bool,
+    },
+
+    SurfaceActionResult {
+        tray_id: String,
+        item_id: String,
+        action: String,
+        ok: bool,
+        #[serde(default)]
+        error: Option<String>,
+    },
+
     SettingsValue {
         owner_module: String,
         path: String,
@@ -221,4 +251,33 @@ pub enum TrayMessage {
     Error {
         message: String,
     },
+}
+
+#[cfg(test)]
+mod surface_bridge_protocol_tests {
+    use super::*;
+
+    #[test]
+    fn surface_requests_are_strictly_typed() {
+        let query = TrayMessage::SurfaceQuery {
+            tray_id: "module.alpha".into(),
+            item_id: "open.tray".into(),
+        };
+        let encoded = serde_json::to_value(&query).unwrap();
+        assert_eq!(encoded["type"], "surface_query");
+        assert_eq!(encoded["tray_id"], "module.alpha");
+        let decoded: TrayMessage = serde_json::from_value(encoded).unwrap();
+        assert!(matches!(decoded, TrayMessage::SurfaceQuery { .. }));
+
+        let action = TrayMessage::SurfaceAction {
+            tray_id: "module.alpha".into(),
+            item_id: "open.tray".into(),
+            action: "open".into(),
+        };
+        let encoded = serde_json::to_value(&action).unwrap();
+        assert_eq!(encoded["type"], "surface_action");
+        assert_eq!(encoded["action"], "open");
+        let decoded: TrayMessage = serde_json::from_value(encoded).unwrap();
+        assert!(matches!(decoded, TrayMessage::SurfaceAction { .. }));
+    }
 }

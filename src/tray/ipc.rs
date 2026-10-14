@@ -95,7 +95,10 @@ pub fn socket_path() -> PathBuf {
     crate::tray::protocol::socket_path()
 }
 
-fn request_persistent_boss_action(action: &str, args: Vec<String>) -> Result<(), String> {
+fn request_persistent_boss_result(
+    action: &str,
+    args: Vec<String>,
+) -> Result<Option<serde_json::Value>, String> {
     let response = crate::ipc::request(&ExecutionRequest {
         target: "boss".to_string(),
         action: Some(action.to_string()),
@@ -106,7 +109,7 @@ fn request_persistent_boss_action(action: &str, args: Vec<String>) -> Result<(),
     })?;
 
     if response.ok {
-        return Ok(());
+        return Ok(response.result);
     }
 
     let detail = response
@@ -123,6 +126,10 @@ fn request_persistent_boss_action(action: &str, args: Vec<String>) -> Result<(),
         "persistent Boss action '{}' failed: {}",
         action, detail
     ))
+}
+
+fn request_persistent_boss_action(action: &str, args: Vec<String>) -> Result<(), String> {
+    request_persistent_boss_result(action, args).map(|_| ())
 }
 
 fn manager_lock_path(socket_path: &Path) -> PathBuf {
@@ -522,15 +529,23 @@ pub fn serve() -> Result<(), String> {
         path.display()
     );
 
-    if let Err(error) = request_persistent_boss_action("tray-provider-reconcile", Vec::new()) {
-        /*
-         * A broken module must not take the common
-         * tray infrastructure down with it.
-         *
-         * The failure is explicit and visible.
-         */
-        eprintln!("N.E.E.B.L.E.S.: tray provider startup incomplete: {error}");
-    }
+    // Login may start Tray Manager before persistent Boss is ready. Keep this
+    // generic, idempotent reconciliation independent of a module-owned service.
+    // Do not block the Tray socket accept loop while waiting for Boss.
+    std::thread::spawn(|| {
+        for attempt in 0..40 {
+            match request_persistent_boss_action("tray-provider-reconcile", Vec::new()) {
+                Ok(()) => return,
+                Err(error) => {
+                    if attempt == 39 {
+                        eprintln!("N.E.E.B.L.E.S.: tray provider startup incomplete after 40 attempts: {error}");
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            }
+        }
+    });
 
     std::thread::spawn(run_watchdog);
 
@@ -828,6 +843,91 @@ fn assert_provider_identity(registered_tray: &Option<String>, tray_id: &str) -> 
     }
 }
 
+fn assert_registered_surface_sender(
+    registered_tray: &Option<String>,
+    subscribed: bool,
+    tray_id: &str,
+) -> Result<(), String> {
+    if subscribed {
+        return Err("Tray subscribers cannot invoke a module Surface".to_string());
+    }
+    assert_provider_identity(registered_tray, tray_id)
+}
+
+fn verify_owned_tray_surface(
+    tray_id: &str,
+    item_id: &str,
+    action: Option<&str>,
+) -> Result<(), String> {
+    if item_id.trim().is_empty() || item_id.len() > 128 {
+        return Err("invalid Tray Surface item id".to_string());
+    }
+    let content = modules::installed_module_all_surface_content(tray_id)?;
+    let item = content
+        .iter()
+        .find(|item| {
+            item.identity().owner_module() == tray_id && item.identity().item_id() == item_id
+        })
+        .ok_or_else(|| {
+            format!(
+                "Tray Surface item '{}' does not exist for '{}'",
+                item_id, tray_id
+            )
+        })?;
+    if item.surface() != "tray" || !item.visible() {
+        return Err("requested Surface is not a visible Tray item".to_string());
+    }
+    if let Some(action) = action {
+        let declared = item.data();
+        let matches = ["action", "action_on", "action_off"]
+            .iter()
+            .filter(|key| declared.get(**key).map(String::as_str) == Some(action))
+            .count();
+        if matches != 1 {
+            return Err("requested action is not uniquely declared by this Tray item".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn authoritative_open_surface_snapshot(
+    tray_id: &str,
+    item_id: &str,
+) -> Result<TrayMessage, String> {
+    let model = request_persistent_boss_result("surface-model", Vec::new())?
+        .ok_or_else(|| "Boss returned empty surface model".to_string())?;
+    let module = model
+        .as_array()
+        .ok_or_else(|| "Boss surface model is not an array".to_string())?
+        .iter()
+        .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some(tray_id))
+        .ok_or_else(|| "installed module absent from Boss surface model".to_string())?;
+    let enabled = module
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| "Boss surface model missing enabled".to_string())?;
+    let state = module
+        .get("runtime_state")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Boss surface model missing runtime_state".to_string())?;
+    if !matches!(state, "closed" | "opening" | "open") {
+        return Err("Boss surface model has invalid runtime_state".to_string());
+    }
+    let available = module
+        .get("open_available")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| "Boss surface model missing open_available".to_string())?;
+    // Do not trust a contradictory or stale model to make Open available.
+    let open_available = enabled && state == "closed" && available;
+    Ok(TrayMessage::SurfaceSnapshot {
+        tray_id: tray_id.to_string(),
+        item_id: item_id.to_string(),
+        enabled,
+        runtime_state: state.to_string(),
+        open_available,
+    })
+}
+
 fn process_message(
     message: TrayMessage,
     writer: &SharedStream,
@@ -937,6 +1037,62 @@ fn process_message(
             });
 
             ack(writer, "unregister", Some(tray_id))
+        }
+
+        TrayMessage::SurfaceQuery { tray_id, item_id } => {
+            assert_session_peer(peer)?;
+            assert_registered_surface_sender(registered_tray, *subscribed, &tray_id)?;
+            modules::verify_tray_provider_process(&tray_id, peer.pid)?;
+            verify_owned_tray_surface(&tray_id, &item_id, None)?;
+            // Keep heartbeats flowing even when persistent Boss is starting.
+            let reply_to = writer.clone();
+            std::thread::spawn(move || {
+                let outcome = authoritative_open_surface_snapshot(&tray_id, &item_id);
+                let reported = match outcome {
+                    Ok(snapshot) => write_message(&reply_to, &snapshot),
+                    Err(error) => error_message(&reply_to, error),
+                };
+                if let Err(error) = reported {
+                    eprintln!("N.E.E.B.L.E.S.: could not return Tray Surface snapshot: {error}");
+                }
+            });
+            Ok(())
+        }
+
+        TrayMessage::SurfaceAction {
+            tray_id,
+            item_id,
+            action,
+        } => {
+            assert_session_peer(peer)?;
+            assert_registered_surface_sender(registered_tray, *subscribed, &tray_id)?;
+            modules::verify_tray_provider_process(&tray_id, peer.pid)?;
+            verify_owned_tray_surface(&tray_id, &item_id, Some(&action))?;
+
+            // The dispatcher's existing Surface authority re-resolves the
+            // installed contract and checks Governor at execution time.
+            // Run off the provider's handler thread: Open can outlive the
+            // 15-second heartbeat window. The registered socket remains live.
+            let reply_to = writer.clone();
+            std::thread::spawn(move || {
+                let result = request_persistent_boss_action(
+                    "surface-action",
+                    vec![tray_id.clone(), item_id.clone(), action.clone()],
+                );
+                let message = TrayMessage::SurfaceActionResult {
+                    tray_id,
+                    item_id,
+                    action,
+                    ok: result.is_ok(),
+                    error: result.err(),
+                };
+                if let Err(error) = write_message(&reply_to, &message) {
+                    eprintln!(
+                        "N.E.E.B.L.E.S.: could not return Tray Surface action result: {error}"
+                    );
+                }
+            });
+            Ok(())
         }
 
         TrayMessage::SettingsGet { owner_module, path } => {
@@ -1240,6 +1396,8 @@ fn process_message(
         | TrayMessage::Event { .. }
         | TrayMessage::Record { .. }
         | TrayMessage::SettingsValue { .. }
+        | TrayMessage::SurfaceSnapshot { .. }
+        | TrayMessage::SurfaceActionResult { .. }
         | TrayMessage::SettingsChanged { .. }
         | TrayMessage::Error { .. } => {
             Err("response-only tray message received by server".to_string())
@@ -1327,4 +1485,18 @@ fn handle_client(stream: UnixStream) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod surface_bridge_auth_tests {
+    use super::*;
+
+    #[test]
+    fn only_registered_provider_can_request_own_surface() {
+        let a = Some("module.alpha".to_string());
+        assert!(assert_registered_surface_sender(&a, false, "module.alpha").is_ok());
+        assert!(assert_registered_surface_sender(&a, false, "module.beta").is_err());
+        assert!(assert_registered_surface_sender(&a, true, "module.alpha").is_err());
+        assert!(assert_registered_surface_sender(&None, false, "module.alpha").is_err());
+    }
 }
