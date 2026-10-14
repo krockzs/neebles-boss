@@ -1,0 +1,8 @@
+NEEBLES Boss 1.0.55
+
+- El idioma elegido en Boss se guarda también en ui.language de cada módulo instalado que declare ese campo.
+- La sincronización usa el sistema existente de Settings y funciona aunque la app principal esté cerrada.
+- La reconciliación genérica de los proveedores Tray se repite durante el inicio de sesión para cubrir carreras temporales del arranque.
+
+Guarda tu trabajo antes de pulsar Reboot.
+Las pruebas físicas de inicio automático y cambio de idioma siguen pendientes hasta validar esta versión en Ryzen.

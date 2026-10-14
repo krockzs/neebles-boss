@@ -533,16 +533,19 @@ pub fn serve() -> Result<(), String> {
     // generic, idempotent reconciliation independent of a module-owned service.
     // Do not block the Tray socket accept loop while waiting for Boss.
     std::thread::spawn(|| {
+        // Success only proves reconciliation was requested. It does not
+        // prove that an asynchronously spawned provider has registered its
+        // session icon, so keep this bounded, idempotent start-up window.
         for attempt in 0..40 {
-            match request_persistent_boss_action("tray-provider-reconcile", Vec::new()) {
-                Ok(()) => return,
-                Err(error) => {
-                    if attempt == 39 {
-                        eprintln!("N.E.E.B.L.E.S.: tray provider startup incomplete after 40 attempts: {error}");
-                        return;
-                    }
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+            if let Err(error) =
+                request_persistent_boss_action("tray-provider-reconcile", Vec::new())
+            {
+                if attempt == 39 {
+                    eprintln!("N.E.E.B.L.E.S.: tray provider startup incomplete after 40 attempts: {error}");
                 }
+            }
+            if attempt < 39 {
+                std::thread::sleep(std::time::Duration::from_secs(2));
             }
         }
     });

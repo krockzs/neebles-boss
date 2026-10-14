@@ -1160,6 +1160,17 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
 
         Some("config-changed") => match config::load_or_initialize() {
             Ok(config) => {
+                // Use the existing module Settings setter in persistent Boss.
+                // This process owns the real subscriptions, unlike the short-
+                // lived CLI process which persisted the global Boss language.
+                if let Err(error) = modules::synchronize_installed_module_languages(&config.language) {
+                    return ExecutionResponse::fail(
+                        1,
+                        "module_language_synchronization",
+                        format!("Boss language persisted, but installed module Settings synchronization failed: {error}"),
+                    );
+                }
+
                 let tray_visible = config.tray_enabled;
 
                 let payload = match serde_json::to_value(config) {

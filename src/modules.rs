@@ -112,6 +112,70 @@ pub fn module_setting_set(
     Ok(ModuleSettingWrite { value, changed })
 }
 
+/*
+ * Language is a module Settings preference, not a direct process instruction.
+ * Only modules declaring ui.language in their authenticated default contract
+ * opt into Boss-wide language synchronization.
+ */
+fn declared_module_language(default: &Value) -> bool {
+    default.pointer("/ui/language").and_then(Value::as_str).is_some()
+}
+
+pub fn synchronize_module_language(name: &str, boss_language: &str) -> Result<bool, String> {
+    let directory = find_module_dir(name)?;
+    let default = installed_module_settings_default(name)?;
+    if !declared_module_language(&default) {
+        return Ok(false);
+    }
+    let selected = resolve_module_language(&directory, boss_language)?;
+    let _ = module_setting_set(name, "ui.language", selected)?;
+    Ok(true)
+}
+
+/*
+ * Preflight ALL installed participants before writing any module Settings.
+ * Disabled and closed modules are included: this is persistent configuration,
+ * not a lifecycle operation. Unrelated/legacy modules without the declared
+ * ui.language leaf are intentionally untouched.
+ */
+pub fn synchronize_installed_module_languages(boss_language: &str) -> Result<usize, String> {
+    let root = modules_root();
+    if !root.exists() {
+        return Ok(0);
+    }
+    let mut targets = Vec::new();
+    for item in fs::read_dir(&root)
+        .map_err(|error| format!("could not enumerate installed modules: {error}"))?
+    {
+        let item = item.map_err(|error| format!("could not inspect installed module: {error}"))?;
+        // Do not mistake hidden staging/rollback directories or symlinks for
+        // installed modules. Do not follow a foreign link as Settings owner.
+        if !item.file_type()
+            .map_err(|error| format!("could not inspect module type: {error}"))?
+            .is_dir()
+            || item.file_name().to_string_lossy().starts_with('.')
+            || !item.path().join("manifest.json").is_file()
+        {
+            continue;
+        }
+        let manifest = read_manifest(&item.path().join("manifest.json"))?;
+        let default = module_settings_default_from(&item.path(), &manifest)?;
+        if !declared_module_language(&default) {
+            continue;
+        }
+        let selected = resolve_module_language(&item.path(), boss_language)?;
+        targets.push((manifest.name, selected));
+    }
+    targets.sort();
+    for (name, language) in &targets {
+        module_setting_set(name, "ui.language", language.clone())
+            .map_err(|error| format!(
+                "Boss language saved, but could not synchronize module '{name}': {error}"
+            ))?;
+    }
+    Ok(targets.len())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrayContract {
     #[serde(default = "default_tray_protocol")]
@@ -1596,6 +1660,7 @@ fn publish_require_candidate(
     }
 
     let settings_default = module_settings_default_from(staging.path(), &manifest)?;
+    let boss_language = config::load_or_initialize()?.language;
 
     let destination = modules_root().join(&folder);
 
@@ -1612,6 +1677,7 @@ fn publish_require_candidate(
     staging.commit(&destination)?;
 
     let settings_path = settings::module_settings_path(&neebles_root(), &module_id);
+    let settings_existed = settings_path.exists();
 
     if let Err(error) = settings::load_or_create(&settings_path, &settings_default) {
         let rollback_error = fs::remove_dir_all(&destination).err();
@@ -1635,6 +1701,23 @@ fn publish_require_candidate(
             ),
         };
     };
+
+    // New module Settings inherit the already-selected Boss locale, even
+    // when the module has never run. Non-participating modules are untouched.
+    if let Err(error) = synchronize_module_language(&module_id, &boss_language) {
+        if !settings_existed {
+            let _ = fs::remove_file(&settings_path);
+        }
+        let rollback_error = fs::remove_dir_all(&destination).err();
+        return Err(match rollback_error {
+            None => format!(
+                "could not initialize language for installed module '{module_id}': {error}; publication was rolled back"
+            ),
+            Some(rollback_error) => format!(
+                "CRITICAL: could not initialize language for installed module '{module_id}': {error}; publication rollback failed: {rollback_error}"
+            ),
+        });
+    }
 
     if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
         "module.lifecycle",
@@ -8495,5 +8578,20 @@ mod module_release_notes_gate37_tests {
     fn module_release_notes_gate37_rejects_unsafe_version() {
         let temp = tempfile::tempdir().unwrap();
         assert!(validate_staged_module_release_notes(temp.path(), "../1.2.4").is_err());
+    }
+}
+
+#[cfg(test)]
+mod module_language_settings_contract_tests {
+    use super::declared_module_language;
+    use serde_json::json;
+
+    #[test]
+    fn only_declared_string_ui_language_participates() {
+        assert!(declared_module_language(&json!({"ui":{"language":"en_US"}})));
+        assert!(declared_module_language(&json!({"ui":{"language":"es_CL"}})));
+        assert!(!declared_module_language(&json!({"ui":{}})));
+        assert!(!declared_module_language(&json!({"ui":{"language":true}})));
+        assert!(!declared_module_language(&json!({"tray":{"visible":"true"}})));
     }
 }

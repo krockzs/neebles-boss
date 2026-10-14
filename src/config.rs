@@ -564,6 +564,9 @@ pub fn set_language(code: &str) -> Result<BossConfig, String> {
     let canonical = languages::resolve_language(code)?
         .ok_or_else(|| format!("unsupported N.E.E.B.L.E.S. language: {code}"))?;
 
+    // Only persist Boss's global preference here. The existing config-changed
+    // request performs module synchronization inside persistent Boss, where
+    // the real Module IPC and Tray Settings subscribers are registered.
     write_setting("ui.language", canonical)?;
 
     load_or_initialize()

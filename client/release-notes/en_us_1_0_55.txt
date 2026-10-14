@@ -1,0 +1,8 @@
+NEEBLES Boss 1.0.55
+
+- The Boss-selected language is also stored in ui.language for each installed module that declares the setting.
+- Synchronization reuses the existing Settings mechanism even when the module's main application is closed.
+- Generic Tray provider reconciliation is retried during desktop login to cover transient startup races.
+
+Save your work before pressing Reboot.
+Physical startup and language-switch verification remain pending until this build is tested on Ryzen.
