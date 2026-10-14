@@ -13,6 +13,1512 @@
       "name": "English (United States)",
       "flag": "us.svg",
       "file": "en_US.json"
+    },
+    {
+      "code": "ca_AD",
+      "name": "català · Andorra",
+      "flag": "ad.svg",
+      "file": "ca_AD.json"
+    },
+    {
+      "code": "ar_AE",
+      "name": "العربية · United Arab Emirates",
+      "flag": "ae.svg",
+      "file": "ar_AE.json"
+    },
+    {
+      "code": "fa_AF",
+      "name": "فارسی · Afghanistan",
+      "flag": "af.svg",
+      "file": "fa_AF.json"
+    },
+    {
+      "code": "en_AG",
+      "name": "English · Antigua & Barbuda",
+      "flag": "ag.svg",
+      "file": "en_AG.json"
+    },
+    {
+      "code": "en_AI",
+      "name": "English · Anguilla",
+      "flag": "ai.svg",
+      "file": "en_AI.json"
+    },
+    {
+      "code": "sq_AL",
+      "name": "shqip · Albania",
+      "flag": "al.svg",
+      "file": "sq_AL.json"
+    },
+    {
+      "code": "hy_AM",
+      "name": "հայերեն · Armenia",
+      "flag": "am.svg",
+      "file": "hy_AM.json"
+    },
+    {
+      "code": "pt_AO",
+      "name": "português · Angola",
+      "flag": "ao.svg",
+      "file": "pt_AO.json"
+    },
+    {
+      "code": "en_AQ",
+      "name": "English · Antarctica",
+      "flag": "aq.svg",
+      "file": "en_AQ.json"
+    },
+    {
+      "code": "es_AR",
+      "name": "español · Argentina",
+      "flag": "ar.svg",
+      "file": "es_AR.json"
+    },
+    {
+      "code": "sm_AS",
+      "name": "sm · American Samoa",
+      "flag": "as.svg",
+      "file": "sm_AS.json"
+    },
+    {
+      "code": "de_AT",
+      "name": "Deutsch · Austria",
+      "flag": "at.svg",
+      "file": "de_AT.json"
+    },
+    {
+      "code": "en_AU",
+      "name": "English · Australia",
+      "flag": "au.svg",
+      "file": "en_AU.json"
+    },
+    {
+      "code": "nl_AW",
+      "name": "Nederlands · Aruba",
+      "flag": "aw.svg",
+      "file": "nl_AW.json"
+    },
+    {
+      "code": "sv_AX",
+      "name": "svenska · Åland Islands",
+      "flag": "ax.svg",
+      "file": "sv_AX.json"
+    },
+    {
+      "code": "az_AZ",
+      "name": "azərbaycan · Azerbaijan",
+      "flag": "az.svg",
+      "file": "az_AZ.json"
+    },
+    {
+      "code": "bs_BA",
+      "name": "bosanski · Bosnia & Herzegovina",
+      "flag": "ba.svg",
+      "file": "bs_BA.json"
+    },
+    {
+      "code": "en_BB",
+      "name": "English · Barbados",
+      "flag": "bb.svg",
+      "file": "en_BB.json"
+    },
+    {
+      "code": "bn_BD",
+      "name": "বাংলা · Bangladesh",
+      "flag": "bd.svg",
+      "file": "bn_BD.json"
+    },
+    {
+      "code": "nl_BE",
+      "name": "Nederlands · Belgium",
+      "flag": "be.svg",
+      "file": "nl_BE.json"
+    },
+    {
+      "code": "fr_BF",
+      "name": "français · Burkina Faso",
+      "flag": "bf.svg",
+      "file": "fr_BF.json"
+    },
+    {
+      "code": "bg_BG",
+      "name": "български · Bulgaria",
+      "flag": "bg.svg",
+      "file": "bg_BG.json"
+    },
+    {
+      "code": "ar_BH",
+      "name": "العربية · Bahrain",
+      "flag": "bh.svg",
+      "file": "ar_BH.json"
+    },
+    {
+      "code": "rn_BI",
+      "name": "Ikirundi · Burundi",
+      "flag": "bi.svg",
+      "file": "rn_BI.json"
+    },
+    {
+      "code": "fr_BJ",
+      "name": "français · Benin",
+      "flag": "bj.svg",
+      "file": "fr_BJ.json"
+    },
+    {
+      "code": "fr_BL",
+      "name": "français · St. Barthélemy",
+      "flag": "bl.svg",
+      "file": "fr_BL.json"
+    },
+    {
+      "code": "en_BM",
+      "name": "English · Bermuda",
+      "flag": "bm.svg",
+      "file": "en_BM.json"
+    },
+    {
+      "code": "ms_BN",
+      "name": "Melayu · Brunei",
+      "flag": "bn.svg",
+      "file": "ms_BN.json"
+    },
+    {
+      "code": "es_BO",
+      "name": "español · Bolivia",
+      "flag": "bo.svg",
+      "file": "es_BO.json"
+    },
+    {
+      "code": "nl_BQ",
+      "name": "Nederlands · Caribbean Netherlands",
+      "flag": "bq.svg",
+      "file": "nl_BQ.json"
+    },
+    {
+      "code": "pt_BR",
+      "name": "português · Brazil",
+      "flag": "br.svg",
+      "file": "pt_BR.json"
+    },
+    {
+      "code": "en_BS",
+      "name": "English · Bahamas",
+      "flag": "bs.svg",
+      "file": "en_BS.json"
+    },
+    {
+      "code": "dz_BT",
+      "name": "རྫོང་ཁ · Bhutan",
+      "flag": "bt.svg",
+      "file": "dz_BT.json"
+    },
+    {
+      "code": "nb_BV",
+      "name": "norsk bokmål · Bouvet Island",
+      "flag": "bv.svg",
+      "file": "nb_BV.json"
+    },
+    {
+      "code": "en_BW",
+      "name": "English · Botswana",
+      "flag": "bw.svg",
+      "file": "en_BW.json"
+    },
+    {
+      "code": "be_BY",
+      "name": "беларуская · Belarus",
+      "flag": "by.svg",
+      "file": "be_BY.json"
+    },
+    {
+      "code": "en_BZ",
+      "name": "English · Belize",
+      "flag": "bz.svg",
+      "file": "en_BZ.json"
+    },
+    {
+      "code": "en_CA",
+      "name": "English · Canada",
+      "flag": "ca.svg",
+      "file": "en_CA.json"
+    },
+    {
+      "code": "en_CC",
+      "name": "English · Cocos (Keeling) Islands",
+      "flag": "cc.svg",
+      "file": "en_CC.json"
+    },
+    {
+      "code": "fr_CD",
+      "name": "français · Congo - Kinshasa",
+      "flag": "cd.svg",
+      "file": "fr_CD.json"
+    },
+    {
+      "code": "sg_CF",
+      "name": "Sängö · Central African Republic",
+      "flag": "cf.svg",
+      "file": "sg_CF.json"
+    },
+    {
+      "code": "fr_CG",
+      "name": "français · Congo - Brazzaville",
+      "flag": "cg.svg",
+      "file": "fr_CG.json"
+    },
+    {
+      "code": "de_CH",
+      "name": "Deutsch · Switzerland",
+      "flag": "ch.svg",
+      "file": "de_CH.json"
+    },
+    {
+      "code": "fr_CI",
+      "name": "français · Côte d’Ivoire",
+      "flag": "ci.svg",
+      "file": "fr_CI.json"
+    },
+    {
+      "code": "en_CK",
+      "name": "English · Cook Islands",
+      "flag": "ck.svg",
+      "file": "en_CK.json"
+    },
+    {
+      "code": "fr_CM",
+      "name": "français · Cameroon",
+      "flag": "cm.svg",
+      "file": "fr_CM.json"
+    },
+    {
+      "code": "zh_CN",
+      "name": "中文 · China",
+      "flag": "cn.svg",
+      "file": "zh_CN.json"
+    },
+    {
+      "code": "es_CO",
+      "name": "español · Colombia",
+      "flag": "co.svg",
+      "file": "es_CO.json"
+    },
+    {
+      "code": "fr_CP",
+      "name": "français · Clipperton Island",
+      "flag": "cp.svg",
+      "file": "fr_CP.json"
+    },
+    {
+      "code": "es_CR",
+      "name": "español · Costa Rica",
+      "flag": "cr.svg",
+      "file": "es_CR.json"
+    },
+    {
+      "code": "es_CU",
+      "name": "español · Cuba",
+      "flag": "cu.svg",
+      "file": "es_CU.json"
+    },
+    {
+      "code": "pt_CV",
+      "name": "português · Cape Verde",
+      "flag": "cv.svg",
+      "file": "pt_CV.json"
+    },
+    {
+      "code": "pap_CW",
+      "name": "Papiamentu · Curaçao",
+      "flag": "cw.svg",
+      "file": "pap_CW.json"
+    },
+    {
+      "code": "en_CX",
+      "name": "English · Christmas Island",
+      "flag": "cx.svg",
+      "file": "en_CX.json"
+    },
+    {
+      "code": "el_CY",
+      "name": "Ελληνικά · Cyprus",
+      "flag": "cy.svg",
+      "file": "el_CY.json"
+    },
+    {
+      "code": "cs_CZ",
+      "name": "čeština · Czechia",
+      "flag": "cz.svg",
+      "file": "cs_CZ.json"
+    },
+    {
+      "code": "de_DE",
+      "name": "Deutsch · Germany",
+      "flag": "de.svg",
+      "file": "de_DE.json"
+    },
+    {
+      "code": "en_DG",
+      "name": "English · Diego Garcia",
+      "flag": "dg.svg",
+      "file": "en_DG.json"
+    },
+    {
+      "code": "fr_DJ",
+      "name": "français · Djibouti",
+      "flag": "dj.svg",
+      "file": "fr_DJ.json"
+    },
+    {
+      "code": "da_DK",
+      "name": "dansk · Denmark",
+      "flag": "dk.svg",
+      "file": "da_DK.json"
+    },
+    {
+      "code": "en_DM",
+      "name": "English · Dominica",
+      "flag": "dm.svg",
+      "file": "en_DM.json"
+    },
+    {
+      "code": "es_DO",
+      "name": "español · Dominican Republic",
+      "flag": "do.svg",
+      "file": "es_DO.json"
+    },
+    {
+      "code": "ar_DZ",
+      "name": "العربية · Algeria",
+      "flag": "dz.svg",
+      "file": "ar_DZ.json"
+    },
+    {
+      "code": "es_EC",
+      "name": "español · Ecuador",
+      "flag": "ec.svg",
+      "file": "es_EC.json"
+    },
+    {
+      "code": "et_EE",
+      "name": "eesti · Estonia",
+      "flag": "ee.svg",
+      "file": "et_EE.json"
+    },
+    {
+      "code": "ar_EG",
+      "name": "العربية · Egypt",
+      "flag": "eg.svg",
+      "file": "ar_EG.json"
+    },
+    {
+      "code": "ar_EH",
+      "name": "العربية · Western Sahara",
+      "flag": "eh.svg",
+      "file": "ar_EH.json"
+    },
+    {
+      "code": "ti_ER",
+      "name": "ትግርኛ · Eritrea",
+      "flag": "er.svg",
+      "file": "ti_ER.json"
+    },
+    {
+      "code": "es_ES",
+      "name": "español · Spain",
+      "flag": "es.svg",
+      "file": "es_ES.json"
+    },
+    {
+      "code": "am_ET",
+      "name": "አማርኛ · Ethiopia",
+      "flag": "et.svg",
+      "file": "am_ET.json"
+    },
+    {
+      "code": "fi_FI",
+      "name": "suomi · Finland",
+      "flag": "fi.svg",
+      "file": "fi_FI.json"
+    },
+    {
+      "code": "en_FJ",
+      "name": "English · Fiji",
+      "flag": "fj.svg",
+      "file": "en_FJ.json"
+    },
+    {
+      "code": "en_FK",
+      "name": "English · Falkland Islands",
+      "flag": "fk.svg",
+      "file": "en_FK.json"
+    },
+    {
+      "code": "en_FM",
+      "name": "English · Micronesia",
+      "flag": "fm.svg",
+      "file": "en_FM.json"
+    },
+    {
+      "code": "fo_FO",
+      "name": "føroyskt · Faroe Islands",
+      "flag": "fo.svg",
+      "file": "fo_FO.json"
+    },
+    {
+      "code": "fr_FR",
+      "name": "français · France",
+      "flag": "fr.svg",
+      "file": "fr_FR.json"
+    },
+    {
+      "code": "fr_GA",
+      "name": "français · Gabon",
+      "flag": "ga.svg",
+      "file": "fr_GA.json"
+    },
+    {
+      "code": "en_GB",
+      "name": "English · United Kingdom",
+      "flag": "gb.svg",
+      "file": "en_GB.json"
+    },
+    {
+      "code": "en_GD",
+      "name": "English · Grenada",
+      "flag": "gd.svg",
+      "file": "en_GD.json"
+    },
+    {
+      "code": "ka_GE",
+      "name": "ქართული · Georgia",
+      "flag": "ge.svg",
+      "file": "ka_GE.json"
+    },
+    {
+      "code": "fr_GF",
+      "name": "français · French Guiana",
+      "flag": "gf.svg",
+      "file": "fr_GF.json"
+    },
+    {
+      "code": "en_GG",
+      "name": "English · Guernsey",
+      "flag": "gg.svg",
+      "file": "en_GG.json"
+    },
+    {
+      "code": "en_GH",
+      "name": "English · Ghana",
+      "flag": "gh.svg",
+      "file": "en_GH.json"
+    },
+    {
+      "code": "en_GI",
+      "name": "English · Gibraltar",
+      "flag": "gi.svg",
+      "file": "en_GI.json"
+    },
+    {
+      "code": "kl_GL",
+      "name": "kalaallisut · Greenland",
+      "flag": "gl.svg",
+      "file": "kl_GL.json"
+    },
+    {
+      "code": "en_GM",
+      "name": "English · Gambia",
+      "flag": "gm.svg",
+      "file": "en_GM.json"
+    },
+    {
+      "code": "fr_GN",
+      "name": "français · Guinea",
+      "flag": "gn.svg",
+      "file": "fr_GN.json"
+    },
+    {
+      "code": "fr_GP",
+      "name": "français · Guadeloupe",
+      "flag": "gp.svg",
+      "file": "fr_GP.json"
+    },
+    {
+      "code": "es_GQ",
+      "name": "español · Equatorial Guinea",
+      "flag": "gq.svg",
+      "file": "es_GQ.json"
+    },
+    {
+      "code": "el_GR",
+      "name": "Ελληνικά · Greece",
+      "flag": "gr.svg",
+      "file": "el_GR.json"
+    },
+    {
+      "code": "en_GS",
+      "name": "English · South Georgia & South Sandwich Islands",
+      "flag": "gs.svg",
+      "file": "en_GS.json"
+    },
+    {
+      "code": "es_GT",
+      "name": "español · Guatemala",
+      "flag": "gt.svg",
+      "file": "es_GT.json"
+    },
+    {
+      "code": "en_GU",
+      "name": "English · Guam",
+      "flag": "gu.svg",
+      "file": "en_GU.json"
+    },
+    {
+      "code": "pt_GW",
+      "name": "português · Guinea-Bissau",
+      "flag": "gw.svg",
+      "file": "pt_GW.json"
+    },
+    {
+      "code": "en_GY",
+      "name": "English · Guyana",
+      "flag": "gy.svg",
+      "file": "en_GY.json"
+    },
+    {
+      "code": "zh_HK",
+      "name": "繁體中文 · Hong Kong SAR China",
+      "flag": "hk.svg",
+      "file": "zh_HK.json"
+    },
+    {
+      "code": "en_HM",
+      "name": "English · Heard & McDonald Islands",
+      "flag": "hm.svg",
+      "file": "en_HM.json"
+    },
+    {
+      "code": "es_HN",
+      "name": "español · Honduras",
+      "flag": "hn.svg",
+      "file": "es_HN.json"
+    },
+    {
+      "code": "hr_HR",
+      "name": "hrvatski · Croatia",
+      "flag": "hr.svg",
+      "file": "hr_HR.json"
+    },
+    {
+      "code": "ht_HT",
+      "name": "Kreyòl Ayisyen · Haiti",
+      "flag": "ht.svg",
+      "file": "ht_HT.json"
+    },
+    {
+      "code": "hu_HU",
+      "name": "magyar · Hungary",
+      "flag": "hu.svg",
+      "file": "hu_HU.json"
+    },
+    {
+      "code": "es_IC",
+      "name": "español · Canary Islands",
+      "flag": "ic.svg",
+      "file": "es_IC.json"
+    },
+    {
+      "code": "id_ID",
+      "name": "Indonesia · Indonesia",
+      "flag": "id.svg",
+      "file": "id_ID.json"
+    },
+    {
+      "code": "en_IE",
+      "name": "English · Ireland",
+      "flag": "ie.svg",
+      "file": "en_IE.json"
+    },
+    {
+      "code": "he_IL",
+      "name": "עברית · Israel",
+      "flag": "il.svg",
+      "file": "he_IL.json"
+    },
+    {
+      "code": "en_IM",
+      "name": "English · Isle of Man",
+      "flag": "im.svg",
+      "file": "en_IM.json"
+    },
+    {
+      "code": "hi_IN",
+      "name": "हिन्दी · India",
+      "flag": "in.svg",
+      "file": "hi_IN.json"
+    },
+    {
+      "code": "en_IO",
+      "name": "English · British Indian Ocean Territory",
+      "flag": "io.svg",
+      "file": "en_IO.json"
+    },
+    {
+      "code": "ar_IQ",
+      "name": "العربية · Iraq",
+      "flag": "iq.svg",
+      "file": "ar_IQ.json"
+    },
+    {
+      "code": "fa_IR",
+      "name": "فارسی · Iran",
+      "flag": "ir.svg",
+      "file": "fa_IR.json"
+    },
+    {
+      "code": "is_IS",
+      "name": "íslenska · Iceland",
+      "flag": "is.svg",
+      "file": "is_IS.json"
+    },
+    {
+      "code": "it_IT",
+      "name": "italiano · Italy",
+      "flag": "it.svg",
+      "file": "it_IT.json"
+    },
+    {
+      "code": "en_JE",
+      "name": "English · Jersey",
+      "flag": "je.svg",
+      "file": "en_JE.json"
+    },
+    {
+      "code": "en_JM",
+      "name": "English · Jamaica",
+      "flag": "jm.svg",
+      "file": "en_JM.json"
+    },
+    {
+      "code": "ar_JO",
+      "name": "العربية · Jordan",
+      "flag": "jo.svg",
+      "file": "ar_JO.json"
+    },
+    {
+      "code": "ja_JP",
+      "name": "日本語 · Japan",
+      "flag": "jp.svg",
+      "file": "ja_JP.json"
+    },
+    {
+      "code": "sw_KE",
+      "name": "Kiswahili · Kenya",
+      "flag": "ke.svg",
+      "file": "sw_KE.json"
+    },
+    {
+      "code": "ky_KG",
+      "name": "кыргызча · Kyrgyzstan",
+      "flag": "kg.svg",
+      "file": "ky_KG.json"
+    },
+    {
+      "code": "km_KH",
+      "name": "ខ្មែរ · Cambodia",
+      "flag": "kh.svg",
+      "file": "km_KH.json"
+    },
+    {
+      "code": "en_KI",
+      "name": "English · Kiribati",
+      "flag": "ki.svg",
+      "file": "en_KI.json"
+    },
+    {
+      "code": "ar_KM",
+      "name": "العربية · Comoros",
+      "flag": "km.svg",
+      "file": "ar_KM.json"
+    },
+    {
+      "code": "en_KN",
+      "name": "English · St. Kitts & Nevis",
+      "flag": "kn.svg",
+      "file": "en_KN.json"
+    },
+    {
+      "code": "ko_KP",
+      "name": "한국어 · North Korea",
+      "flag": "kp.svg",
+      "file": "ko_KP.json"
+    },
+    {
+      "code": "ko_KR",
+      "name": "한국어 · South Korea",
+      "flag": "kr.svg",
+      "file": "ko_KR.json"
+    },
+    {
+      "code": "ar_KW",
+      "name": "العربية · Kuwait",
+      "flag": "kw.svg",
+      "file": "ar_KW.json"
+    },
+    {
+      "code": "en_KY",
+      "name": "English · Cayman Islands",
+      "flag": "ky.svg",
+      "file": "en_KY.json"
+    },
+    {
+      "code": "ru_KZ",
+      "name": "русский · Kazakhstan",
+      "flag": "kz.svg",
+      "file": "ru_KZ.json"
+    },
+    {
+      "code": "lo_LA",
+      "name": "ລາວ · Laos",
+      "flag": "la.svg",
+      "file": "lo_LA.json"
+    },
+    {
+      "code": "ar_LB",
+      "name": "العربية · Lebanon",
+      "flag": "lb.svg",
+      "file": "ar_LB.json"
+    },
+    {
+      "code": "en_LC",
+      "name": "English · St. Lucia",
+      "flag": "lc.svg",
+      "file": "en_LC.json"
+    },
+    {
+      "code": "de_LI",
+      "name": "Deutsch · Liechtenstein",
+      "flag": "li.svg",
+      "file": "de_LI.json"
+    },
+    {
+      "code": "si_LK",
+      "name": "සිංහල · Sri Lanka",
+      "flag": "lk.svg",
+      "file": "si_LK.json"
+    },
+    {
+      "code": "en_LR",
+      "name": "English · Liberia",
+      "flag": "lr.svg",
+      "file": "en_LR.json"
+    },
+    {
+      "code": "st_LS",
+      "name": "Sesotho · Lesotho",
+      "flag": "ls.svg",
+      "file": "st_LS.json"
+    },
+    {
+      "code": "lt_LT",
+      "name": "lietuvių · Lithuania",
+      "flag": "lt.svg",
+      "file": "lt_LT.json"
+    },
+    {
+      "code": "fr_LU",
+      "name": "français · Luxembourg",
+      "flag": "lu.svg",
+      "file": "fr_LU.json"
+    },
+    {
+      "code": "lv_LV",
+      "name": "latviešu · Latvia",
+      "flag": "lv.svg",
+      "file": "lv_LV.json"
+    },
+    {
+      "code": "ar_LY",
+      "name": "العربية · Libya",
+      "flag": "ly.svg",
+      "file": "ar_LY.json"
+    },
+    {
+      "code": "ar_MA",
+      "name": "العربية · Morocco",
+      "flag": "ma.svg",
+      "file": "ar_MA.json"
+    },
+    {
+      "code": "fr_MC",
+      "name": "français · Monaco",
+      "flag": "mc.svg",
+      "file": "fr_MC.json"
+    },
+    {
+      "code": "ro_MD",
+      "name": "română · Moldova",
+      "flag": "md.svg",
+      "file": "ro_MD.json"
+    },
+    {
+      "code": "sr_ME",
+      "name": "српски · Montenegro",
+      "flag": "me.svg",
+      "file": "sr_ME.json"
+    },
+    {
+      "code": "fr_MF",
+      "name": "français · St. Martin",
+      "flag": "mf.svg",
+      "file": "fr_MF.json"
+    },
+    {
+      "code": "mg_MG",
+      "name": "Malagasy · Madagascar",
+      "flag": "mg.svg",
+      "file": "mg_MG.json"
+    },
+    {
+      "code": "en_MH",
+      "name": "English · Marshall Islands",
+      "flag": "mh.svg",
+      "file": "en_MH.json"
+    },
+    {
+      "code": "mk_MK",
+      "name": "македонски · North Macedonia",
+      "flag": "mk.svg",
+      "file": "mk_MK.json"
+    },
+    {
+      "code": "fr_ML",
+      "name": "français · Mali",
+      "flag": "ml.svg",
+      "file": "fr_ML.json"
+    },
+    {
+      "code": "my_MM",
+      "name": "မြန်မာ · Myanmar (Burma)",
+      "flag": "mm.svg",
+      "file": "my_MM.json"
+    },
+    {
+      "code": "mn_MN",
+      "name": "монгол · Mongolia",
+      "flag": "mn.svg",
+      "file": "mn_MN.json"
+    },
+    {
+      "code": "zh_MO",
+      "name": "繁體中文 · Macao SAR China",
+      "flag": "mo.svg",
+      "file": "zh_MO.json"
+    },
+    {
+      "code": "en_MP",
+      "name": "English · Northern Mariana Islands",
+      "flag": "mp.svg",
+      "file": "en_MP.json"
+    },
+    {
+      "code": "fr_MQ",
+      "name": "français · Martinique",
+      "flag": "mq.svg",
+      "file": "fr_MQ.json"
+    },
+    {
+      "code": "ar_MR",
+      "name": "العربية · Mauritania",
+      "flag": "mr.svg",
+      "file": "ar_MR.json"
+    },
+    {
+      "code": "en_MS",
+      "name": "English · Montserrat",
+      "flag": "ms.svg",
+      "file": "en_MS.json"
+    },
+    {
+      "code": "mt_MT",
+      "name": "Malti · Malta",
+      "flag": "mt.svg",
+      "file": "mt_MT.json"
+    },
+    {
+      "code": "fr_MU",
+      "name": "français · Mauritius",
+      "flag": "mu.svg",
+      "file": "fr_MU.json"
+    },
+    {
+      "code": "dv_MV",
+      "name": "ދިވެހިބަސް · Maldives",
+      "flag": "mv.svg",
+      "file": "dv_MV.json"
+    },
+    {
+      "code": "en_MW",
+      "name": "English · Malawi",
+      "flag": "mw.svg",
+      "file": "en_MW.json"
+    },
+    {
+      "code": "es_MX",
+      "name": "español · Mexico",
+      "flag": "mx.svg",
+      "file": "es_MX.json"
+    },
+    {
+      "code": "my_MY",
+      "name": "မြန်မာ · Malaysia",
+      "flag": "my.svg",
+      "file": "my_MY.json"
+    },
+    {
+      "code": "pt_MZ",
+      "name": "português · Mozambique",
+      "flag": "mz.svg",
+      "file": "pt_MZ.json"
+    },
+    {
+      "code": "en_NA",
+      "name": "English · Namibia",
+      "flag": "na.svg",
+      "file": "en_NA.json"
+    },
+    {
+      "code": "fr_NC",
+      "name": "français · New Caledonia",
+      "flag": "nc.svg",
+      "file": "fr_NC.json"
+    },
+    {
+      "code": "fr_NE",
+      "name": "français · Niger",
+      "flag": "ne.svg",
+      "file": "fr_NE.json"
+    },
+    {
+      "code": "en_NF",
+      "name": "English · Norfolk Island",
+      "flag": "nf.svg",
+      "file": "en_NF.json"
+    },
+    {
+      "code": "en_NG",
+      "name": "English · Nigeria",
+      "flag": "ng.svg",
+      "file": "en_NG.json"
+    },
+    {
+      "code": "es_NI",
+      "name": "español · Nicaragua",
+      "flag": "ni.svg",
+      "file": "es_NI.json"
+    },
+    {
+      "code": "nl_NL",
+      "name": "Nederlands · Netherlands",
+      "flag": "nl.svg",
+      "file": "nl_NL.json"
+    },
+    {
+      "code": "nb_NO",
+      "name": "norsk bokmål · Norway",
+      "flag": "no.svg",
+      "file": "nb_NO.json"
+    },
+    {
+      "code": "ne_NP",
+      "name": "नेपाली · Nepal",
+      "flag": "np.svg",
+      "file": "ne_NP.json"
+    },
+    {
+      "code": "en_NR",
+      "name": "English · Nauru",
+      "flag": "nr.svg",
+      "file": "en_NR.json"
+    },
+    {
+      "code": "en_NU",
+      "name": "English · Niue",
+      "flag": "nu.svg",
+      "file": "en_NU.json"
+    },
+    {
+      "code": "en_NZ",
+      "name": "English · New Zealand",
+      "flag": "nz.svg",
+      "file": "en_NZ.json"
+    },
+    {
+      "code": "ar_OM",
+      "name": "العربية · Oman",
+      "flag": "om.svg",
+      "file": "ar_OM.json"
+    },
+    {
+      "code": "es_PA",
+      "name": "español · Panama",
+      "flag": "pa.svg",
+      "file": "es_PA.json"
+    },
+    {
+      "code": "es_PE",
+      "name": "español · Peru",
+      "flag": "pe.svg",
+      "file": "es_PE.json"
+    },
+    {
+      "code": "fr_PF",
+      "name": "français · French Polynesia",
+      "flag": "pf.svg",
+      "file": "fr_PF.json"
+    },
+    {
+      "code": "tpi_PG",
+      "name": "Tok Pisin · Papua New Guinea",
+      "flag": "pg.svg",
+      "file": "tpi_PG.json"
+    },
+    {
+      "code": "fil_PH",
+      "name": "Filipino · Philippines",
+      "flag": "ph.svg",
+      "file": "fil_PH.json"
+    },
+    {
+      "code": "ur_PK",
+      "name": "اردو · Pakistan",
+      "flag": "pk.svg",
+      "file": "ur_PK.json"
+    },
+    {
+      "code": "pl_PL",
+      "name": "polski · Poland",
+      "flag": "pl.svg",
+      "file": "pl_PL.json"
+    },
+    {
+      "code": "fr_PM",
+      "name": "français · St. Pierre & Miquelon",
+      "flag": "pm.svg",
+      "file": "fr_PM.json"
+    },
+    {
+      "code": "en_PN",
+      "name": "English · Pitcairn Islands",
+      "flag": "pn.svg",
+      "file": "en_PN.json"
+    },
+    {
+      "code": "es_PR",
+      "name": "español · Puerto Rico",
+      "flag": "pr.svg",
+      "file": "es_PR.json"
+    },
+    {
+      "code": "ar_PS",
+      "name": "العربية · Palestinian Territories",
+      "flag": "ps.svg",
+      "file": "ar_PS.json"
+    },
+    {
+      "code": "pt_PT",
+      "name": "português · Portugal",
+      "flag": "pt.svg",
+      "file": "pt_PT.json"
+    },
+    {
+      "code": "pa_PW",
+      "name": "ਪੰਜਾਬੀ · Palau",
+      "flag": "pw.svg",
+      "file": "pa_PW.json"
+    },
+    {
+      "code": "gn_PY",
+      "name": "avañe’ẽ · Paraguay",
+      "flag": "py.svg",
+      "file": "gn_PY.json"
+    },
+    {
+      "code": "ar_QA",
+      "name": "العربية · Qatar",
+      "flag": "qa.svg",
+      "file": "ar_QA.json"
+    },
+    {
+      "code": "fr_RE",
+      "name": "français · Réunion",
+      "flag": "re.svg",
+      "file": "fr_RE.json"
+    },
+    {
+      "code": "ro_RO",
+      "name": "română · Romania",
+      "flag": "ro.svg",
+      "file": "ro_RO.json"
+    },
+    {
+      "code": "sr_RS",
+      "name": "српски · Serbia",
+      "flag": "rs.svg",
+      "file": "sr_RS.json"
+    },
+    {
+      "code": "ru_RU",
+      "name": "русский · Russia",
+      "flag": "ru.svg",
+      "file": "ru_RU.json"
+    },
+    {
+      "code": "rw_RW",
+      "name": "Ikinyarwanda · Rwanda",
+      "flag": "rw.svg",
+      "file": "rw_RW.json"
+    },
+    {
+      "code": "ar_SA",
+      "name": "العربية · Saudi Arabia",
+      "flag": "sa.svg",
+      "file": "ar_SA.json"
+    },
+    {
+      "code": "en_SB",
+      "name": "English · Solomon Islands",
+      "flag": "sb.svg",
+      "file": "en_SB.json"
+    },
+    {
+      "code": "fr_SC",
+      "name": "français · Seychelles",
+      "flag": "sc.svg",
+      "file": "fr_SC.json"
+    },
+    {
+      "code": "ar_SD",
+      "name": "العربية · Sudan",
+      "flag": "sd.svg",
+      "file": "ar_SD.json"
+    },
+    {
+      "code": "sv_SE",
+      "name": "svenska · Sweden",
+      "flag": "se.svg",
+      "file": "sv_SE.json"
+    },
+    {
+      "code": "en_SG",
+      "name": "English · Singapore",
+      "flag": "sg.svg",
+      "file": "en_SG.json"
+    },
+    {
+      "code": "en_SH",
+      "name": "English · St. Helena",
+      "flag": "sh.svg",
+      "file": "en_SH.json"
+    },
+    {
+      "code": "sl_SI",
+      "name": "slovenščina · Slovenia",
+      "flag": "si.svg",
+      "file": "sl_SI.json"
+    },
+    {
+      "code": "nb_SJ",
+      "name": "norsk bokmål · Svalbard & Jan Mayen",
+      "flag": "sj.svg",
+      "file": "nb_SJ.json"
+    },
+    {
+      "code": "sk_SK",
+      "name": "slovenčina · Slovakia",
+      "flag": "sk.svg",
+      "file": "sk_SK.json"
+    },
+    {
+      "code": "en_SL",
+      "name": "English · Sierra Leone",
+      "flag": "sl.svg",
+      "file": "en_SL.json"
+    },
+    {
+      "code": "it_SM",
+      "name": "italiano · San Marino",
+      "flag": "sm.svg",
+      "file": "it_SM.json"
+    },
+    {
+      "code": "wo_SN",
+      "name": "Wolof · Senegal",
+      "flag": "sn.svg",
+      "file": "wo_SN.json"
+    },
+    {
+      "code": "so_SO",
+      "name": "Soomaali · Somalia",
+      "flag": "so.svg",
+      "file": "so_SO.json"
+    },
+    {
+      "code": "nl_SR",
+      "name": "Nederlands · Suriname",
+      "flag": "sr.svg",
+      "file": "nl_SR.json"
+    },
+    {
+      "code": "en_SS",
+      "name": "English · South Sudan",
+      "flag": "ss.svg",
+      "file": "en_SS.json"
+    },
+    {
+      "code": "pt_ST",
+      "name": "português · São Tomé & Príncipe",
+      "flag": "st.svg",
+      "file": "pt_ST.json"
+    },
+    {
+      "code": "es_SV",
+      "name": "español · El Salvador",
+      "flag": "sv.svg",
+      "file": "es_SV.json"
+    },
+    {
+      "code": "en_SX",
+      "name": "English · Sint Maarten",
+      "flag": "sx.svg",
+      "file": "en_SX.json"
+    },
+    {
+      "code": "ar_SY",
+      "name": "العربية · Syria",
+      "flag": "sy.svg",
+      "file": "ar_SY.json"
+    },
+    {
+      "code": "en_SZ",
+      "name": "English · Eswatini",
+      "flag": "sz.svg",
+      "file": "en_SZ.json"
+    },
+    {
+      "code": "en_TC",
+      "name": "English · Turks & Caicos Islands",
+      "flag": "tc.svg",
+      "file": "en_TC.json"
+    },
+    {
+      "code": "ar_TD",
+      "name": "العربية · Chad",
+      "flag": "td.svg",
+      "file": "ar_TD.json"
+    },
+    {
+      "code": "fr_TF",
+      "name": "français · French Southern Territories",
+      "flag": "tf.svg",
+      "file": "fr_TF.json"
+    },
+    {
+      "code": "fr_TG",
+      "name": "français · Togo",
+      "flag": "tg.svg",
+      "file": "fr_TG.json"
+    },
+    {
+      "code": "th_TH",
+      "name": "ไทย · Thailand",
+      "flag": "th.svg",
+      "file": "th_TH.json"
+    },
+    {
+      "code": "tg_TJ",
+      "name": "тоҷикӣ · Tajikistan",
+      "flag": "tj.svg",
+      "file": "tg_TJ.json"
+    },
+    {
+      "code": "tkl_TK",
+      "name": "tkl · Tokelau",
+      "flag": "tk.svg",
+      "file": "tkl_TK.json"
+    },
+    {
+      "code": "pt_TL",
+      "name": "português · Timor-Leste",
+      "flag": "tl.svg",
+      "file": "pt_TL.json"
+    },
+    {
+      "code": "tk_TM",
+      "name": "türkmen dili · Turkmenistan",
+      "flag": "tm.svg",
+      "file": "tk_TM.json"
+    },
+    {
+      "code": "ar_TN",
+      "name": "العربية · Tunisia",
+      "flag": "tn.svg",
+      "file": "ar_TN.json"
+    },
+    {
+      "code": "to_TO",
+      "name": "lea fakatonga · Tonga",
+      "flag": "to.svg",
+      "file": "to_TO.json"
+    },
+    {
+      "code": "tr_TR",
+      "name": "Türkçe · Türkiye",
+      "flag": "tr.svg",
+      "file": "tr_TR.json"
+    },
+    {
+      "code": "en_TT",
+      "name": "English · Trinidad & Tobago",
+      "flag": "tt.svg",
+      "file": "en_TT.json"
+    },
+    {
+      "code": "tvl_TV",
+      "name": "tvl · Tuvalu",
+      "flag": "tv.svg",
+      "file": "tvl_TV.json"
+    },
+    {
+      "code": "zh_TW",
+      "name": "繁體中文 · Taiwan",
+      "flag": "tw.svg",
+      "file": "zh_TW.json"
+    },
+    {
+      "code": "sw_TZ",
+      "name": "Kiswahili · Tanzania",
+      "flag": "tz.svg",
+      "file": "sw_TZ.json"
+    },
+    {
+      "code": "uk_UA",
+      "name": "українська · Ukraine",
+      "flag": "ua.svg",
+      "file": "uk_UA.json"
+    },
+    {
+      "code": "sw_UG",
+      "name": "Kiswahili · Uganda",
+      "flag": "ug.svg",
+      "file": "sw_UG.json"
+    },
+    {
+      "code": "en_UM",
+      "name": "English · U.S. Outlying Islands",
+      "flag": "um.svg",
+      "file": "en_UM.json"
+    },
+    {
+      "code": "es_UY",
+      "name": "español · Uruguay",
+      "flag": "uy.svg",
+      "file": "es_UY.json"
+    },
+    {
+      "code": "uz_UZ",
+      "name": "o‘zbek · Uzbekistan",
+      "flag": "uz.svg",
+      "file": "uz_UZ.json"
+    },
+    {
+      "code": "it_VA",
+      "name": "italiano · Vatican City",
+      "flag": "va.svg",
+      "file": "it_VA.json"
+    },
+    {
+      "code": "en_VC",
+      "name": "English · St. Vincent & Grenadines",
+      "flag": "vc.svg",
+      "file": "en_VC.json"
+    },
+    {
+      "code": "es_VE",
+      "name": "español · Venezuela",
+      "flag": "ve.svg",
+      "file": "es_VE.json"
+    },
+    {
+      "code": "en_VG",
+      "name": "English · British Virgin Islands",
+      "flag": "vg.svg",
+      "file": "en_VG.json"
+    },
+    {
+      "code": "en_VI",
+      "name": "English · U.S. Virgin Islands",
+      "flag": "vi.svg",
+      "file": "en_VI.json"
+    },
+    {
+      "code": "vi_VN",
+      "name": "Tiếng Việt · Vietnam",
+      "flag": "vn.svg",
+      "file": "vi_VN.json"
+    },
+    {
+      "code": "bi_VU",
+      "name": "bi · Vanuatu",
+      "flag": "vu.svg",
+      "file": "bi_VU.json"
+    },
+    {
+      "code": "fr_WF",
+      "name": "français · Wallis & Futuna",
+      "flag": "wf.svg",
+      "file": "fr_WF.json"
+    },
+    {
+      "code": "sm_WS",
+      "name": "sm · Samoa",
+      "flag": "ws.svg",
+      "file": "sm_WS.json"
+    },
+    {
+      "code": "sq_XK",
+      "name": "shqip · Kosovo",
+      "flag": "xk.svg",
+      "file": "sq_XK.json"
+    },
+    {
+      "code": "ar_YE",
+      "name": "العربية · Yemen",
+      "flag": "ye.svg",
+      "file": "ar_YE.json"
+    },
+    {
+      "code": "fr_YT",
+      "name": "français · Mayotte",
+      "flag": "yt.svg",
+      "file": "fr_YT.json"
+    },
+    {
+      "code": "en_ZA",
+      "name": "English · South Africa",
+      "flag": "za.svg",
+      "file": "en_ZA.json"
+    },
+    {
+      "code": "en_ZM",
+      "name": "English · Zambia",
+      "flag": "zm.svg",
+      "file": "en_ZM.json"
+    },
+    {
+      "code": "sn_ZW",
+      "name": "chiShona · Zimbabwe",
+      "flag": "zw.svg",
+      "file": "sn_ZW.json"
     }
   ]
 }
