@@ -2592,10 +2592,123 @@ where
     }
 }
 
+// The IPC runtime and the governed Tray are independently owned resources.
+// A failed shutdown attempt must never suppress another safe, authenticated
+// shutdown or the final registry/group verification. No unknown PID is killed:
+// each operation retains its original ownership checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeDeactivationStep {
+    RequestShutdown,
+    StopTray,
+    WaitForUnregistration,
+    VerifyTrayStopped,
+}
+
+fn run_runtime_deactivation_steps_with<F>(mut execute: F) -> Result<(), String>
+where
+    F: FnMut(RuntimeDeactivationStep) -> Result<(), String>,
+{
+    let mut failures = Vec::new();
+    for step in [
+        RuntimeDeactivationStep::RequestShutdown,
+        RuntimeDeactivationStep::StopTray,
+        RuntimeDeactivationStep::WaitForUnregistration,
+        RuntimeDeactivationStep::VerifyTrayStopped,
+    ] {
+        if let Err(error) = execute(step) {
+            failures.push(format!("{step:?}: {error}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "owned module runtime deactivation incomplete: {}",
+            failures.join("; ")
+        ))
+    }
+}
+
 #[cfg(test)]
 mod runtime_deactivation_quiescence_tests {
-    use super::wait_for_module_runtime_unregistration_with;
+    use super::{
+        run_runtime_deactivation_steps_with, wait_for_module_runtime_unregistration_with,
+        RuntimeDeactivationStep,
+    };
     use std::time::Duration;
+
+    #[test]
+    fn owned_runtime_deactivation_attempts_all_steps_after_independent_failures() {
+        use RuntimeDeactivationStep::*;
+        let mut observed = Vec::new();
+        let error = run_runtime_deactivation_steps_with(|step| {
+            observed.push(step);
+            match step {
+                RequestShutdown => Err("runtime did not cooperate".into()),
+                StopTray => Err("owned tray refused stop".into()),
+                WaitForUnregistration => Ok(()),
+                VerifyTrayStopped => Err("owned tray still present".into()),
+            }
+        })
+        .unwrap_err();
+        assert_eq!(
+            observed,
+            [
+                RequestShutdown,
+                StopTray,
+                WaitForUnregistration,
+                VerifyTrayStopped
+            ]
+        );
+        assert!(error.contains("RequestShutdown: runtime did not cooperate"));
+        assert!(error.contains("StopTray: owned tray refused stop"));
+        assert!(error.contains("VerifyTrayStopped: owned tray still present"));
+    }
+
+    #[test]
+    fn owned_runtime_deactivation_attempts_verification_even_after_registry_failure() {
+        use RuntimeDeactivationStep::*;
+        let mut observed = Vec::new();
+        let error = run_runtime_deactivation_steps_with(|step| {
+            observed.push(step);
+            if step == WaitForUnregistration {
+                Err("registry inaccessible".into())
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        assert_eq!(
+            observed,
+            [
+                RequestShutdown,
+                StopTray,
+                WaitForUnregistration,
+                VerifyTrayStopped
+            ]
+        );
+        assert!(error.contains("WaitForUnregistration: registry inaccessible"));
+    }
+
+    #[test]
+    fn owned_runtime_deactivation_succeeds_only_after_all_steps_succeed() {
+        use RuntimeDeactivationStep::*;
+        let mut observed = Vec::new();
+        run_runtime_deactivation_steps_with(|step| {
+            observed.push(step);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            observed,
+            [
+                RequestShutdown,
+                StopTray,
+                WaitForUnregistration,
+                VerifyTrayStopped
+            ]
+        );
+    }
 
     #[test]
     fn already_unregistered_is_accepted_immediately() {
@@ -2657,37 +2770,38 @@ mod runtime_deactivation_quiescence_tests {
 pub fn deactivate_runtime_resources_local(name: &str, reason: &str) -> Result<(), String> {
     /*
      * Persistent Boss runtime authority owns Module IPC RuntimeRegistry
-     * and governed Tray RuntimeLease/process ownership.
+     * and governed Tray RuntimeLease/process ownership. Their authenticated
+     * shutdown paths are independent: a failed IPC shutdown cannot skip the
+     * governed Tray, nor may either error hide the final verification.
      */
-    request_runtime_shutdown(name, reason)?;
-
-    stop_tray_provider(name)?;
-
-    /*
-     * Module IPC disconnect/unregister is processed by the server thread.
-     * Even after the authenticated process exits, that thread may not yet
-     * have removed its exact session from the registry. Do not report a
-     * false disable failure solely because the first read races teardown.
-     *
-     * Never clear the registry here: the owning server must authenticate
-     * and remove its own session. A truly live or newly registered runtime
-     * remains a hard blocker after the bounded grace period.
-     */
-    wait_for_module_runtime_unregistration_with(
-        name,
-        std::time::Duration::from_secs(2),
-        std::time::Duration::from_millis(50),
-        || Ok(crate::module_ipc::runtime_registry().get(name)?.is_some()),
-    )?;
-
-    if probe_tray_provider_identity(name)?.is_some() {
-        return Err(format!(
-            "module '{}' tray provider is still active after deactivation",
-            name
-        ));
-    }
-
-    Ok(())
+    run_runtime_deactivation_steps_with(|step| match step {
+        RuntimeDeactivationStep::RequestShutdown => request_runtime_shutdown(name, reason),
+        RuntimeDeactivationStep::StopTray => stop_tray_provider(name).map(|_| ()),
+        RuntimeDeactivationStep::WaitForUnregistration => {
+            /*
+             * Server-thread disconnect/unregister may lag behind the exact
+             * process's exit. Never clear its registry entry by force; it
+             * must be released by its authenticated owner. New registrations
+             * and registry read failures still block successful deactivation.
+             */
+            wait_for_module_runtime_unregistration_with(
+                name,
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_millis(50),
+                || Ok(crate::module_ipc::runtime_registry().get(name)?.is_some()),
+            )
+        }
+        RuntimeDeactivationStep::VerifyTrayStopped => {
+            if probe_tray_provider_identity(name)?.is_some() {
+                Err(format!(
+                    "module '{}' tray provider is still active after deactivation",
+                    name
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    })
 }
 
 fn request_persistent_boss_action(action: &str, args: Vec<String>) -> Result<Value, String> {
