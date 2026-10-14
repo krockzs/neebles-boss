@@ -5126,7 +5126,12 @@ fn uninstall_internal(
         &uninstall_manifest,
     )?;
     let recovery = if let Some(contract) = uninstall_manifest.uninstall.as_ref() {
-        crate::module_uninstall::run_extras(contract, name, uninstall_manifest.tray.is_some())?
+        crate::module_uninstall::run_extras(
+            contract,
+            name,
+            uninstall_manifest.tray.is_some(),
+            || evidence.verify(),
+        )?
     } else {
         crate::module_uninstall::UninstallServiceRecovery::default()
     };

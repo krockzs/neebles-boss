@@ -1013,10 +1013,38 @@ pub(crate) fn retire_owned_autostart(
     Ok(())
 }
 
+// A partially stopped service must never be restarted merely because its
+// systemd unit is still present. The entire installed authority has to match
+// the pre-quiescence evidence before any compensation can execute.
+fn failed_extras_with_verified_recovery<V, R>(
+    failure: &str,
+    verify_original: V,
+    reactivate: R,
+) -> String
+where
+    V: FnOnce() -> Result<(), String>,
+    R: FnOnce() -> Result<(), String>,
+{
+    match verify_original() {
+        Err(integrity) => format!(
+            "CRITICAL: uninstall extras failed: {failure}; original installation integrity not restored; services NOT restarted: {integrity}"
+        ),
+        Ok(()) => match reactivate() {
+            Ok(()) => format!(
+                "uninstall extras failed: {failure}; previously active services restored"
+            ),
+            Err(restore) => format!(
+                "CRITICAL: uninstall extras failed: {failure}; {restore}"
+            ),
+        },
+    }
+}
+
 pub fn run_extras(
     contract: &UninstallContract,
     module: &str,
     has_tray: bool,
+    verify_original: impl Fn() -> Result<(), String>,
 ) -> Result<UninstallServiceRecovery, String> {
     // All declarations are validated before any process is stopped.
     validate(contract, module, has_tray)?;
@@ -1066,14 +1094,11 @@ pub fn run_extras(
             }
         };
         if let Err(error) = result {
-            return match recovery.reactivate(module) {
-                Ok(()) => Err(format!(
-                    "uninstall extras failed: {error}; previously active services restored"
-                )),
-                Err(restore) => Err(format!(
-                    "CRITICAL: uninstall extras failed: {error}; {restore}"
-                )),
-            };
+            return Err(failed_extras_with_verified_recovery(
+                &error,
+                || verify_original(),
+                || recovery.reactivate(module),
+            ));
         }
     }
     Ok(recovery)
@@ -1224,6 +1249,57 @@ mod tests {
            "cleanup":[{"id":"cache","type":"directory","scope":"module-data","path":"$hardcoded.cache","policy":"always"}]
         }"#).unwrap()
     }
+    #[test]
+    fn extras_recovery_never_restarts_when_original_integrity_has_changed() {
+        let restarted = std::cell::Cell::new(false);
+        let failure = failed_extras_with_verified_recovery(
+            "later declared resource failed",
+            || Err("original manifest has changed".to_string()),
+            || {
+                restarted.set(true);
+                Ok(())
+            },
+        );
+        assert!(!restarted.get());
+        assert!(failure.starts_with("CRITICAL:"));
+        assert!(failure.contains("services NOT restarted"));
+        assert!(failure.contains("original manifest has changed"));
+    }
+
+    #[test]
+    fn extras_recovery_verifies_integrity_before_compensation() {
+        let observed = std::cell::RefCell::new(Vec::new());
+        let failure = failed_extras_with_verified_recovery(
+            "autostart validation failed",
+            || {
+                observed.borrow_mut().push("verify-original");
+                Ok(())
+            },
+            || {
+                observed.borrow_mut().push("reactivate-service");
+                Ok(())
+            },
+        );
+        assert_eq!(
+            *observed.borrow(),
+            ["verify-original", "reactivate-service"]
+        );
+        assert!(failure.contains("autostart validation failed"));
+        assert!(failure.contains("previously active services restored"));
+        assert!(!failure.starts_with("CRITICAL:"));
+    }
+
+    #[test]
+    fn extras_recovery_reports_compensation_failure_after_verified_integrity() {
+        let failure = failed_extras_with_verified_recovery(
+            "resource validation failed",
+            || Ok(()),
+            || Err("systemd refused restart".to_string()),
+        );
+        assert!(failure.starts_with("CRITICAL:"));
+        assert!(failure.contains("systemd refused restart"));
+    }
+
     #[test]
     fn validates_generic_manifest_and_hardcoded() {
         let contract = example();
