@@ -3,8 +3,8 @@
   "modules": {
     "test-module": {
       "repo": "https://github.com/krockzs/neebles-test-module.git",
-      "commit": "3def2f0d0d97e57aae9e26fec33386e63df5b16d",
-      "version": "1.2.11"
+      "commit": "028b74e6d68d07953dee173815f96d3aa2498da9",
+      "version": "1.2.12"
     }
   }
 }
