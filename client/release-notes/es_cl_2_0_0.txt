@@ -1,0 +1,8 @@
+NEEBLES Boss 2.0.0
+
+- Nuevo catálogo multibanderas: 253 países y territorios en el selector de idiomas.
+- Cada opción incluye sus 149 claves de texto. Algunas traducciones iniciales aún utilizan inglés de respaldo; continuaremos mejorándolas.
+- Se conservan la preferencia ui.language y la propagación genérica a módulos que declaran ese campo.
+- Esta versión debe superar la compilación certificada y las pruebas de instalación antes de considerarse validada.
+
+Guarda tu trabajo y cierra las aplicaciones abiertas antes de pulsar Reboot.

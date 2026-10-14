@@ -1,0 +1,8 @@
+NEEBLES Boss 2.0.0
+
+- New multi-flag catalog: 253 country and territory choices in the language selector.
+- Every choice has the full 149-key text contract. Some initial translations still use English fallback and will be improved.
+- The existing ui.language preference and generic propagation to modules that declare that setting are preserved.
+- The candidate must pass the certified build and installation tests before runtime validation is complete.
+
+Save your work and close open applications before pressing Reboot.
