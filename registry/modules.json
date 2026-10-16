@@ -1,10 +1,4 @@
 {
   "schema": 2,
-  "modules": {
-    "test-module": {
-      "repo": "https://github.com/krockzs/neebles-test-module.git",
-      "commit": "3d265bc62a7ff51ed1c42aecf0158abfa29b3223",
-      "version": "1.2.12"
-    }
-  }
+  "modules": {}
 }
