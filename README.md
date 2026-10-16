@@ -2,7 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Version:** **2.0.0**.
+**Version:** **2.0.1**.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -1061,6 +1061,14 @@ neebles-check
 including dynamic module verification.
 
 Boss startup does not depend on running recovery.
+
+---
+
+## Candidato de desarrollo — Boss 2.0.1 (F10/F11)
+
+F10 corrige la validación global indebida de todos los mundos CUSTOM dentro de cada RootFS de un módulo. Construction selecciona explícitamente `domination.world` por RootFS y la misma selección se usa en el staging de Install y en RuntimeLease. Preinstall, Essential y los pools de `.deb` por SHA no cambian. Test Module 1.2.12 vuelve al Registry junto a Connect 1.0.0.
+
+La compilación y las pruebas Rust se realizaron en Ryzen antes de F11. El versionado 2.0.1 sigue siendo un candidato local; no equivale a una release publicada. La versión estable publicada continúa siendo 2.0.0 hasta completar el workflow certificado de Esbirro, preservar y publicar sus 11 artefactos exactos y verificar Install/Open/Close/Uninstall de ambos módulos en el Ryzen.
 
 ---
 

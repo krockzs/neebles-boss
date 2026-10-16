@@ -87,7 +87,8 @@ fn notify_boss_config_changed() -> Result<(), String> {
     if response.ok {
         Ok(())
     } else {
-        Err(response.error
+        Err(response
+            .error
             .map(|error| error.message)
             .unwrap_or_else(|| "Boss rejected config-changed request".to_string()))
     }

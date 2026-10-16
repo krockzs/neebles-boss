@@ -1,0 +1,8 @@
+NEEBLES Boss 2.0.1
+
+- Corregida la validación de mundos Multi-RootFS: cada entorno verifica su propio mundo declarado, sin exigir ejecutables de otros módulos.
+- Essential y los paquetes .deb compartidos siguen verificándose por SHA-256 y reutilizándose; no se descargan dependencias ajenas al módulo.
+- Test Module 1.2.12 vuelve al Registry junto a NEEBLES Connect 1.0.0.
+- Esta actualización requiere pruebas instaladas de Install, Open, Close y Uninstall de ambos módulos; la compilación por sí sola no las sustituye.
+
+Guarda tu trabajo y cierra las aplicaciones abiertas antes de pulsar Reboot.

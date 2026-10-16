@@ -753,15 +753,32 @@ fn stage_authenticated_rootfs_set(
     let mut created: Vec<PathBuf> = Vec::new();
     for entry in &declaration.rootfs {
         let recipe = recipes.get(&entry.id).expect("checked before staging");
-        match neebles_backend::module_persistent_rootfs::prepare_persistent_rootfs(
-            candidate_directory,
-            &entry.id,
-            essential,
-            essential_pool,
-            recipe,
-            module_pool,
-            runtime_manifest_payload,
-        ) {
+        // Pool sharing never means world sharing: Construction owns the
+        // authenticated domination.world for each independent RootFS.
+        let staging = match entry.domination_world.as_deref() {
+            Some(world_name) => {
+                neebles_backend::module_persistent_rootfs::prepare_persistent_rootfs_for_world(
+                    candidate_directory,
+                    &entry.id,
+                    essential,
+                    essential_pool,
+                    recipe,
+                    module_pool,
+                    runtime_manifest_payload,
+                    world_name,
+                )
+            }
+            None => neebles_backend::module_persistent_rootfs::prepare_persistent_rootfs(
+                candidate_directory,
+                &entry.id,
+                essential,
+                essential_pool,
+                recipe,
+                module_pool,
+                runtime_manifest_payload,
+            ),
+        };
+        match staging {
             Ok(built) => {
                 created.push(territory.join(&entry.id));
                 eprintln!(

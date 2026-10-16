@@ -1163,7 +1163,9 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
                 // Use the existing module Settings setter in persistent Boss.
                 // This process owns the real subscriptions, unlike the short-
                 // lived CLI process which persisted the global Boss language.
-                if let Err(error) = modules::synchronize_installed_module_languages(&config.language) {
+                if let Err(error) =
+                    modules::synchronize_installed_module_languages(&config.language)
+                {
                     return ExecutionResponse::fail(
                         1,
                         "module_language_synchronization",

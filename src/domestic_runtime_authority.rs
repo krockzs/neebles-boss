@@ -116,6 +116,40 @@ pub fn validate_materialized_runtime_manifest(manifest_path: &Path) -> Result<()
     Ok(())
 }
 
+/// Validate only the authenticated world selected for one module RootFS.
+/// Other worlds in the shared CUSTOM catalogue are not dependencies of this RootFS.
+/// This is deliberately distinct from the global validator used by Boss itself.
+pub fn validate_materialized_runtime_world(
+    manifest_path: &Path,
+    world_name: &str,
+) -> Result<(), String> {
+    let (manifest, _) = load_materialized_runtime_context(manifest_path)?;
+    if world_name.trim().is_empty() {
+        return Err("selected module runtime world is empty".to_string());
+    }
+    let worlds = manifest
+        .get("worlds")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "materialized runtime worlds is not an object".to_string())?;
+    let world = worlds
+        .get(world_name)
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("selected module runtime world is not declared: {world_name}"))?;
+    let categories = world
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("selected module runtime world has no categories: {world_name}"))?;
+    if categories.is_empty() {
+        return Err(format!(
+            "selected module runtime world has no categories: {world_name}"
+        ));
+    }
+    for category_name in categories.keys() {
+        resolve_materialized_runtime_targets(manifest_path, world_name, category_name)?;
+    }
+    Ok(())
+}
+
 pub fn resolve_materialized_runtime_root(manifest_path: &Path) -> Result<PathBuf, String> {
     let (_, runtime_root) = load_materialized_runtime_context(manifest_path)?;
 
@@ -526,5 +560,69 @@ mod installed_authority_tests {
         );
 
         std::fs::remove_dir_all(&base).expect("plural runtime fixture must be removable");
+    }
+}
+
+#[cfg(test)]
+mod f10_scoped_module_world_tests {
+    use super::*;
+
+    fn fixture() -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("rootfs");
+        fs::create_dir_all(root.join("usr/bin")).unwrap();
+        fs::write(root.join("usr/bin/env"), b"fixture").unwrap();
+        let manifest = temp.path().join("domestic-runtime.json");
+        fs::write(
+            &manifest,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "1", "name": "neebles-domestic-runtime", "root": "rootfs",
+                "worlds": {
+                    "modules.fixture-rust": {
+                        "categories": {"executable": {"category": "executable", "value": "env",
+                            "declared_targets": ["usr/bin/env"],
+                            "resolved_targets": ["usr/bin/env"]}}
+                    },
+                    "modules.fixture-python": {
+                        "categories": {"executable": {"category": "executable", "value": "python",
+                            "declared_targets": ["usr/bin/python3.13"],
+                            "resolved_targets": ["usr/bin/python3.13"]}}
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        (temp, manifest)
+    }
+
+    #[test]
+    fn unrelated_world_does_not_break_scoped_rootfs() {
+        let (_temp, manifest) = fixture();
+        validate_materialized_runtime_world(&manifest, "modules.fixture-rust").unwrap();
+        assert!(validate_materialized_runtime_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn selected_world_still_rejects_missing_executable() {
+        let (_temp, manifest) = fixture();
+        assert!(validate_materialized_runtime_world(&manifest, "modules.fixture-python").is_err());
+    }
+
+    #[test]
+    fn undeclared_world_fails_closed() {
+        let (_temp, manifest) = fixture();
+        assert!(validate_materialized_runtime_world(&manifest, "modules.unknown").is_err());
+        assert!(validate_materialized_runtime_world(&manifest, "").is_err());
+    }
+
+    #[test]
+    fn selected_world_rejects_rootfs_escape() {
+        let (_temp, manifest) = fixture();
+        let mut value: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        value["worlds"]["modules.fixture-rust"]["categories"]["executable"]["resolved_targets"] =
+            serde_json::json!(["../../../../etc/passwd"]);
+        fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(validate_materialized_runtime_world(&manifest, "modules.fixture-rust").is_err());
     }
 }

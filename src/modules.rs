@@ -118,7 +118,10 @@ pub fn module_setting_set(
  * opt into Boss-wide language synchronization.
  */
 fn declared_module_language(default: &Value) -> bool {
-    default.pointer("/ui/language").and_then(Value::as_str).is_some()
+    default
+        .pointer("/ui/language")
+        .and_then(Value::as_str)
+        .is_some()
 }
 
 pub fn synchronize_module_language(name: &str, boss_language: &str) -> Result<bool, String> {
@@ -150,7 +153,8 @@ pub fn synchronize_installed_module_languages(boss_language: &str) -> Result<usi
         let item = item.map_err(|error| format!("could not inspect installed module: {error}"))?;
         // Do not mistake hidden staging/rollback directories or symlinks for
         // installed modules. Do not follow a foreign link as Settings owner.
-        if !item.file_type()
+        if !item
+            .file_type()
             .map_err(|error| format!("could not inspect module type: {error}"))?
             .is_dir()
             || item.file_name().to_string_lossy().starts_with('.')
@@ -168,10 +172,9 @@ pub fn synchronize_installed_module_languages(boss_language: &str) -> Result<usi
     }
     targets.sort();
     for (name, language) in &targets {
-        module_setting_set(name, "ui.language", language.clone())
-            .map_err(|error| format!(
-                "Boss language saved, but could not synchronize module '{name}': {error}"
-            ))?;
+        module_setting_set(name, "ui.language", language.clone()).map_err(|error| {
+            format!("Boss language saved, but could not synchronize module '{name}': {error}")
+        })?;
     }
     Ok(targets.len())
 }
@@ -8588,10 +8591,16 @@ mod module_language_settings_contract_tests {
 
     #[test]
     fn only_declared_string_ui_language_participates() {
-        assert!(declared_module_language(&json!({"ui":{"language":"en_US"}})));
-        assert!(declared_module_language(&json!({"ui":{"language":"es_CL"}})));
+        assert!(declared_module_language(
+            &json!({"ui":{"language":"en_US"}})
+        ));
+        assert!(declared_module_language(
+            &json!({"ui":{"language":"es_CL"}})
+        ));
         assert!(!declared_module_language(&json!({"ui":{}})));
         assert!(!declared_module_language(&json!({"ui":{"language":true}})));
-        assert!(!declared_module_language(&json!({"tray":{"visible":"true"}})));
+        assert!(!declared_module_language(
+            &json!({"tray":{"visible":"true"}})
+        ));
     }
 }

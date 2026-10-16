@@ -223,6 +223,26 @@ fn validate_bound_rootfs_selection(
     Ok(())
 }
 
+/// Read the world selected by the authenticated Construction already bound
+/// to the installed module. Never infer it from other modules or CUSTOM's pool.
+fn bound_domination_world(
+    binding: &InstalledMaterialBinding,
+    rootfs_id: &str,
+) -> Result<Option<String>, String> {
+    let raw = std::str::from_utf8(binding.construction_payload())
+        .map_err(|error| format!("bound Construction is not UTF-8: {error}"))?;
+    let declaration = crate::domestic_construction::DomesticConstructionDeclaration::parse(raw)?;
+    if declaration.subject != binding.module() {
+        return Err("bound rootfs world Construction subject mismatch".to_string());
+    }
+    let rootfs = declaration
+        .rootfs
+        .iter()
+        .find(|entry| entry.id == rootfs_id)
+        .ok_or_else(|| format!("rootfs world selection is not declared: {rootfs_id}"))?;
+    Ok(rootfs.domination_world.clone())
+}
+
 /// Resolve a previously published, certified persistent rootfs. Runtime never
 /// downloads or extracts packages; missing or mismatched material fails closed.
 fn persistent_runtime_lease_from_binding(
@@ -254,7 +274,17 @@ fn persistent_runtime_lease_from_binding(
     if actual != binding.runtime_manifest_payload() {
         return Err("persistent runtime manifest differs from authenticated binding".to_string());
     }
-    crate::domestic_runtime_authority::validate_materialized_runtime_manifest(&manifest_path)?;
+    // Validate the selected RootFS only. The full catalogue remains SHA-bound,
+    // but another module's missing executable cannot reject this environment.
+    match bound_domination_world(&binding, rootfs_id)?.as_deref() {
+        Some(selected) => crate::domestic_runtime_authority::validate_materialized_runtime_world(
+            &manifest_path,
+            selected,
+        )?,
+        None => crate::domestic_runtime_authority::validate_materialized_runtime_manifest(
+            &manifest_path,
+        )?,
+    }
     let rootfs_path = root.join("rootfs");
     let metadata = fs::symlink_metadata(&rootfs_path)
         .map_err(|e| format!("persistent runtime rootfs missing: {e}"))?;
@@ -549,7 +579,7 @@ mod tests {
         let input = binding(runtime_payload());
         let first = crate::module_persistent_rootfs::prepare_persistent_rootfs(
             &candidate,
-            "principal",
+            "caca-de-gato",
             &input.essential_layer,
             temporary.path(),
             &input.module_recipe,
@@ -560,13 +590,13 @@ mod tests {
         let lease_a = persistent_runtime_lease_from_binding(
             InstalledMaterialBinding::Legacy(input.clone()),
             &candidate,
-            "principal",
+            "caca-de-gato",
         )
         .unwrap();
         let lease_b = persistent_runtime_lease_from_binding(
             InstalledMaterialBinding::Legacy(input),
             &candidate,
-            "principal",
+            "caca-de-gato",
         )
         .unwrap();
         assert_eq!(lease_a.rootfs_path(), lease_b.rootfs_path());
@@ -588,7 +618,7 @@ mod tests {
         let input = binding(runtime_payload());
         let first = crate::module_persistent_rootfs::prepare_persistent_rootfs(
             &candidate,
-            "principal",
+            "caca-de-gato",
             &input.essential_layer,
             temporary.path(),
             &input.module_recipe,
@@ -600,7 +630,7 @@ mod tests {
         assert!(persistent_runtime_lease_from_binding(
             InstalledMaterialBinding::Legacy(input),
             &candidate,
-            "principal"
+            "caca-de-gato"
         )
         .is_err());
     }
@@ -911,5 +941,80 @@ mod tests {
         drop(second);
 
         assert!(!second_root.exists());
+    }
+}
+
+#[cfg(test)]
+mod f10_scoped_runtime_lease_tests {
+    use super::*;
+    use crate::module_material::{MaterialLayer, MaterialRecipe};
+    use crate::module_material_binding::{InstalledMaterialBinding, MaterialBindingV3};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn persistent_lease_ignores_unrelated_world_but_checks_own_world() {
+        let temp = tempfile::tempdir().unwrap();
+        let installed = temp.path().join("installed");
+        fs::create_dir(&installed).unwrap();
+        let runtime = serde_json::to_vec(&serde_json::json!({
+            "schema":"1", "name":"neebles-domestic-runtime", "root":"rootfs",
+            "worlds": {
+                "modules.alpha": {"categories": {"runtime_paths": {
+                    "category":"runtime_paths", "value":"alpha",
+                    "declared_targets":["."], "resolved_targets":["."]
+                }}},
+                "modules.beta": {"categories": {"executable": {
+                    "category":"executable", "value":"foreign",
+                    "declared_targets":["usr/bin/foreign"],
+                    "resolved_targets":["usr/bin/foreign"]
+                }}}
+            }
+        }))
+        .unwrap();
+        let construction = serde_json::to_vec(&serde_json::json!({
+            "schema":"1", "name":"neebles-domestic-construction",
+            "subject":"fixture",
+            "rootfs": {"alpha": {"domination": {"world":"modules.alpha"}}},
+            "steps": [{"id":"open", "runtime_authority":"modules.runtime",
+                       "rootfs":"alpha", "world":"modules.alpha",
+                       "execution":"foreground", "session":false}]
+        }))
+        .unwrap();
+        let essentials = MaterialLayer {
+            packages: vec![],
+            entries: vec![],
+        };
+        let recipe = MaterialRecipe {
+            module: "fixture".into(),
+            version: "1.0.0".into(),
+            packages: vec![],
+            entries: vec![],
+        };
+        let built = crate::module_persistent_rootfs::prepare_persistent_rootfs_for_world(
+            &installed,
+            "alpha",
+            &essentials,
+            temp.path(),
+            &recipe,
+            temp.path(),
+            &runtime,
+            "modules.alpha",
+        )
+        .unwrap();
+        assert!(built.rootfs_path.is_dir());
+        let binding = InstalledMaterialBinding::MultiRootfs(MaterialBindingV3 {
+            module: "fixture".into(),
+            version: "1.0.0".into(),
+            custom_revision: "c".repeat(40),
+            essential_layer: essentials,
+            rootfs_recipes: BTreeMap::from([("alpha".into(), recipe)]),
+            runtime_manifest_payload: runtime,
+            construction_payload: construction,
+            path: temp.path().join("material-binding"),
+        });
+        let lease =
+            persistent_runtime_lease_from_binding(binding.clone(), &installed, "alpha").unwrap();
+        assert_eq!(lease.rootfs_path(), built.rootfs_path);
+        assert!(persistent_runtime_lease_from_binding(binding, &installed, "foreign").is_err());
     }
 }

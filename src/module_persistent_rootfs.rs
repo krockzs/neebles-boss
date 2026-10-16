@@ -27,6 +27,52 @@ pub fn prepare_persistent_rootfs(
     module_pool: &Path,
     runtime_manifest_payload: &[u8],
 ) -> Result<PreparedPersistentRootfs, String> {
+    prepare_persistent_rootfs_scoped(
+        staged_module_dir,
+        id,
+        essential,
+        essential_pool,
+        module,
+        module_pool,
+        runtime_manifest_payload,
+        None,
+    )
+}
+
+/// Use the exact domination world declared for a keyed module RootFS.
+/// The legacy entrypoint remains intact for historical, worldless contracts.
+pub fn prepare_persistent_rootfs_for_world(
+    staged_module_dir: &Path,
+    id: &str,
+    essential: &MaterialLayer,
+    essential_pool: &Path,
+    module: &MaterialRecipe,
+    module_pool: &Path,
+    runtime_manifest_payload: &[u8],
+    world_name: &str,
+) -> Result<PreparedPersistentRootfs, String> {
+    prepare_persistent_rootfs_scoped(
+        staged_module_dir,
+        id,
+        essential,
+        essential_pool,
+        module,
+        module_pool,
+        runtime_manifest_payload,
+        Some(world_name),
+    )
+}
+
+fn prepare_persistent_rootfs_scoped(
+    staged_module_dir: &Path,
+    id: &str,
+    essential: &MaterialLayer,
+    essential_pool: &Path,
+    module: &MaterialRecipe,
+    module_pool: &Path,
+    runtime_manifest_payload: &[u8],
+    world_name: Option<&str>,
+) -> Result<PreparedPersistentRootfs, String> {
     if !valid_module_id(id) {
         return Err(format!("invalid persistent rootfs id: {id}"));
     }
@@ -66,7 +112,15 @@ pub fn prepare_persistent_rootfs(
         .map_err(|e| format!("cannot write persistent runtime manifest: {e}"))?;
     fs::set_permissions(&manifest_path, fs::Permissions::from_mode(0o644))
         .map_err(|e| format!("cannot set runtime manifest permissions: {e}"))?;
-    crate::domestic_runtime_authority::validate_materialized_runtime_manifest(&manifest_path)?;
+    match world_name {
+        Some(selected) => crate::domestic_runtime_authority::validate_materialized_runtime_world(
+            &manifest_path,
+            selected,
+        )?,
+        None => crate::domestic_runtime_authority::validate_materialized_runtime_manifest(
+            &manifest_path,
+        )?,
+    }
     let actual =
         crate::domestic_runtime_authority::resolve_materialized_runtime_root(&manifest_path)?;
     let expected = fs::canonicalize(&composed)
@@ -216,5 +270,81 @@ mod tests {
         eprintln!("08D_ROOTFS={}", built.rootfs_path.display());
         eprintln!("08D_MANIFEST={}", built.manifest_path.display());
         eprintln!("08D_REPORT={:?}", built.report);
+    }
+}
+
+#[cfg(test)]
+mod f10_independent_rootfs_tests {
+    use super::*;
+
+    fn catalog() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "1", "name": "neebles-domestic-runtime", "root": "rootfs",
+            "worlds": {
+                "modules.alpha": {"categories": {
+                    "runtime_paths": {"category":"runtime_paths", "value":"root",
+                        "declared_targets":["."], "resolved_targets":["."]}
+                }},
+                "modules.beta": {"categories": {
+                    "executable": {"category":"executable", "value":"missing",
+                        "declared_targets":["usr/bin/other"],
+                        "resolved_targets":["usr/bin/other"]}
+                }}
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn certified_world_a_stages_without_unrelated_world_b() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("module");
+        fs::create_dir(&dir).unwrap();
+        let essential = MaterialLayer {
+            packages: vec![],
+            entries: vec![],
+        };
+        let recipe = MaterialRecipe {
+            module: "fixture".into(),
+            version: "1".into(),
+            packages: vec![],
+            entries: vec![],
+        };
+        let runtime = catalog();
+        let selected = prepare_persistent_rootfs_for_world(
+            &dir,
+            "first",
+            &essential,
+            temp.path(),
+            &recipe,
+            temp.path(),
+            &runtime,
+            "modules.alpha",
+        )
+        .unwrap();
+        assert!(selected.rootfs_path.is_dir());
+        assert!(prepare_persistent_rootfs_for_world(
+            &dir,
+            "second",
+            &essential,
+            temp.path(),
+            &recipe,
+            temp.path(),
+            &runtime,
+            "modules.beta",
+        )
+        .is_err());
+        assert!(!dir.join("rootfs/second").exists());
+        assert!(prepare_persistent_rootfs_for_world(
+            &dir,
+            "third",
+            &essential,
+            temp.path(),
+            &recipe,
+            temp.path(),
+            &runtime,
+            "modules.undeclared",
+        )
+        .is_err());
     }
 }
