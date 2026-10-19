@@ -3,7 +3,7 @@
   "modules": {
     "neebles-connect": {
       "repo": "https://github.com/krockzs/neebles-connect.git",
-      "commit": "8ce50796ba5a450332ecb5ed4697229a602457be",
+      "commit": "d19cd6037eff79418b0ad8a957d24c053b61d60c",
       "version": "1.0.0"
     },
     "test-module": {
@@ -13,7 +13,7 @@
     },
     "neebles-secrets": {
       "repo": "https://github.com/krockzs/neebles-secrets.git",
-      "commit": "18de781ad58021854eb291e2d9d65426356f6d53",
+      "commit": "5a069633763b93c3932166442d4b936493f0d4c3",
       "version": "1.0.0"
     }
   }
