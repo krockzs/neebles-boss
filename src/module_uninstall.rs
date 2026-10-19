@@ -1830,3 +1830,197 @@ pub fn stage_cleanup(
     }
     Ok(staged)
 }
+
+// Module-agnostic, fail-closed systemd-user *install* counterpart to TXN V5
+// service retirement. Called only by authenticated Governor Lifecycle.
+fn certify_install_unit(contents: &str, module: &str, exec: &str) -> Result<(), String> {
+    if !contents.ends_with('\n') || contents.contains('\r') || contents.len() > 8192 {
+        return Err("user service unit has unsupported encoding or size".into());
+    }
+    let manifest = format!("/opt/neebles/modules/{module}/manifest.json");
+    let expected = [
+        ("Unit", "After", "basic.target"),
+        ("Unit", "ConditionPathExists", manifest.as_str()),
+        ("Service", "Type", "simple"),
+        ("Service", "ExecStart", exec),
+        ("Service", "Restart", "on-failure"),
+        ("Service", "RestartSec", "2"),
+        ("Service", "UMask", "0077"),
+        ("Service", "NoNewPrivileges", "true"),
+        ("Install", "WantedBy", "default.target"),
+    ];
+    let mut section = "";
+    let mut seen = BTreeSet::<(String, String)>::new();
+    for line in contents.lines() {
+        if line.is_empty() { continue; }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = &line[1..line.len()-1];
+            if !matches!(section, "Unit" | "Service" | "Install") {
+                return Err("user service contains unsupported section".into());
+            }
+            continue;
+        }
+        let (key, value) = line.split_once('=').ok_or("invalid user service line")?;
+        if !seen.insert((section.into(), key.into())) {
+            return Err("duplicate user service key".into());
+        }
+        if section == "Unit" && key == "Description"
+            && !value.is_empty() && value.len() <= 160
+        {
+            continue;
+        }
+        if !expected.iter().any(|(s, k, v)| *s == section && *k == key && *v == value) {
+            return Err(format!("user service has unsupported or altered key {section}/{key}"));
+        }
+    }
+    for (s, k, _) in expected {
+        if !seen.contains(&(s.into(), k.into())) {
+            return Err(format!("user service missing required key {s}/{k}"));
+        }
+    }
+    Ok(())
+}
+
+pub fn install_declared_user_service(module: &str, resource_id: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    neebles_backend::domestic_construction::validate_domestic_construction_subject(module)?;
+    if resource_id.is_empty() || resource_id.len() > 128
+        || !resource_id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err("user service resource id is invalid".into());
+    }
+    let module_root = PathBuf::from(format!("/opt/neebles/modules/{module}"));
+    let manifest_path = module_root.join("manifest.json");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(&manifest_path).map_err(|e| format!("service manifest unavailable: {e}"))?
+    ).map_err(|e| format!("service manifest JSON: {e}"))?;
+    if manifest.get("schema").and_then(|v|v.as_u64()) != Some(4)
+        || manifest.get("name").and_then(|v|v.as_str()) != Some(module)
+    {
+        return Err("user service installed manifest identity mismatch".into());
+    }
+    let contract: UninstallContract = serde_json::from_value(
+        manifest.get("uninstall").ok_or("user service has no uninstall contract")?.clone()
+    ).map_err(|e| format!("invalid service ownership declaration: {e}"))?;
+    validate(&contract, module, manifest.get("tray").is_some())?;
+    let matches: Vec<_> = contract.extras.iter().filter(|extra| match extra {
+        Extra::Service { id, .. } => id == resource_id,
+        _ => false,
+    }).collect();
+    if matches.len() != 1 { return Err("user service resource is not uniquely declared".into()); }
+    let (unit, exec_start) = match matches[0] {
+        Extra::Service { provider, name, exec_start, stop, remove, .. }
+            if provider == "systemd-user" && *remove && stop.disable => {
+            (resolve(name, &contract, module)?, resolve(exec_start, &contract, module)?)
+        }
+        _ => return Err("user service resource is not uninstall-governed".into()),
+    };
+    validate_service_name(module, &unit)?;
+    validate_service_exec_start(&exec_start, module)?;
+
+    let folder = module_root.join("integration/systemd-user");
+    for directory in [module_root.join("integration"), folder.clone()] {
+        let m = fs::symlink_metadata(&directory)
+            .map_err(|e|format!("user service source directory: {e}"))?;
+        if !m.file_type().is_dir() || m.mode() & 0o002 != 0 {
+            return Err("unsafe user service source directory".into());
+        }
+    }
+    let source = folder.join(&unit);
+    let source_meta = fs::symlink_metadata(&source)
+        .map_err(|e| format!("user service source unit: {e}"))?;
+    if !source_meta.file_type().is_file() || source_meta.mode() & 0o002 != 0 {
+        return Err("untrusted user service source unit".into());
+    }
+    let content = fs::read_to_string(&source)
+        .map_err(|e| format!("cannot read user service unit: {e}"))?;
+    certify_install_unit(&content, module, &exec_start)?;
+
+    let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+    if uid == 0 { return Err("refusing root as desktop service user".into()); }
+    let home = desktop_home(uid)?;
+    let mut dir = home.clone();
+    for segment in [".config", "systemd", "user"] {
+        dir.push(segment);
+        match fs::symlink_metadata(&dir) {
+            Ok(meta) => {
+                if !meta.file_type().is_dir() || meta.uid() != uid
+                    || meta.gid() != gid || meta.mode() & 0o002 != 0 {
+                    return Err(format!("unsafe systemd user directory {}", dir.display()));
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&dir).map_err(|e|format!("create systemd directory: {e}"))?;
+                std::os::unix::fs::chown(&dir, Some(uid), Some(gid))
+                    .map_err(|e|format!("set systemd directory owner: {e}"))?;
+                fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))
+                    .map_err(|e|format!("secure systemd directory: {e}"))?;
+            }
+            Err(e) => return Err(format!("cannot inspect systemd user directory: {e}")),
+        }
+    }
+    let target = dir.join(&unit);
+    let created = match fs::symlink_metadata(&target) {
+        Ok(meta) => {
+            if !meta.file_type().is_file() || meta.uid() != uid || meta.gid() != gid
+                || meta.mode() & 0o077 != 0 || fs::read_to_string(&target).ok().as_deref() != Some(&content)
+            {
+                return Err("existing systemd unit is foreign or modified; refusing overwrite".into());
+            }
+            false
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let mut file = fs::OpenOptions::new().write(true).create_new(true)
+                .mode(0o600).open(&target)
+                .map_err(|e|format!("create user service unit exclusively: {e}"))?;
+            let rc = unsafe { libc::fchown(file.as_raw_fd(), uid, gid) };
+            if rc != 0 {
+                let _ = fs::remove_file(&target);
+                return Err(format!("set user service unit owner: {}", std::io::Error::last_os_error()));
+            }
+            if let Err(e) = file.write_all(content.as_bytes()).and_then(|_|file.sync_all()) {
+                let _ = fs::remove_file(&target);
+                return Err(format!("write user service unit: {e}"));
+            }
+            true
+        }
+        Err(e) => return Err(format!("inspect user service unit: {e}")),
+    };
+    let result = (|| {
+        systemctl_as_desktop(uid, gid, &home, &["daemon-reload"])?;
+        validate_manager_fragment(uid, gid, &home, &unit, &target, &exec_start)?;
+        systemctl_as_desktop(uid, gid, &home, &["enable", "--now", &unit])?;
+        systemctl_as_desktop(uid, gid, &home, &["is-active", "--quiet", &unit])?;
+        let enabled = systemctl_as_desktop(uid, gid, &home, &["is-enabled", &unit])?;
+        if enabled != "enabled" { return Err("user service unit did not become enabled".into()); }
+        validate_manager_fragment(uid, gid, &home, &unit, &target, &exec_start)?;
+        Ok::<(), String>(())
+    })();
+    if let Err(error) = result {
+        if created {
+            let stop = systemctl_as_desktop(uid, gid, &home, &["disable", "--now", &unit]);
+            if let Err(cleanup) = stop {
+                return Err(format!("user service install failed: {error}; CRITICAL: rollback failed: {cleanup}"));
+            }
+            fs::remove_file(&target).map_err(|e|format!("user service rollback removal failed: {e}"))?;
+            systemctl_as_desktop(uid, gid, &home, &["daemon-reload"])?;
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod user_service_install_contract_tests {
+    use super::*;
+    #[test]
+    fn allow_minimal_certified_unit() {
+        let unit = "[Unit]\nDescription=Secrets daemon\nAfter=basic.target\nConditionPathExists=/opt/neebles/modules/example/manifest.json\n\n[Service]\nType=simple\nExecStart=/opt/neebles/modules/example/bin/service --serve\nRestart=on-failure\nRestartSec=2\nUMask=0077\nNoNewPrivileges=true\n\n[Install]\nWantedBy=default.target\n";
+        assert!(certify_install_unit(unit, "example", "/opt/neebles/modules/example/bin/service --serve").is_ok());
+        assert!(certify_install_unit(&unit.replace("WantedBy=default.target", "WantedBy=multi-user.target"), "example", "/opt/neebles/modules/example/bin/service --serve").is_err());
+        assert!(certify_install_unit(&unit.replace("Type=simple", "ExecStartPre=/bin/true\nType=simple"), "example", "/opt/neebles/modules/example/bin/service --serve").is_err());
+    }
+}
