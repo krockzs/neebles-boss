@@ -13,7 +13,7 @@
     },
     "neebles-secrets": {
       "repo": "https://github.com/krockzs/neebles-secrets.git",
-      "commit": "9443f4c5a3f3cd474fc18ba264dd3529b6b195c8",
+      "commit": "4583eb892012a7e202fd7a2cc487cf04bbbe591a",
       "version": "1.0.0"
     }
   }
