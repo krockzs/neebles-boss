@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.5
+
+- Fixes access to installed dependency snapshots when enabling, disabling, or uninstalling modules.
+- New snapshots remain Boss-owned, desktop-readable but not writable by unprivileged users (root-owned 0644).
+- The module catalog can verify actual installed dependencies without false blocked warnings.
+- Adds an official validated migration for previous 0600 snapshots; never reconstructs dependency history from a newer remote Registry.
+- Does not modify private secrets, Master Keys, KDBX vaults, or CUSTOM V2 material.
+
+Save your work and close open applications before pressing Reboot.

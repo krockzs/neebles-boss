@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.5
+
+- Corrige la lectura del snapshot de dependencias instaladas al activar, desactivar o desinstalar módulos.
+- Los snapshots nuevos quedan propiedad de Boss, legibles pero no escribibles por usuarios sin privilegios (0644 con propietario root).
+- Los controles del catálogo vuelven a poder verificar los dependientes sin avisos de bloqueo falsos.
+- Se incorpora migración oficial y validada de snapshots antiguos 0600, sin reconstruir datos desde el Registry remoto.
+- No modifica secretos privados, Master Keys, KDBX ni materiales CUSTOM V2.
+
+Guarda tu trabajo y cierra las aplicaciones abiertas antes de pulsar Reboot.

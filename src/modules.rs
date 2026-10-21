@@ -5529,6 +5529,19 @@ fn installed_dependency_graph(
     )
 }
 
+pub fn migrate_installed_dependency_snapshot_access() -> Result<usize, String> {
+    let mut installed = BTreeMap::new();
+    for module_id in installed_names()? {
+        let directory = find_module_dir(&module_id)?;
+        let manifest = read_manifest(&directory.join("manifest.json"))?;
+        if manifest.name != module_id {
+            return Err(format!("installed module identity mismatch: '{}' != '{}'", module_id, manifest.name));
+        }
+        installed.insert(module_id, (directory, manifest.version));
+    }
+    crate::module_dependency_policy::migrate_readonly_access(&installed)
+}
+
 pub fn module_dependency_preflight(action: &str, name: &str) -> Result<Value, String> {
     let _ = find_module_dir(name)?;
 

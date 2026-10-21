@@ -35,10 +35,17 @@ use crate::lifecycle::LifecycleContract;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 pub const INSTALLED_REQUIREMENTS_FILENAME: &str = ".neebles-boss-installed-requirements.json";
+
+/*
+ * Boss-owned snapshots contain public Registry selections, not vault secrets.
+ * Only Boss/root may WRITE them. Desktop users must READ them for the catalog,
+ * the installed dependency graph, and fail-closed local action preflights.
+ */
+const SNAPSHOT_READ_ONLY_MODE: u32 = 0o644;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -140,6 +147,13 @@ pub fn stage_installed_requirements(
     file.write_all(&payload)
         .and_then(|()| file.sync_all())
         .map_err(|error| format!("cannot persist staged requirements: {error}"))?;
+
+    // Create privately (0600), then publish only after fully writing the
+    // authenticated Boss-owned snapshot. Explicitly set the final mode:
+    // OpenOptions::mode alone is filtered by a restrictive process umask.
+    file.set_permissions(fs::Permissions::from_mode(SNAPSHOT_READ_ONLY_MODE))
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("cannot publish readable requirements: {error}"))?;
     drop(file);
     let verified = read_installed_requirements(candidate_dir, module, &entry.version)?;
     if verified != snapshot {
@@ -159,6 +173,15 @@ pub fn read_installed_requirements(
     if !meta.file_type().is_file() || meta.len() > 65536 {
         return Err(format!("invalid installed requirements file for '{module}'"));
     }
+    let directory = fs::symlink_metadata(module_dir)
+        .map_err(|error| format!("cannot inspect installed module directory: {error}"))?;
+    if !directory.file_type().is_dir()
+        || directory.uid() != meta.uid()
+        || meta.mode() & 0o022 != 0
+        || meta.mode() & 0o111 != 0
+    {
+        return Err(format!("unsafe owner or mode for installed requirements of '{module}'"));
+    }
     let raw = fs::read(&path)
         .map_err(|error| format!("cannot read installed requirements for '{module}': {error}"))?;
     if raw.len() > 65536 {
@@ -168,6 +191,52 @@ pub fn read_installed_requirements(
         .map_err(|error| format!("malformed installed requirements for '{module}': {error}"))?;
     snapshot.validate(module, version)?;
     Ok(snapshot)
+}
+
+
+/*
+ * Explicit 2.0.4 -> 2.0.5 access migration. NEVER invent legacy snapshots.
+ * Validate ALL owner/identity/version/mode facts before changing any mode.
+ * No KDBX, module settings, registry or payload contents are modified.
+ */
+pub fn migrate_readonly_access(
+    installed: &BTreeMap<String, (std::path::PathBuf, String)>,
+) -> Result<usize, String> {
+    if unsafe { libc::geteuid() } != 0 {
+        return Err("requirements access migration requires authenticated root".to_string());
+    }
+    let root = Path::new("/opt/neebles/modules");
+    let mut candidates = Vec::new();
+    for (module, (directory, version)) in installed {
+        if directory.parent() != Some(root) || directory.file_name() != Some(std::ffi::OsStr::new(module.as_str())) {
+            return Err(format!("unexpected installed module path for '{module}'"));
+        }
+        let parent = fs::symlink_metadata(directory)
+            .map_err(|error| format!("module '{module}' directory metadata: {error}"))?;
+        if !parent.file_type().is_dir() || parent.uid() != 0 {
+            return Err(format!("module '{module}' is not in a root-owned real directory"));
+        }
+        let path = directory.join(INSTALLED_REQUIREMENTS_FILENAME);
+        let meta = fs::symlink_metadata(&path)
+            .map_err(|error| format!("module '{module}' snapshot metadata: {error}"))?;
+        let mode = meta.mode() & 0o777;
+        if !meta.file_type().is_file()
+            || meta.uid() != 0
+            || (mode != 0o600 && mode != SNAPSHOT_READ_ONLY_MODE)
+        {
+            return Err(format!("module '{module}' has an unexpected snapshot owner or mode"));
+        }
+        let _authenticated = read_installed_requirements(directory, module, version)?;
+        if mode == 0o600 {
+            candidates.push(path);
+        }
+    }
+    for path in &candidates {
+        // root-owned parents are not writable by an unprivileged desktop user.
+        fs::set_permissions(path, fs::Permissions::from_mode(SNAPSHOT_READ_ONLY_MODE))
+            .map_err(|error| format!("cannot migrate {}: {error}", path.display()))?;
+    }
+    Ok(candidates.len())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -908,6 +977,45 @@ mod tests {
         assert!(read_installed_requirements(dir.path(), "foreign", "1.2.3").is_err());
         assert!(read_installed_requirements(dir.path(), "neebles-connect", "2.0.0").is_err());
         assert!(stage_installed_requirements(dir.path(), "neebles-connect", &entry).is_err());
+    }
+
+    #[test]
+    fn boss205_snapshot_is_desktop_readable_but_never_desktop_writable() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let entry = crate::modules::RegistryModule {
+            repo: "https://github.com/example/secrets.git".into(),
+            commit: "a".repeat(40),
+            version: "1.0.1".into(),
+            folder: None,
+            short_name: "Secrets".into(),
+            depends_install: BTreeMap::new(),
+        };
+        let directory = tempfile::tempdir().unwrap();
+        stage_installed_requirements(directory.path(), "neebles-secrets", &entry).unwrap();
+        let path = directory.path().join(INSTALLED_REQUIREMENTS_FILENAME);
+        let metadata = std::fs::symlink_metadata(&path).unwrap();
+        assert_eq!(metadata.mode() & 0o777, SNAPSHOT_READ_ONLY_MODE);
+        assert_eq!(metadata.uid(), std::fs::metadata(directory.path()).unwrap().uid());
+        let read = read_installed_requirements(directory.path(), "neebles-secrets", "1.0.1").unwrap();
+        assert!(read.depends_install.is_empty());
+    }
+
+    #[test]
+    fn boss205_rejects_group_or_world_writable_snapshot() {
+        use std::os::unix::fs::PermissionsExt;
+        let entry = crate::modules::RegistryModule {
+            repo: "https://github.com/example/secrets.git".into(),
+            commit: "a".repeat(40),
+            version: "1.0.1".into(),
+            folder: None,
+            short_name: "Secrets".into(),
+            depends_install: BTreeMap::new(),
+        };
+        let directory = tempfile::tempdir().unwrap();
+        stage_installed_requirements(directory.path(), "neebles-secrets", &entry).unwrap();
+        let path = directory.path().join(INSTALLED_REQUIREMENTS_FILENAME);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(read_installed_requirements(directory.path(), "neebles-secrets", "1.0.1").is_err());
     }
 
     #[test]

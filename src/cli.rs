@@ -714,6 +714,21 @@ fn modules_command(args: &[String]) -> i32 {
             response.code
         }
 
+        Some("migrate-requirements-access") => {
+            if args.len() != 1 {
+                return fail("usage: neebles modules migrate-requirements-access".to_string());
+            }
+            if let Err(error) = privileges::ensure_root(true) {
+                return fail(error);
+            }
+            match modules::migrate_installed_dependency_snapshot_access() {
+                Ok(changed) => {
+                    println!("N.E.E.B.L.E.S.: migrated {changed} verified installed requirement snapshots to read-only desktop access");
+                    0
+                }
+                Err(error) => fail(error),
+            }
+        }
         Some("preflight") => {
             let Some(action) =
                 args.get(1)
@@ -1280,6 +1295,7 @@ fn print_help() {
     println!("  neebles modules update <module> --close-running");
     println!("  neebles modules preflight <enable|disable|uninstall> <module>");
     println!("  neebles modules enable|disable <module>");
+    println!("  neebles modules migrate-requirements-access");
     println!("  neebles notify <info|success|warning|critical|fatal> <title> <message>");
     println!("  neebles socket serve");
     println!("  neebles --request-json '<ExecutionRequest JSON>'");
