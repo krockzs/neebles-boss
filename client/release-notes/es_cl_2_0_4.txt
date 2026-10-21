@@ -1,0 +1,8 @@
+NEEBLES Boss 2.0.4
+
+- Los servicios persistentes de un módulo pueden publicar variables autenticadas sin ocupar su sesión Open.
+- La interfaz de Boss refresca automáticamente las condiciones Install cuando cambian variables de los módulos.
+- Enable y Disable también controlan los servicios del módulo, sin borrar las unidades ni los datos privados.
+- Se mantienen las actualizaciones gobernadas de servicios de Boss 2.0.3.
+
+Guarda tu trabajo y cierra las aplicaciones abiertas antes de pulsar Reboot.

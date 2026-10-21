@@ -3492,7 +3492,7 @@ struct ProcessIdentity {
     start_time_ticks: u64,
 }
 
-fn process_start_time_ticks(pid: u32) -> Result<Option<u64>, String> {
+pub(crate) fn process_start_time_ticks(pid: u32) -> Result<Option<u64>, String> {
     let path = PathBuf::from(format!("/proc/{pid}/stat"));
 
     let raw = match fs::read_to_string(&path) {
@@ -3683,6 +3683,19 @@ pub fn verify_module_runtime_process(name: &str, pid: u32) -> Result<(u32, u64),
     }
 
     Ok((identity.pid, identity.start_time_ticks))
+}
+
+
+pub(crate) fn verify_module_service_publisher_process(
+    module: &str, unit: &str, pid: u32,
+) -> Result<(u32, u64), String> {
+    let before = capture_process_identity(pid)?
+        .ok_or_else(|| "service publisher process does not exist".to_string())?;
+    crate::module_uninstall::certify_service_publisher_pid(module, unit, pid)?;
+    if !process_identity_is_alive(before)? {
+        return Err("service publisher PID incarnation changed during authentication".into());
+    }
+    Ok((before.pid, before.start_time_ticks))
 }
 
 fn tray_runtime_marker_path(name: &str) -> PathBuf {
@@ -7198,6 +7211,7 @@ fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
         }
 
         deactivate_module(name, "disabled")?;
+        crate::module_uninstall::set_declared_user_services_enabled(name, false)?;
 
         config::set_module_enabled(name, false)?;
         broadcast_surface_module_change(name, "disabled");
@@ -7267,6 +7281,12 @@ fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
                 "enable Lifecycle failed for module '{}': {}; {}; {}",
                 name, error, tray_text, config_text
             ));
+        }
+        if let Err(error) = crate::module_uninstall::set_declared_user_services_enabled(name, true) {
+            let _ = request_persistent_tray_stop(name);
+            let _ = config::set_module_enabled(name, false);
+            broadcast_surface_module_change(name, "disabled");
+            return Err(format!("module service Enable failed: {error}"));
         }
         if let Err(error) = crate::module_ipc::runtime_registry().broadcast_event(
             "module.lifecycle",

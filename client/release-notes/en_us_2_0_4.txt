@@ -1,0 +1,8 @@
+NEEBLES Boss 2.0.4
+
+- Persistent module services can publish authenticated variables without taking the module's Open session.
+- Boss automatically refreshes Install eligibility when module variables change.
+- Enable and Disable also control module-owned services without deleting unit files or private user data.
+- Governed service updates introduced in Boss 2.0.3 remain available.
+
+Save your work and close open applications before pressing Reboot.

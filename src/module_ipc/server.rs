@@ -475,6 +475,107 @@ fn validate_registration(
     Ok(())
 }
 
+
+// A separately authenticated service publisher never occupies RuntimeRegistry.
+fn service_publisher_loop(
+    mut stream: UnixStream, protocol: u32, module: String,
+    session_id: String, unit: String, peer: ModulePeerCredentials,
+) -> Result<(), String> {
+    let operation = (|| -> Result<(), String> {
+        if protocol != MODULES_PROTOCOL_VERSION {
+            return Err("unsupported service publisher protocol".into());
+        }
+        if session_id.is_empty() || session_id.len() > 256
+            || session_id.chars().any(char::is_control) {
+            return Err("invalid publisher session id".into());
+        }
+        let (desktop_uid, _) = crate::runtime_identity::desktop_identity()?;
+        if peer.uid != desktop_uid || peer.uid == 0 {
+            return Err("service publisher must use certified desktop UID".into());
+        }
+        if !config::module_enabled(&module)? {
+            return Err("disabled module cannot register a service publisher".into());
+        }
+        let (pid, start_time_ticks) = modules::verify_module_service_publisher_process(
+            &module, &unit, peer.pid,
+        )?;
+        let owner = PublisherIdentity {
+            module: module.clone(), session_id: session_id.clone(), pid, start_time_ticks,
+        };
+        write_message(&mut stream, &ModuleMessage::Registered {
+            protocol, module: module.clone(), session_id: session_id.clone(),
+        })?;
+        // Keep the single connection alive. Publisher messages are whitelisted;
+        // a daemon is never authorized to invoke endpoints or change settings.
+        let run = (|| -> Result<(), String> {
+            loop {
+                let Some(msg) = read_message(&mut stream)? else { break; };
+                match msg {
+                    ModuleMessage::VariablesPublish { module: m, session_id: s, variables } => {
+                        validate_session(&module, &session_id, &m, &s)?;
+                        if !config::module_enabled(&module)? {
+                            return Err("disabled module cannot publish variables".into());
+                        }
+                        // Reverify service membership on every publication; the
+                        // initial credentials are not a permanent service grant.
+                        if !matches!(crate::modules::process_start_time_ticks(pid)?, Some(t) if t == start_time_ticks) {
+                            return Err("service publisher process identity expired".into());
+                        }
+                        crate::module_uninstall::certify_service_publisher_pid(&module, &unit, pid)?;
+                        match live_module_variables().publish(owner.clone(), variables) {
+                            Ok(changed) => {
+                                if changed { crate::ipc::broadcast_event("module.lifecycle", "state_changed",
+                                    serde_json::json!({"module": module, "reason": "variables_changed"})); }
+                                write_message(&mut stream, &ModuleMessage::VariablesPublished {
+                                    module: module.clone(), session_id: session_id.clone(), changed,
+                                })?;
+                            }
+                            Err(error) => {
+                                write_message(&mut stream, &ModuleMessage::Error {
+                                    id: None, module: Some(module.clone()), error: ModuleError {
+                                        kind: "invalid_variables".into(), message: error, details: None,
+                                    },
+                                })?;
+                            }
+                        }
+                    }
+                    ModuleMessage::Ping { module: m, session_id: s } => {
+                        validate_session(&module, &session_id, &m, &s)?;
+                        write_message(&mut stream, &ModuleMessage::Pong {
+                            module: module.clone(), session_id: session_id.clone(),
+                        })?;
+                    }
+                    ModuleMessage::Pong { module: m, session_id: s } => {
+                        validate_session(&module, &session_id, &m, &s)?;
+                    }
+                    ModuleMessage::Unregister { module: m, session_id: s, .. } => {
+                        validate_session(&module, &session_id, &m, &s)?;
+                        break;
+                    }
+                    _ => return Err("publisher-only IPC forbids runtime and administrative messages".into()),
+                }
+            }
+            Ok(())
+        })();
+        // Separate service owner: UI disconnects must not revoke this record.
+        match live_module_variables().revoke(&owner) {
+            Ok(true) => crate::ipc::broadcast_event("module.lifecycle", "state_changed",
+                serde_json::json!({"module": module, "reason": "variables_revoked"})),
+            Ok(false) => {},
+            Err(e) => eprintln!("N.E.E.B.L.E.S.: publisher revocation failed: {e}"),
+        }
+        run
+    })();
+    if let Err(ref error) = operation {
+        let _ = write_message(&mut stream, &ModuleMessage::Error {
+            id: None, module: Some(module), error: ModuleError {
+                kind: "service_register_rejected".into(), message: error.to_owned(), details: None,
+            },
+        });
+    }
+    operation
+}
+
 fn handle_client(mut stream: UnixStream) -> Result<(), String> {
     /*
      * Kernel-authenticated identity of this Unix peer.
@@ -492,6 +593,9 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         .ok_or_else(|| "module runtime disconnected before register".to_string())?;
 
     let (protocol, module, session_id, endpoints) = match first {
+        ModuleMessage::RegisterService {
+            protocol, module, session_id, unit,
+        } => return service_publisher_loop(stream, protocol, module, session_id, unit, peer),
         ModuleMessage::Register {
             protocol,
             module,
@@ -1524,6 +1628,7 @@ fn client_loop(
             }
 
             ModuleMessage::Register { .. }
+            | ModuleMessage::RegisterService { .. }
             | ModuleMessage::Registered { .. }
             | ModuleMessage::VariablesPublished { .. }
             | ModuleMessage::Subscribed { .. }

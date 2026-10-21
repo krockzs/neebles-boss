@@ -12,6 +12,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocalSocket>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSet>
@@ -55,13 +56,80 @@ BossController::BossController(QObject *parent)
         &BossController::pollUpdates
     );
 
+    m_moduleCatalogRefreshTimer = new QTimer(this);
+    m_moduleCatalogRefreshTimer->setSingleShot(true);
+    m_moduleCatalogRefreshTimer->setInterval(180);
+    connect(m_moduleCatalogRefreshTimer, &QTimer::timeout,
+        this, [this] {
+            if (m_busy) {
+                m_moduleCatalogRefreshTimer->start();
+                return;
+            }
+            loadModules();
+        });
+
+    m_moduleEventsSocket = new QLocalSocket(this);
+    connect(m_moduleEventsSocket, &QLocalSocket::connected, this, [this] {
+        const QJsonObject request{
+            {QStringLiteral("target"), QStringLiteral("events")},
+            {QStringLiteral("action"), QStringLiteral("subscribe")},
+            {QStringLiteral("args"), QJsonArray{QStringLiteral("module.lifecycle")}},
+            {QStringLiteral("context"), QJsonObject{{QStringLiteral("caller"), QStringLiteral("boss-ui")}}}
+        };
+        QByteArray packet = QJsonDocument(request).toJson(QJsonDocument::Compact);
+        packet.append('\n');
+        m_moduleEventsSocket->write(packet);
+    });
+    connect(m_moduleEventsSocket, &QLocalSocket::readyRead,
+        this, &BossController::readModuleEvents);
+    connect(m_moduleEventsSocket, &QLocalSocket::disconnected, this, [this] {
+        m_moduleEventsPending.clear();
+    });
+    connect(m_modulePollTimer, &QTimer::timeout, this, [this] {
+        if (m_moduleEventsSocket->state() == QLocalSocket::UnconnectedState)
+            connectModuleEvents();
+    });
+
     reload();
     loadPendingBossUpdate();
+    connectModuleEvents();
 
     m_modulePollTimer->start();
     m_updatePollTimer->start();
 }
 
+
+
+void BossController::connectModuleEvents()
+{
+    if (m_moduleEventsSocket->state() != QLocalSocket::UnconnectedState) return;
+    const QString path = qEnvironmentVariable("NEEBLES_SOCKET",
+        QStringLiteral("/run/neebles/neebles.sock")).trimmed();
+    if (!path.isEmpty()) m_moduleEventsSocket->connectToServer(path);
+}
+
+void BossController::readModuleEvents()
+{
+    m_moduleEventsPending.append(m_moduleEventsSocket->readAll());
+    if (m_moduleEventsPending.size() > 131072) {
+        m_moduleEventsPending.clear();
+        m_moduleEventsSocket->abort();
+        return;
+    }
+    int newline = -1;
+    while ((newline = m_moduleEventsPending.indexOf('\n')) >= 0) {
+        const QByteArray line = m_moduleEventsPending.left(newline).trimmed();
+        m_moduleEventsPending.remove(0, newline + 1);
+        const QJsonDocument packet = QJsonDocument::fromJson(line);
+        if (!packet.isObject()) continue;
+        const QJsonObject obj = packet.object();
+        if (obj.value(QStringLiteral("type")).toString() != QStringLiteral("event")) continue;
+        if (obj.value(QStringLiteral("topic")).toString() != QStringLiteral("module.lifecycle")) continue;
+        // Refresh only on governance/variables changes, not every polling tick.
+        if (!m_moduleCatalogRefreshTimer->isActive())
+            m_moduleCatalogRefreshTimer->start();
+    }
+}
 
 QString BossController::commandPath() const
 {

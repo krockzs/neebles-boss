@@ -2100,6 +2100,142 @@ pub(crate) fn is_managed_user_service_pid(module: &str, pid: u32) -> Result<bool
     Ok(false)
 }
 
+
+// 2.0.4: a service publisher must be a live process inside the *certified*
+// installed user-unit cgroup and must execute the unit's declared program.
+// A module-controlled session_id or an executable path alone is NOT authority.
+fn publisher_in_certified_cgroup(proc_cgroup: &str, unit_group: &str) -> bool {
+    if !unit_group.starts_with('/') || unit_group == "/" || unit_group.contains("..") {
+        return false;
+    }
+    proc_cgroup.lines().filter_map(|line| line.strip_prefix("0::"))
+        .any(|path| path == unit_group || path.strip_prefix(unit_group)
+            .map(|tail| tail.starts_with('/')).unwrap_or(false))
+}
+
+pub(crate) fn certify_service_publisher_pid(module: &str, unit: &str, pid: u32) -> Result<(), String> {
+    if pid == 0 { return Err("service publisher has invalid PID".into()); }
+    validate_service_name(module, unit)?;
+    let manifest = crate::modules::installed_module_manifest(module)?;
+    let specs = declared_user_service_specs(module, &manifest)?;
+    let spec = specs.get(unit).ok_or("publisher unit is not declared by installed module")?;
+    let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+    if uid == 0 { return Err("desktop service must not run as root".into()); }
+    let proc_dir = PathBuf::from(format!("/proc/{pid}"));
+    let proc_meta = fs::metadata(&proc_dir).map_err(|e| format!("publisher PID missing: {e}"))?;
+    if proc_meta.uid() != uid { return Err("publisher PID does not belong to desktop user".into()); }
+    let observation = inspect_managed_update_unit_baseline(module, unit, Some(&spec.exec_start), spec.required)?;
+    if !matches!(observation, ManagedUpdateObservedUnit::Present { was_active: true, .. }) {
+        return Err("publisher unit is not an active certified service".into());
+    }
+    let home = desktop_home(uid)?;
+    let show = systemctl_as_desktop(uid, gid, &home,
+        &["show", "--no-pager", "-p", "ControlGroup", "-p", "MainPID", unit])?;
+    let group = show.lines().find_map(|l| l.strip_prefix("ControlGroup="))
+        .ok_or("publisher service lacks ControlGroup")?;
+    let main_pid = show.lines().find_map(|l| l.strip_prefix("MainPID="))
+        .and_then(|s| s.parse::<u32>().ok()).filter(|v| *v != 0)
+        .ok_or("publisher service lacks live MainPID")?;
+    // The process may be a bubblewrap child, NOT the systemd MainPID itself.
+    let cgroup = fs::read_to_string(proc_dir.join("cgroup"))
+        .map_err(|e| format!("publisher process cgroup unavailable: {e}"))?;
+    if !publisher_in_certified_cgroup(&cgroup, group) {
+        return Err("publisher PID is outside the certified service cgroup".into());
+    }
+    let main_group = fs::read_to_string(format!("/proc/{main_pid}/cgroup"))
+        .map_err(|e| format!("service MainPID cgroup unavailable: {e}"))?;
+    if !publisher_in_certified_cgroup(&main_group, group) {
+        return Err("systemd MainPID and unit cgroup disagree".into());
+    }
+    // This is a direct executable or an interpreter plus a module-owned script.
+    // The exact declared module file must occur at its declared argv slot.
+    let args: Vec<&str> = spec.exec_start.split_ascii_whitespace().collect();
+    let owned_prefix = format!("/opt/neebles/modules/{module}/");
+    let owned_idx = if args[0].starts_with(&owned_prefix) { 0 } else { 1 };
+    let owned = args.get(owned_idx).ok_or("service has no module-owned executable")?;
+    if !owned.starts_with(&owned_prefix) { return Err("service lacks owned executable".into()); }
+    let argv = fs::read(proc_dir.join("cmdline"))
+        .map_err(|e| format!("publisher process command line unavailable: {e}"))?;
+    let process_args: Vec<&[u8]> = argv.split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty()).collect();
+    if process_args.get(owned_idx).copied() != Some(owned.as_bytes()) {
+        return Err("publisher command line is not the declared service entrypoint".into());
+    }
+    // For native executables compare real inode identity, not spoofable argv.
+    if owned_idx == 0 {
+        let expected = fs::metadata(owned)
+            .map_err(|e| format!("publisher executable inaccessible: {e}"))?;
+        let actual = fs::metadata(proc_dir.join("exe"))
+            .map_err(|e| format!("publisher process executable unavailable: {e}"))?;
+        if expected.dev() != actual.dev() || expected.ino() != actual.ino() {
+            return Err("publisher executable inode differs from installed module binary".into());
+        }
+    } else {
+        let expected = fs::metadata(args[0])
+            .map_err(|e| format!("publisher interpreter unavailable: {e}"))?;
+        let actual = fs::metadata(proc_dir.join("exe"))
+            .map_err(|e| format!("publisher interpreter executable unavailable: {e}"))?;
+        if expected.dev() != actual.dev() || expected.ino() != actual.ino() {
+            return Err("publisher interpreter differs from declared executable".into());
+        }
+    }
+    // Recheck after all expensive systemctl and /proc probes: fail closed on
+    // short-lived or replaced systemd processes.
+    let second = fs::read_to_string(proc_dir.join("cgroup"))
+        .map_err(|e| format!("publisher process exited during verification: {e}"))?;
+    if !publisher_in_certified_cgroup(&second, group) {
+        return Err("publisher left service cgroup during verification".into());
+    }
+    Ok(())
+}
+
+// Enable/Disable governs the installed unit as well as the interactive UI.
+// Unit files and independent module data are NEVER removed by this operation.
+pub(crate) fn set_declared_user_services_enabled(module: &str, enabled: bool) -> Result<(), String> {
+    let manifest = crate::modules::installed_module_manifest(module)?;
+    let specs = declared_user_service_specs(module, &manifest)?;
+    if specs.is_empty() { return Ok(()); }
+    let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+    if uid == 0 { return Err("root cannot own user service".into()); }
+    let home = desktop_home(uid)?;
+    // Authenticate ALL service files before changing any of them.
+    let mut present = Vec::new();
+    for spec in specs.values() {
+        let state = inspect_managed_update_unit_baseline(module, &spec.unit,
+            Some(&spec.exec_start), spec.required)?;
+        if matches!(state, ManagedUpdateObservedUnit::Present { .. }) {
+            present.push(spec);
+        }
+    }
+    for spec in present {
+        if enabled {
+            systemctl_as_desktop(uid, gid, &home, &["enable", "--now", &spec.unit])?;
+            systemctl_as_desktop(uid, gid, &home, &["is-active", "--quiet", &spec.unit])?;
+        } else {
+            systemctl_as_desktop(uid, gid, &home, &["disable", "--now", &spec.unit])?;
+            let (_, active) = systemd_state(uid, gid, &home, &spec.unit)?;
+            if active != "inactive" && active != "failed" {
+                return Err(format!("service '{}' remained active after Disable", spec.unit));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod service_publisher_cgroup_tests {
+    use super::publisher_in_certified_cgroup;
+    #[test]
+    fn membership_allows_wrapper_child_but_not_other_units() {
+        let unit = "/user.slice/user-1000.slice/user@1000.service/app.slice/neebles-demo.service";
+        assert!(publisher_in_certified_cgroup(&format!("0::{unit}\n"), unit));
+        assert!(publisher_in_certified_cgroup(&format!("0::{unit}/child\n"), unit));
+        assert!(!publisher_in_certified_cgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/foreign.service\n", unit));
+        assert!(!publisher_in_certified_cgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/neebles-demo.service-bad\n", unit));
+        assert!(!publisher_in_certified_cgroup("0::/\n", "/"));
+    }
+}
+
 // Boss 2.0.3: productive Update bridge for module-owned systemd-user units.
 // Reuses existing ownership validation, transition planning and TXN V5
 // stop/start helpers. No module-specific branch and no new rollback engine.

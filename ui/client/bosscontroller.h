@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QByteArray>
 #include <QSet>
 #include <QVariantList>
 #include <QVariantMap>
@@ -8,6 +9,7 @@
 
 class QTimer;
 class QProcess;
+class QLocalSocket;
 
 class BossController final : public QObject
 {
@@ -129,6 +131,8 @@ private:
     void loadBossUpdateStatus();
     void loadPendingBossUpdate();
     void pollModuleRuntime();
+    void connectModuleEvents();
+    void readModuleEvents();
     void pollUpdates();
     void applyModuleLifecycle();
     void runModuleOperation(const QString &operation, const QString &name, bool privileged);
@@ -171,6 +175,9 @@ private:
     QVariantMap m_strings;
     QVariantMap m_updateNotifications;
     QTimer *m_modulePollTimer = nullptr;
+    QTimer *m_moduleCatalogRefreshTimer = nullptr;
+    QLocalSocket *m_moduleEventsSocket = nullptr;
+    QByteArray m_moduleEventsPending;
     QTimer *m_updatePollTimer = nullptr;
     int m_translationsRevision = 0;
     bool m_busy = false;

@@ -129,6 +129,14 @@ pub enum ModuleMessage {
         endpoints: BTreeMap<String, Vec<String>>,
     },
 
+    // Independent systemd-user publisher: never a UI/Open runtime session.
+    RegisterService {
+        protocol: u32,
+        module: String,
+        session_id: String,
+        unit: String,
+    },
+
     Registered {
         protocol: u32,
         module: String,
@@ -611,5 +619,23 @@ mod live_variables_protocol_tests {
             }
             other => panic!("wrong variant: {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod service_registration_wire_tests {
+    use super::*;
+
+    #[test]
+    fn service_registration_has_distinct_protocol_identity() {
+        let value = serde_json::to_value(ModuleMessage::RegisterService {
+            protocol: MODULES_PROTOCOL_VERSION,
+            module: "neebles-secrets".into(),
+            session_id: "daemon-1".into(),
+            unit: "neebles-neebles-secrets-daemon.service".into(),
+        }).unwrap();
+        assert_eq!(value["type"], "register_service");
+        assert_eq!(value["unit"], "neebles-neebles-secrets-daemon.service");
+        assert_eq!(value["session_id"], "daemon-1");
     }
 }
