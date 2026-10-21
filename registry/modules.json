@@ -8,14 +8,17 @@
       "short_name": "Connect",
       "depends_install": {
         "neebles-secrets": {
-          "variables": {}
+          "variables": {
+            "master_key": "true",
+            "unblock": "true"
+          }
         }
       }
     },
     "neebles-secrets": {
       "repo": "https://github.com/krockzs/neebles-secrets.git",
-      "commit": "4583eb892012a7e202fd7a2cc487cf04bbbe591a",
-      "version": "1.0.0",
+      "commit": "c63a2986fc426f831d945b2f10a943bc529c5712",
+      "version": "1.0.1",
       "short_name": "Secrets",
       "depends_install": {}
     }
