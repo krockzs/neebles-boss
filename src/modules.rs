@@ -3001,6 +3001,16 @@ pub fn modules_root() -> PathBuf {
     neebles_root().join("modules")
 }
 
+// Update quiesces declared user services itself. Do not mistake a
+// continuously enabled daemon for a desktop window requiring --close-running.
+fn module_has_interactive_resources(name: &str) -> Result<bool, String> {
+    let interactive_runtime = match crate::module_ipc::runtime_registry().get(name)? {
+        Some(record) => !crate::module_uninstall::is_managed_user_service_pid(name, record.pid)?,
+        None => false,
+    };
+    Ok(interactive_runtime || probe_tray_provider_identity(name)?.is_some())
+}
+
 fn module_has_active_resources(name: &str) -> Result<bool, String> {
     let runtime_active = crate::module_ipc::runtime_registry().get(name)?.is_some();
 
@@ -6752,6 +6762,25 @@ pub fn update_observed(
     result
 }
 
+fn restore_services_after_module_update_failure(
+    failure: String,
+    rollback: &LiveUpdateRollbackReport,
+    services: &crate::module_uninstall::ManagedServiceCutover,
+) -> String {
+    if rollback.state != LiveUpdateRollbackState::PreviousRestored {
+        if services.has_stopped_services() {
+            return format!(
+                "{failure}; CRITICAL: old services remain stopped because the original module was not restored"
+            );
+        }
+        return failure;
+    }
+    match services.restore_original() {
+        Ok(()) => failure,
+        Err(error) => format!("{failure}; {error}"),
+    }
+}
+
 fn update_with_observer(
     name: &str,
     close_running: bool,
@@ -6764,20 +6793,12 @@ fn update_with_observer(
      * This first check fails fast, before doing network or
      * staging work.
      */
-    if !close_running && module_has_active_resources(name)? {
+    if !close_running && module_has_interactive_resources(name)? {
         return Err(format!("module '{name}' currently has active resources"));
     }
 
     let current_path = find_module_dir(name)?;
 
-    // F04A safety gate: old Update logic deactivates Open/Tray but not owned
-    // systemd-user services. Fail closed until F04B adds transactional stop,
-    // rollback and safe restart. close_running does NOT bypass this gate.
-    if crate::module_uninstall::declared_user_services_present(name)? {
-        return Err(format!(
-            "module '{name}' owns a systemd-user service: governed service update is not yet available"
-        ));
-    }
 
     let material_root =
         neebles_backend::module_material_territory::resolve_module_material_territory()?
@@ -6867,19 +6888,12 @@ fn update_with_observer(
         ));
     }
 
-    // F04B2: compute the full installed-to-candidate unit transition before
-    // downloading rootfs or touching the live module. Check candidate source
-    // identity, even though execution of this plan remains disabled until
-    // service quiescence, unit replacement and compensation are certified.
+    // Certify both service declarations and the physical user-manager baseline
+    // while the previous module is still installed and running.
     let installed_manifest = read_manifest(&current_path.join("manifest.json"))?;
-    let service_plan = crate::module_uninstall::plan_update_managed_user_services(
+    let mut service_cutover = crate::module_uninstall::prepare_managed_service_cutover(
         name, &installed_manifest, &manifest, staging.path(),
     )?;
-    if service_plan.requires_governed_transaction() {
-        return Err(format!(
-            "module '{name}' has a managed systemd-user transition: transactional service Update is not yet available"
-        ));
-    }
 
     // Snapshot is staged with the NEW candidate, and therefore follows the
     // SAME rename/rollback as its module source on Update/Critical Update.
@@ -6932,7 +6946,7 @@ fn update_with_observer(
      * Re-probe here as well: a process may have started
      * after the initial preflight.
      */
-    if module_has_active_resources(name)? {
+    if module_has_interactive_resources(name)? {
         if !close_running {
             return Err(format!(
                 "module '{name}' acquired active resources while the update was being prepared"
@@ -6941,6 +6955,7 @@ fn update_with_observer(
 
         deactivate_module(name, "update")?;
     }
+    service_cutover.quiesce(&installed_manifest)?;
 
     /*
      * Candidate is valid and runtime users are out.
@@ -6950,21 +6965,15 @@ fn update_with_observer(
      * current -> backup
      * staged  -> current
      */
-    // Revalidate the user-service resource boundary immediately before
-    // publication. A service may have appeared since the first preflight.
-    if crate::module_uninstall::declared_user_services_present(name)? {
-        return Err(format!(
-            "module '{name}' acquired a systemd-user service while staging Update"
-        ));
+    // Service identity/state were revalidated immediately before quiescence.
+    // The old unit files remain intact until module publication commits.
+    if let Err(error) = fs::rename(&current_path, &backup_path) {
+        let recovery = service_cutover.restore_original();
+        return Err(match recovery {
+            Ok(()) => format!("could not move current module '{}' into transactional backup {}: {error}", name, backup_path.display()),
+            Err(e) => format!("could not move current module '{}' into transactional backup {}: {error}; {e}", name, backup_path.display()),
+        });
     }
-
-    fs::rename(&current_path, &backup_path).map_err(|error| {
-        format!(
-            "could not move current module '{}' into transactional backup {}: {error}",
-            name,
-            backup_path.display()
-        )
-    })?;
 
     match staging.commit(&current_path) {
         Ok(()) => {}
@@ -6983,12 +6992,11 @@ fn update_with_observer(
                 rollback.state,
             );
 
-            return Err(format_live_update_failure_with_binding(
-                name,
-                "candidate publication",
-                &publication_error,
-                &rollback,
-                binding_sync,
+            let failure = format_live_update_failure_with_binding(
+                name, "candidate publication", &publication_error, &rollback, binding_sync,
+            );
+            return Err(restore_services_after_module_update_failure(
+                failure, &rollback, &service_cutover,
             ));
         }
     }
@@ -7019,13 +7027,12 @@ fn update_with_observer(
                 rollback.state,
             );
 
-            return Err(format_live_update_failure_with_binding(
-                name,
-                "material binding activation",
-                &binding_error,
-                &rollback,
-                binding_sync,
-            ));
+            let failure = format_live_update_failure_with_binding(
+            name, "material binding activation", &binding_error, &rollback, binding_sync,
+        );
+        return Err(restore_services_after_module_update_failure(
+            failure, &rollback, &service_cutover,
+        ));
         }
     };
 
@@ -7053,13 +7060,12 @@ fn update_with_observer(
                 rollback.state,
             );
 
-            return Err(format_live_update_failure_with_binding(
-                name,
-                "Lifecycle runtime acquisition",
-                &error,
-                &rollback,
-                binding_sync,
-            ));
+            let failure = format_live_update_failure_with_binding(
+            name, "Lifecycle runtime acquisition", &error, &rollback, binding_sync,
+        );
+        return Err(restore_services_after_module_update_failure(
+            failure, &rollback, &service_cutover,
+        ));
         }
     };
 
@@ -7083,12 +7089,11 @@ fn update_with_observer(
             rollback.state,
         );
 
-        return Err(format_live_update_failure_with_binding(
-            name,
-            "Lifecycle",
-            &lifecycle_error,
-            &rollback,
-            binding_sync,
+        let failure = format_live_update_failure_with_binding(
+            name, "Lifecycle", &lifecycle_error, &rollback, binding_sync,
+        );
+        return Err(restore_services_after_module_update_failure(
+            failure, &rollback, &service_cutover,
         ));
     }
 
@@ -7114,12 +7119,11 @@ fn update_with_observer(
             rollback.state,
         );
 
-        return Err(format_live_update_failure_with_binding(
-            name,
-            "settings reconciliation",
-            &settings_error,
-            &rollback,
-            binding_sync,
+        let failure = format_live_update_failure_with_binding(
+            name, "settings reconciliation", &settings_error, &rollback, binding_sync,
+        );
+        return Err(restore_services_after_module_update_failure(
+            failure, &rollback, &service_cutover,
         ));
     }
 
@@ -7140,12 +7144,11 @@ fn update_with_observer(
             rollback.state,
         );
 
-        return Err(format_live_update_failure_with_binding(
-            name,
-            "feature reconciliation",
-            &feature_error,
-            &rollback,
-            binding_sync,
+        let failure = format_live_update_failure_with_binding(
+            name, "feature reconciliation", &feature_error, &rollback, binding_sync,
+        );
+        return Err(restore_services_after_module_update_failure(
+            failure, &rollback, &service_cutover,
         ));
     }
 
@@ -7167,6 +7170,10 @@ fn update_with_observer(
             backup_path.display()
         );
     }
+
+    service_cutover.complete().map_err(|error| format!(
+        "CRITICAL: module '{name}' update is COMMITTED but systemd-user service reconciliation failed: {error}"
+    ))?;
 
     Ok(())
 }

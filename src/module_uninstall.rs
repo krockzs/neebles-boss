@@ -2066,6 +2066,252 @@ pub(crate) fn plan_update_managed_user_services(
     plan_managed_service_changes(&old, &new)
 }
 
+
+// A registered runtime can itself be the systemd-user daemon that Update
+// governs. Do not treat its live IPC session as an independent UI window.
+// SO_PEERCRED and start ticks are already verified by Module IPC; here we
+// additionally match its PID to an authenticated systemd MainPID.
+pub(crate) fn is_managed_user_service_pid(module: &str, pid: u32) -> Result<bool, String> {
+    if pid == 0 { return Ok(false); }
+    let root = crate::modules::installed_module_dir(module)?;
+    let manifest: crate::modules::ModuleManifest = serde_json::from_slice(
+        &fs::read(root.join("manifest.json"))
+            .map_err(|e| format!("read installed service manifest: {e}"))?,
+    ).map_err(|e| format!("parse installed service manifest: {e}"))?;
+    let specs = declared_user_service_specs(module, &manifest)?;
+    if specs.is_empty() { return Ok(false); }
+    let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+    if uid == 0 { return Err("cannot inspect a root desktop service".into()); }
+    let home = desktop_home(uid)?;
+    for spec in specs.values() {
+        let observation = inspect_managed_update_unit_baseline(
+            module, &spec.unit, Some(&spec.exec_start), spec.required,
+        )?;
+        if !matches!(observation, ManagedUpdateObservedUnit::Present { was_active: true, .. }) {
+            continue;
+        }
+        let state = systemctl_as_desktop(uid, gid, &home,
+            &["show", "--no-pager", "-p", "MainPID", &spec.unit])?;
+        let main_pid = state.strip_prefix("MainPID=")
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .ok_or_else(|| format!("systemd MainPID is invalid for '{}'", spec.unit))?;
+        if main_pid == pid { return Ok(true); }
+    }
+    Ok(false)
+}
+
+// Boss 2.0.3: productive Update bridge for module-owned systemd-user units.
+// Reuses existing ownership validation, transition planning and TXN V5
+// stop/start helpers. No module-specific branch and no new rollback engine.
+// A user unit is independent of private module data and is never a vault.
+pub(crate) struct ManagedServiceCutover {
+    module: String,
+    old: BTreeMap<String, ManagedServiceSpec>,
+    new: BTreeMap<String, ManagedServiceSpec>,
+    plan: ManagedServiceUpdatePlan,
+    baseline: ManagedServiceUpdateBaseline,
+    stopped: BTreeSet<String>,
+}
+
+pub(crate) fn prepare_managed_service_cutover(
+    module: &str,
+    current: &crate::modules::ModuleManifest,
+    candidate: &crate::modules::ModuleManifest,
+    candidate_root: &Path,
+) -> Result<ManagedServiceCutover, String> {
+    let old = declared_user_service_specs(module, current)?;
+    let new = declared_user_service_specs(module, candidate)?;
+    let mut plan = plan_update_managed_user_services(module, current, candidate, candidate_root)?;
+    // Preserve the existing Update path for modules without user services:
+    // it must not suddenly require a desktop manager or service home.
+    if plan.steps.is_empty() {
+        return Ok(ManagedServiceCutover {
+            module: module.into(), old, new, plan,
+            baseline: ManagedServiceUpdateBaseline::default(),
+            stopped: BTreeSet::new(),
+        });
+    }
+    let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+    if uid == 0 { return Err("Update cannot manage a root desktop user".into()); }
+    let home = desktop_home(uid)?;
+    // Authenticate the currently installed units before reading/comparing
+    // their bytes with the staged candidate.
+    let _verified_before_comparison = capture_managed_update_baseline(module, current, &plan)?;
+    // A changed unit description/other certified field is Replace even when
+    // its ExecStart and resource ID remain identical.
+    for step in &mut plan.steps {
+        if step.transition == ManagedServiceTransition::Keep {
+            if matches!(_verified_before_comparison.previous.get(&step.unit),
+                Some(ManagedUpdateObservedUnit::Absent)) { continue; }
+            let path = validated_unit_path(&home, uid, gid, &step.unit)?;
+            let current_bytes = fs::read(&path)
+                .map_err(|e| format!("read current Update unit '{}': {e}", step.unit))?;
+            let candidate_bytes = fs::read(candidate_root.join("integration/systemd-user").join(&step.unit))
+                .map_err(|e| format!("read staged Update unit '{}': {e}", step.unit))?;
+            if current_bytes != candidate_bytes {
+                step.transition = ManagedServiceTransition::Replace;
+            }
+        }
+    }
+    let baseline = capture_managed_update_baseline(module, current, &plan)?;
+    Ok(ManagedServiceCutover {
+        module: module.into(), old, new, plan, baseline,
+        stopped: BTreeSet::new(),
+    })
+}
+
+impl ManagedServiceCutover {
+    pub(crate) fn has_stopped_services(&self) -> bool { !self.stopped.is_empty() }
+
+    // No service interruption until the candidate has been fully staged.
+    // Unit files remain installed while old processes quiesce.
+    pub(crate) fn quiesce(&mut self, current: &crate::modules::ModuleManifest) -> Result<(), String> {
+        let observed = capture_managed_update_baseline(&self.module, current, &self.plan)?;
+        if observed != self.baseline {
+            return Err("managed service changed during Update preparation".into());
+        }
+        for step in &self.plan.steps {
+            let Some(spec) = self.old.get(&step.unit) else { continue; };
+            let state = self.baseline.previous.get(&step.unit)
+                .ok_or_else(|| format!("missing service preflight '{}'", step.unit))?;
+            let ManagedUpdateObservedUnit::Present { was_active: true, .. } = state else {
+                continue;
+            };
+            let stop = ServiceStop { disable: false, timeout_ms: spec.timeout_ms };
+            if let Err(error) = stop_service(&self.module, &step.unit, &spec.exec_start, spec.required, &stop, false) {
+                // A partially stopped unit must be included in recovery.
+                self.stopped.insert(step.unit.clone());
+                let recovery = self.restore_original();
+                return Err(match recovery {
+                    Ok(()) => format!("cannot quiesce managed service '{}': {error}", step.unit),
+                    Err(e) => format!("cannot quiesce managed service '{}': {error}; CRITICAL: original service restoration failed: {e}", step.unit),
+                });
+            }
+            self.stopped.insert(step.unit.clone());
+        }
+        Ok(())
+    }
+
+    // Used ONLY when Boss's existing filesystem Update restored the previous
+    // installation. Never start a previous process over a new module version.
+    pub(crate) fn restore_original(&self) -> Result<(), String> {
+        let mut errors = Vec::new();
+        for unit in self.stopped.iter().rev() {
+            if let Some(spec) = self.old.get(unit) {
+                if let Err(e) = reactivate_certified_service(&self.module, unit, &spec.exec_start, spec.timeout_ms) {
+                    errors.push(format!("{unit}: {e}"));
+                }
+            }
+        }
+        if errors.is_empty() { Ok(()) }
+        else { Err(format!("CRITICAL: original services not restored: {}", errors.join("; "))) }
+    }
+
+    // This is called after the regular module/material/settings Update is
+    // committed. A systemd failure is reported as a postcommit error; it is
+    // never mislabeled as an undone module Update.
+    pub(crate) fn complete(&self) -> Result<(), String> {
+        for step in &self.plan.steps {
+            let prior = self.baseline.previous.get(&step.unit);
+            let was_active = matches!(prior,
+                Some(ManagedUpdateObservedUnit::Present { was_active: true, .. }));
+            let was_enabled = matches!(prior,
+                Some(ManagedUpdateObservedUnit::Present { was_enabled: true, .. }));
+            match step.transition {
+                ManagedServiceTransition::Keep => {
+                    if was_active {
+                        let spec = self.old.get(&step.unit).ok_or("Keep lost old service")?;
+                        reactivate_certified_service(&self.module, &step.unit, &spec.exec_start, spec.timeout_ms)?;
+                    }
+                }
+                ManagedServiceTransition::Retire => {
+                    if let Some(ManagedUpdateObservedUnit::Present { .. }) = prior {
+                        let spec = self.old.get(&step.unit).ok_or("Retire lost old service")?;
+                        let stop = ServiceStop { disable: true, timeout_ms: spec.timeout_ms };
+                        stop_service(&self.module, &step.unit, &spec.exec_start, spec.required, &stop, true)?;
+                    }
+                }
+                ManagedServiceTransition::Add | ManagedServiceTransition::Replace => {
+                    let spec = self.new.get(&step.unit).ok_or("new service absent from declared plan")?;
+                    if step.transition == ManagedServiceTransition::Add
+                        || matches!(prior, Some(ManagedUpdateObservedUnit::Absent))
+                    {
+                        install_declared_user_service(&self.module, &spec.id)?;
+                    } else {
+                        replace_owned_update_service(&self.module, spec)?;
+                        let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+                        let home = desktop_home(uid)?;
+                        // Preserve the user's prior enablement and runtime
+                        // state, not merely the candidate unit's existence.
+                        let state = systemctl_as_desktop(uid, gid, &home,
+                            &["show", "--no-pager", "-p", "UnitFileState", &step.unit])?;
+                        let enabled = parse_unit_file_state(&state)? == "enabled";
+                        if enabled != was_enabled {
+                            if was_enabled {
+                                systemctl_as_desktop(uid, gid, &home, &["enable", &step.unit])?;
+                            } else {
+                                systemctl_as_desktop(uid, gid, &home, &["disable", &step.unit])?;
+                            }
+                        }
+                        if was_active {
+                            reactivate_certified_service(&self.module, &step.unit, &spec.exec_start, spec.timeout_ms)?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+// Atomically publish a certified candidate unit. This never follows an
+// existing target symlink and never writes into an unrelated service path.
+fn replace_owned_update_service(module: &str, spec: &ManagedServiceSpec) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let (uid, gid) = crate::runtime_identity::desktop_identity()?;
+    if uid == 0 { return Err("cannot replace service for root desktop user".into()); }
+    let home = desktop_home(uid)?;
+    let destination = validated_unit_path(&home, uid, gid, &spec.unit)?;
+    let old_meta = fs::symlink_metadata(&destination)
+        .map_err(|e| format!("Update installed unit metadata '{}': {e}", spec.unit))?;
+    if !old_meta.file_type().is_file() || old_meta.uid() != uid || old_meta.gid() != gid
+        || old_meta.mode() & 0o022 != 0 || old_meta.len() > 8192
+    {
+        return Err(format!("Update refuses foreign unit '{}'", spec.unit));
+    }
+    let source = PathBuf::from(format!("/opt/neebles/modules/{module}/integration/systemd-user/{}", spec.unit));
+    let content = fs::read_to_string(&source)
+        .map_err(|e| format!("Update new unit '{}': {e}", spec.unit))?;
+    certify_install_unit(&content, module, &spec.exec_start)?;
+    let tmp = destination.with_file_name(format!(".{}.neebles-update-{}", spec.unit, std::process::id()));
+    let result = (|| -> Result<(), String> {
+        let mut f = fs::OpenOptions::new().write(true).create_new(true)
+            .mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&tmp).map_err(|e| format!("create staged unit: {e}"))?;
+        if unsafe { libc::fchown(f.as_raw_fd(), uid, gid) } != 0 {
+            return Err(format!("chown staged unit: {}", std::io::Error::last_os_error()));
+        }
+        f.write_all(content.as_bytes()).and_then(|_| f.sync_all())
+            .map_err(|e| format!("write staged unit: {e}"))?;
+        // Refuse a replaced path between preflight and commit.
+        let now = fs::symlink_metadata(&destination)
+            .map_err(|e| format!("restat installed unit: {e}"))?;
+        if now.ino() != old_meta.ino() || now.dev() != old_meta.dev()
+            || now.uid() != old_meta.uid() || !now.file_type().is_file()
+        {
+            return Err("Update target unit changed during publication".into());
+        }
+        fs::rename(&tmp, &destination).map_err(|e| format!("publish new unit: {e}"))?;
+        systemctl_as_desktop(uid, gid, &home, &["daemon-reload"])?;
+        validate_manager_fragment(uid, gid, &home, &spec.unit, &destination, &spec.exec_start)?;
+        Ok(())
+    })();
+    if result.is_err() { let _ = fs::remove_file(&tmp); }
+    result
+}
+
 #[cfg(test)]
 mod f04b2_service_transition_plan_tests {
     use super::*;
@@ -2151,7 +2397,7 @@ enum ManagedUpdateObservedUnit {
     },
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ManagedServiceUpdateBaseline {
     previous: BTreeMap<String, ManagedUpdateObservedUnit>,
     reserved_new_units: BTreeSet<String>,

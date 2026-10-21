@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.3
+
+- Governed module Update now supports persistent user services.
+- Kept services preserve their unit and are restarted when needed to load new binaries.
+- Reconfigured services are replaced; new services are installed and activated; retired services are removed.
+- Updates must not delete vaults or the user's private persistent data.
+- Registry schema 3 and the Secrets/Connect installation dependency remain intact.
+
+Save your work and close open applications before pressing Reboot.

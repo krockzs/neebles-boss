@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.3
+
+- Actualización gobernada de servicios persistentes de los módulos.
+- Si un servicio permanece, Boss conserva su unidad y reinicia el proceso cuando corresponde.
+- Si cambia su configuración, Boss la reemplaza; si es nuevo, lo instala y activa; si deja de declararse, lo retira.
+- La actualización no debe eliminar las bóvedas ni los datos privados del usuario.
+- Se mantienen el Registry schema 3 y las dependencias de instalación de Secrets y Connect.
+
+Guarda tu trabajo y cierra las aplicaciones abiertas antes de pulsar Reboot.
