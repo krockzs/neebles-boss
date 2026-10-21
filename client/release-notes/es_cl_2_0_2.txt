@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.2
+
+- Connect ahora requiere que Secrets este instalado.
+- Si falta Secrets, Boss oculta Install de Connect y muestra una advertencia de dependencia.
+- El Registry schema 3 gobierna las dependencias, que tambien valida el backend.
+- El catalogo ahora contiene Secrets y Connect; Test Module sigue disponible como repositorio de referencia.
+- Esta version prepara las variables dinamicas genericas; la comprobacion de clave maestra y boveda desbloqueada se integrara despues con Secrets y Connect.
+
+Guarda tu trabajo y cierra las aplicaciones abiertas antes de pulsar Reboot.

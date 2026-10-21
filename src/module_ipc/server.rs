@@ -16,6 +16,7 @@ use crate::module_ipc::protocol::{
 };
 
 use crate::module_ipc::registry::{ModuleRuntimeRecord, RuntimeRegistry};
+use crate::module_ipc::variables::{live_module_variables, PublisherIdentity};
 
 use std::collections::BTreeSet;
 use std::env;
@@ -705,7 +706,30 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
     /*
      * Reader persistente.
      */
-    let result = client_loop(&mut stream, &writer_sender, &module, &session_id);
+    // This owner was verified from SO_PEERCRED + installed entrypoint +
+    // /proc PID start time before RuntimeRegistry accepted the connection.
+    let variables_owner = PublisherIdentity {
+        module: module.clone(),
+        session_id: session_id.clone(),
+        pid: runtime_pid,
+        start_time_ticks: runtime_start_time_ticks,
+    };
+    let result = client_loop(&mut stream, &writer_sender, &module, &session_id, Some(&variables_owner));
+
+    // Every disconnect path (clean Unregister, EOF, malformed frame, error)
+    // revokes this exact process incarnation's dynamic publications. A stale
+    // session can never remove a newer process owner's variables.
+    match live_module_variables().revoke(&variables_owner) {
+        Ok(true) => crate::ipc::broadcast_event(
+            "module.lifecycle", "state_changed",
+            serde_json::json!({"module": module, "reason": "variables_revoked"}),
+        ),
+        Ok(false) => {},
+        Err(error) => eprintln!(
+            "N.E.E.B.L.E.S.: could not revoke live variables for '{}' on disconnect: {}",
+            module, error
+        ),
+    }
 
     /*
      * The reader ended: this exact runtime incarnation is no
@@ -1044,6 +1068,7 @@ fn client_loop(
     writer: &mpsc::Sender<ModuleMessage>,
     module: &str,
     session_id: &str,
+    variables_owner: Option<&PublisherIdentity>,
 ) -> Result<(), String> {
     loop {
         let Some(message) = read_message(stream)? else {
@@ -1056,6 +1081,52 @@ fn client_loop(
         };
 
         match message {
+            ModuleMessage::VariablesPublish {
+                module: publisher_module,
+                session_id: publisher_session,
+                variables,
+            } => {
+                validate_session(module, session_id, &publisher_module, &publisher_session)?;
+                // No publication is possible from the unauthenticated test
+                // transport or a connection with no process ownership proof.
+                let owner = variables_owner.ok_or_else(||
+                    "live module variable publication requires a verified process owner".to_string()
+                )?;
+                if owner.module != module || owner.session_id != session_id {
+                    return Err("module variable publisher does not match verified runtime session".into());
+                }
+                match live_module_variables().publish(owner.clone(), variables) {
+                    Ok(changed) => {
+                        if changed {
+                            crate::ipc::broadcast_event(
+                                "module.lifecycle", "state_changed",
+                                serde_json::json!({"module": module, "reason": "variables_changed"}),
+                            );
+                        }
+                        writer.send(ModuleMessage::VariablesPublished {
+                            module: module.to_string(),
+                            session_id: session_id.to_string(),
+                            changed,
+                        }).map_err(|error| format!(
+                            "could not acknowledge live module variables for '{}': {error}", module
+                        ))?;
+                    }
+                    Err(error) => {
+                        writer.send(ModuleMessage::Error {
+                            id: None,
+                            module: Some(module.to_string()),
+                            error: ModuleError {
+                                kind: "invalid_variables".to_string(),
+                                message: error,
+                                details: None,
+                            },
+                        }).map_err(|error| format!(
+                            "could not reject module variables for '{}': {error}", module
+                        ))?;
+                    }
+                }
+            }
+
             ModuleMessage::Pong {
                 module: pong_module,
 
@@ -1454,6 +1525,7 @@ fn client_loop(
 
             ModuleMessage::Register { .. }
             | ModuleMessage::Registered { .. }
+            | ModuleMessage::VariablesPublished { .. }
             | ModuleMessage::Subscribed { .. }
             | ModuleMessage::SettingsValue { .. }
             | ModuleMessage::NotificationAck { .. }
@@ -1772,7 +1844,7 @@ mod transport_semantics_tests {
         let handle = std::thread::spawn(move || {
             let mut boss_stream = boss_stream;
 
-            client_loop(&mut boss_stream, &writer, &module, &session_id)
+            client_loop(&mut boss_stream, &writer, &module, &session_id, None)
         });
 
         (runtime_stream, receiver, handle)
@@ -2563,4 +2635,92 @@ fn validate_session(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod live_variables_transport_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::os::unix::net::UnixStream;
+    use std::sync::mpsc;
+
+    #[test]
+    fn authenticated_runtime_can_publish_and_clear_opaque_snapshot() {
+        let (mut boss, mut client) = UnixStream::pair().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let owner = PublisherIdentity {
+            module: "f03b-unique-module".into(),
+            session_id: "f03b-unique-session".into(),
+            pid: 41531,
+            start_time_ticks: 41531,
+        };
+        let worker = owner.clone();
+        let handle = std::thread::spawn(move || {
+            let result = client_loop(&mut boss, &sender, &worker.module, &worker.session_id, Some(&worker));
+            let revoked = live_module_variables().revoke(&worker).unwrap();
+            (result, revoked)
+        });
+        let values = [("first".to_string(), "one".to_string()),
+            ("second".to_string(), "two".to_string())].into_iter().collect();
+        write_message(&mut client, &ModuleMessage::VariablesPublish {
+            module: owner.module.clone(), session_id: owner.session_id.clone(), variables: values,
+        }).unwrap();
+        match receiver.recv().unwrap() {
+            ModuleMessage::VariablesPublished { changed, .. } => assert!(changed),
+            other => panic!("expected publication ACK, got {other:?}"),
+        }
+        assert_eq!(live_module_variables().snapshot().unwrap()[&owner.module]["second"], "two");
+        write_message(&mut client, &ModuleMessage::VariablesPublish {
+            module: owner.module.clone(), session_id: owner.session_id.clone(),
+            variables: BTreeMap::new(),
+        }).unwrap();
+        match receiver.recv().unwrap() {
+            ModuleMessage::VariablesPublished { changed, .. } => assert!(changed),
+            other => panic!("expected clearing ACK, got {other:?}"),
+        }
+        assert!(!live_module_variables().snapshot().unwrap().contains_key(&owner.module));
+        write_message(&mut client, &ModuleMessage::Unregister {
+            module: owner.module.clone(), session_id: owner.session_id.clone(), reason: None,
+        }).unwrap();
+        let (result, revoked) = handle.join().unwrap();
+        assert!(result.is_ok());
+        assert!(!revoked);
+    }
+
+    #[test]
+    fn unauthenticated_loop_rejects_publication() {
+        let (mut boss, mut client) = UnixStream::pair().unwrap();
+        let (sender, _receiver) = mpsc::channel();
+        let handle = std::thread::spawn(move ||
+            client_loop(&mut boss, &sender, "f03b-no-owner", "f03b-session", None)
+        );
+        write_message(&mut client, &ModuleMessage::VariablesPublish {
+            module: "f03b-no-owner".into(),
+            session_id: "f03b-session".into(),
+            variables: [("k".to_string(), "v".to_string())].into_iter().collect(),
+        }).unwrap();
+        assert!(handle.join().unwrap().is_err());
+        assert!(!live_module_variables().snapshot().unwrap().contains_key("f03b-no-owner"));
+    }
+
+    #[test]
+    fn forged_module_identity_is_rejected_before_publication() {
+        let (mut boss, mut client) = UnixStream::pair().unwrap();
+        let (sender, _receiver) = mpsc::channel();
+        let owner = PublisherIdentity {
+            module: "f03b-real".into(),
+            session_id: "f03b-session".into(),
+            pid: 41532,
+            start_time_ticks: 41532,
+        };
+        let handle = std::thread::spawn(move ||
+            client_loop(&mut boss, &sender, "f03b-real", "f03b-session", Some(&owner))
+        );
+        write_message(&mut client, &ModuleMessage::VariablesPublish {
+            module: "f03b-foreign".into(), session_id: "f03b-session".into(),
+            variables: [("k".to_string(), "v".to_string())].into_iter().collect(),
+        }).unwrap();
+        assert!(handle.join().unwrap().is_err());
+        assert!(!live_module_variables().snapshot().unwrap().contains_key("f03b-foreign"));
+    }
 }

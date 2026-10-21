@@ -3,7 +3,7 @@
         "Id": "org.neebles.spacer",
         "Name": "N.E.E.B.L.E.S. Spacer",
         "Description": "Horizontal panel spacing for N.E.E.B.L.E.S.",
-        "Version": "2.0.1",
+        "Version": "2.0.2",
         "License": "MIT"
     },
     "KPackageStructure": "Plasma/Applet",

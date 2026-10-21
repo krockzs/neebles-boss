@@ -1,20 +1,23 @@
 {
-  "schema": 2,
+  "schema": 3,
   "modules": {
     "neebles-connect": {
       "repo": "https://github.com/krockzs/neebles-connect.git",
       "commit": "2cc24510bf48eec679fa1473069a575f3c7f73f3",
-      "version": "1.0.0"
-    },
-    "test-module": {
-      "repo": "https://github.com/krockzs/neebles-test-module.git",
-      "commit": "3d265bc62a7ff51ed1c42aecf0158abfa29b3223",
-      "version": "1.2.12"
+      "version": "1.0.0",
+      "short_name": "Connect",
+      "depends_install": {
+        "neebles-secrets": {
+          "variables": {}
+        }
+      }
     },
     "neebles-secrets": {
       "repo": "https://github.com/krockzs/neebles-secrets.git",
       "commit": "4583eb892012a7e202fd7a2cc487cf04bbbe591a",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "short_name": "Secrets",
+      "depends_install": {}
     }
   }
 }

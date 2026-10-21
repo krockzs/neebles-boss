@@ -149,6 +149,22 @@ pub enum ModuleMessage {
         topics: Vec<String>,
     },
 
+    /*
+     * Snapshot of opaque runtime variables. Does not change the Registry.
+     * The connection must already have authenticated its module/session.
+     */
+    VariablesPublish {
+        module: String,
+        session_id: String,
+        variables: BTreeMap<String, String>,
+    },
+
+    VariablesPublished {
+        module: String,
+        session_id: String,
+        changed: bool,
+    },
+
     Event {
         module: String,
         session_id: String,
@@ -547,6 +563,53 @@ mod notification_wire_tests {
             }
 
             other => panic!("expected Notification, got {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_variables_protocol_tests {
+    use super::*;
+
+    #[test]
+    fn publish_snapshot_opaque_values_roundtrip() {
+        let variables = [
+            ("master-key".to_string(), "enabled".to_string()),
+            ("vault".to_string(), "unlocked".to_string()),
+        ].into_iter().collect();
+        let message = ModuleMessage::VariablesPublish {
+            module: "neebles-secrets".into(),
+            session_id: "test-session".into(),
+            variables,
+        };
+        let serialized = serde_json::to_string(&message).unwrap();
+        assert!(serialized.contains("\"type\":\"variables_publish\""));
+        match serde_json::from_str::<ModuleMessage>(&serialized).unwrap() {
+            ModuleMessage::VariablesPublish { module, session_id, variables } => {
+                assert_eq!(module, "neebles-secrets");
+                assert_eq!(session_id, "test-session");
+                assert_eq!(variables["master-key"], "enabled");
+                assert_eq!(variables["vault"], "unlocked");
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publication_ack_roundtrip() {
+        let message = ModuleMessage::VariablesPublished {
+            module: "neebles-secrets".into(),
+            session_id: "test-session".into(),
+            changed: true,
+        };
+        let serialized = serde_json::to_string(&message).unwrap();
+        match serde_json::from_str::<ModuleMessage>(&serialized).unwrap() {
+            ModuleMessage::VariablesPublished { module, session_id, changed } => {
+                assert_eq!(module, "neebles-secrets");
+                assert_eq!(session_id, "test-session");
+                assert!(changed);
+            }
+            other => panic!("wrong variant: {other:?}"),
         }
     }
 }

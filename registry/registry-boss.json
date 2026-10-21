@@ -1,0 +1,6 @@
+{
+  "messages": {
+    "en_US": "Module {module} cannot be uninstalled or deactivated because it is required by: [dependents]",
+    "es_CL": "El módulo {module} no se puede desinstalar ni desactivar porque lo necesitan: [dependents]"
+  }
+}

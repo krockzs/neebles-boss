@@ -351,6 +351,14 @@ ApplicationWindow {
         return boss.text(key)
     }
 
+    function registryWarning(messages) {
+        if (!messages)
+            return ""
+        const locale = (typeof boss !== "undefined" && boss.language)
+            ? String(boss.language) : "en_US"
+        return String(messages[locale] || messages["en_US"] || "")
+    }
+
     function shortLanguage(code) {
         if (code === "es_CL")
             return "ES"
@@ -1873,6 +1881,14 @@ ApplicationWindow {
                                 readonly property bool effectiveEnabled:
                                     !!modelData.enabled
 
+                                readonly property bool installBlocked:
+                                    !effectiveInstalled
+                                    && modelData.install_allowed !== true
+
+                                readonly property bool providerProtected:
+                                    effectiveInstalled
+                                    && modelData.protected === true
+
                                 readonly property color moduleStateColor:
                                     !effectiveInstalled
                                     ? "#22D3EE"
@@ -1883,7 +1899,7 @@ ApplicationWindow {
                                 width:
                                     ListView.view.width
 
-                                height: 116
+                                height: installBlocked || providerProtected ? 146 : 116
 
                                 radius: 12
                                 color: "#0C0C10"
@@ -2038,6 +2054,10 @@ ApplicationWindow {
                                          * INSTALAR / DESINSTALAR
                                          */
                                         ColumnLayout {
+                                            visible:
+                                                !moduleCard.installBlocked
+                                                && !moduleCard.providerProtected
+
                                             spacing: 2
 
                                             Label {
@@ -2090,12 +2110,37 @@ if (
                                             }
                                         }
 
+                                        Label {
+                                            visible:
+                                                moduleCard.installBlocked
+                                                || moduleCard.providerProtected
+
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 150
+                                            Layout.maximumWidth: 285
+
+                                            text:
+                                                root.registryWarning(
+                                                    moduleCard.providerProtected
+                                                    ? modelData.protection_warning
+                                                    : modelData.install_warning
+                                                )
+
+                                            color: "#EF4444"
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                            wrapMode: Text.WordWrap
+                                            maximumLineCount: 5
+                                            elide: Text.ElideRight
+                                        }
+
                                         /*
                                          * ENABLE / DISABLE
                                          */
                                         ColumnLayout {
                                             visible:
                                                 moduleCard.effectiveInstalled
+                                                && !moduleCard.providerProtected
 
                                             spacing: 2
 

@@ -5,9 +5,12 @@ use crate::lifecycle::LifecycleContract;
 /*
  * Installed module dependency policy.
  *
- * Source of truth:
+ * Canonical source: each installed consumer's authenticated depends_install
+ * snapshot (to be wired at its transactional install/update boundary).
  *
- *     installed module Lifecycle.require
+ * The legacy Lifecycle.require adapter below remains temporarily in use by
+ * existing callers until F02C wires the installed dependency snapshot. It is
+ * NOT the canonical future authority.
  *
  * This layer derives both directions:
  *
@@ -19,6 +22,154 @@ use crate::lifecycle::LifecycleContract;
  * No module technology is interpreted here.
  */
 
+/*
+ * Boss-owned installed requirement snapshot: a COPY of the immutable Registry
+ * selection captured in the candidate staging directory at Install/Update.
+ * The Registry remains the declarative source; this is installed-version truth.
+ * This metadata is NEVER updated when a provider publishes variables.
+ *
+ * The snapshot travels with the module tree through the existing filesystem
+ * rename/rollback transaction. Reading a missing snapshot from an old module
+ * is a separate migration matter; never synthesize one from current Registry.
+ */
+use serde::{Deserialize, Serialize};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+
+pub const INSTALLED_REQUIREMENTS_FILENAME: &str = ".neebles-boss-installed-requirements.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct InstalledRequirementsSnapshot {
+    pub schema: u32,
+    pub module: String,
+    pub version: String,
+    pub source_commit: String,
+    pub short_name: String,
+    pub depends_install: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl InstalledRequirementsSnapshot {
+    pub fn from_registry(
+        module: &str,
+        entry: &crate::modules::RegistryModule,
+    ) -> Result<Self, String> {
+        let snapshot = Self {
+            schema: 1,
+            module: module.to_string(),
+            version: entry.version.clone(),
+            source_commit: entry.commit.clone(),
+            short_name: entry.short_name.clone(),
+            depends_install: entry
+                .depends_install
+                .iter()
+                .map(|(id, requirement)| (id.clone(), requirement.variables.clone()))
+                .collect(),
+        };
+        snapshot.validate(module, &entry.version)?;
+        Ok(snapshot)
+    }
+
+    pub fn validate(&self, module: &str, installed_version: &str) -> Result<(), String> {
+        if self.schema != 1 || self.module != module || self.version != installed_version {
+            return Err(format!(
+                "installed requirements owner/schema/version mismatch for '{module}'"
+            ));
+        }
+        if !neebles_backend::module_material::valid_module_id(module)
+            || self.version.is_empty()
+            || self.source_commit.len() != 40
+            || !self.source_commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || self.short_name.is_empty()
+            || self.short_name.len() > 256
+            || self.short_name.chars().any(|ch| ch.is_control())
+            || self.depends_install.len() > 128
+        {
+            return Err(format!("invalid installed requirements metadata for '{module}'"));
+        }
+        for (provider, variables) in &self.depends_install {
+            if !neebles_backend::module_material::valid_module_id(provider)
+                || provider == module
+                || variables.len() > 128
+                || variables.iter().any(|(key, value)| {
+                    key.is_empty() || key.len() > 512 || key.chars().any(|ch| ch.is_control())
+                        || value.is_empty() || value.len() > 2048
+                        || value.chars().any(|ch| ch.is_control())
+                })
+            {
+                return Err(format!(
+                    "invalid installed requirements from '{module}' to '{provider}'"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn provider_ids(&self) -> BTreeSet<String> {
+        self.depends_install.keys().cloned().collect()
+    }
+}
+
+pub fn stage_installed_requirements(
+    candidate_dir: &Path,
+    module: &str,
+    entry: &crate::modules::RegistryModule,
+) -> Result<(), String> {
+    let snapshot = InstalledRequirementsSnapshot::from_registry(module, entry)?;
+    let dir_meta = fs::symlink_metadata(candidate_dir)
+        .map_err(|error| format!("invalid module staging directory: {error}"))?;
+    if !dir_meta.file_type().is_dir() {
+        return Err("module staging must be a real directory".to_string());
+    }
+    let payload = serde_json::to_vec_pretty(&snapshot)
+        .map_err(|error| format!("could not encode installed requirements: {error}"))?;
+    if payload.len() > 65536 {
+        return Err("installed requirements exceed 64KiB".to_string());
+    }
+    let path = candidate_dir.join(INSTALLED_REQUIREMENTS_FILENAME);
+    // create_new refuses to overwrite a source-controlled or existing file.
+    // A module must never be able to supply this Boss-owned metadata itself.
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|error| format!("cannot create Boss-owned requirements file: {error}"))?;
+    file.write_all(&payload)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("cannot persist staged requirements: {error}"))?;
+    drop(file);
+    let verified = read_installed_requirements(candidate_dir, module, &entry.version)?;
+    if verified != snapshot {
+        return Err("staged requirements changed during verification".to_string());
+    }
+    Ok(())
+}
+
+pub fn read_installed_requirements(
+    module_dir: &Path,
+    module: &str,
+    version: &str,
+) -> Result<InstalledRequirementsSnapshot, String> {
+    let path = module_dir.join(INSTALLED_REQUIREMENTS_FILENAME);
+    let meta = fs::symlink_metadata(&path)
+        .map_err(|error| format!("installed requirements unavailable for '{module}': {error}"))?;
+    if !meta.file_type().is_file() || meta.len() > 65536 {
+        return Err(format!("invalid installed requirements file for '{module}'"));
+    }
+    let raw = fs::read(&path)
+        .map_err(|error| format!("cannot read installed requirements for '{module}': {error}"))?;
+    if raw.len() > 65536 {
+        return Err("installed requirements exceed 64KiB".to_string());
+    }
+    let snapshot: InstalledRequirementsSnapshot = serde_json::from_slice(&raw)
+        .map_err(|error| format!("malformed installed requirements for '{module}': {error}"))?;
+    snapshot.validate(module, version)?;
+    Ok(snapshot)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct InstalledDependencyGraph {
     requires: BTreeMap<String, BTreeSet<String>>,
@@ -27,52 +178,99 @@ pub struct InstalledDependencyGraph {
 }
 
 impl InstalledDependencyGraph {
-    pub fn from_contracts(contracts: &BTreeMap<String, LifecycleContract>) -> Result<Self, String> {
-        let installed = contracts.keys().cloned().collect::<BTreeSet<_>>();
+    /*
+     * Generic graph input: one immutable dependency-ID set for every installed
+     * consumer, obtained from its authenticated installed snapshot.
+     *
+     * The map includes installed modules with no dependencies (empty set).
+     * Live variable status NEVER changes this graph.
+     */
+    pub fn from_installed_requirements(
+        requires: BTreeMap<String, BTreeSet<String>>,
+    ) -> Result<Self, String> {
+        let installed = requires.keys().cloned().collect::<BTreeSet<_>>();
+        let mut required_by = installed
+            .iter()
+            .map(|module_id| (module_id.clone(), BTreeSet::new()))
+            .collect::<BTreeMap<_, _>>();
 
-        let mut requires = BTreeMap::<String, BTreeSet<String>>::new();
-
-        let mut required_by = BTreeMap::<String, BTreeSet<String>>::new();
-
-        for module_id in &installed {
-            requires.insert(module_id.clone(), BTreeSet::new());
-
-            required_by.insert(module_id.clone(), BTreeSet::new());
-        }
-
-        for (module_id, contract) in contracts {
-            for required in contract.require.keys() {
-                if !installed.contains(required) {
+        for (consumer, providers) in &requires {
+            for provider in providers {
+                if !installed.contains(provider) {
                     return Err(format!(
                         "installed module '{}' requires module '{}', but '{}' is not installed",
-                        module_id, required, required,
+                        consumer, provider, provider
                     ));
                 }
-
-                requires
-                    .get_mut(module_id)
-                    .expect(
-                        "installed dependency graph requires map must contain every installed module"
-                    )
-                    .insert(
-                        required.clone()
-                    );
-
+                if consumer == provider {
+                    return Err(format!("installed module '{}' depends on itself", consumer));
+                }
                 required_by
-                    .get_mut(required)
-                    .expect(
-                        "installed dependency graph required_by map must contain every installed module"
-                    )
-                    .insert(
-                        module_id.clone()
-                    );
+                    .get_mut(provider)
+                    .expect("all provider IDs were validated")
+                    .insert(consumer.clone());
             }
         }
 
-        Ok(Self {
-            requires,
-            required_by,
-        })
+        let graph = Self { requires, required_by };
+        // A circular installed graph must fail closed instead of deadlocking
+        // a caller that later needs a dependency traversal.
+        for module_id in &installed {
+            graph.enable_order(module_id)?;
+        }
+        Ok(graph)
+    }
+
+    /*
+     * Production installed graph reader. Only the installed module tree is
+     * consulted, never the remote Registry or live variables. The snapshot
+     * belongs to the same installed version as the module manifest.
+     *
+     * Old installations do not have this file. They fail closed here;
+     * a separate audited migration must establish trustworthy history,
+     * never silently synthesize dependencies from today's remote Registry.
+     */
+    pub fn from_installed_snapshot_paths(
+        modules: &BTreeMap<String, (std::path::PathBuf, String)>,
+    ) -> Result<Self, String> {
+        let mut requirements = BTreeMap::new();
+        for (module, (directory, version)) in modules {
+            let dir_meta = fs::symlink_metadata(directory).map_err(|error| {
+                format!("cannot inspect installed module '{}' directory: {}", module, error)
+            })?;
+            if !dir_meta.file_type().is_dir() {
+                return Err(format!(
+                    "installed module '{}' directory is not a real directory", module
+                ));
+            }
+            let snapshot = read_installed_requirements(directory, module, version).map_err(|error| {
+                format!(
+                    "module '{}' has no valid installed dependency snapshot: {}; migration is required before changing installed dependencies",
+                    module, error
+                )
+            })?;
+            if requirements.insert(module.clone(), snapshot.provider_ids()).is_some() {
+                return Err(format!("duplicate installed module identity '{}'", module));
+            }
+        }
+        Self::from_installed_requirements(requirements)
+    }
+
+    /*
+     * Legacy construction path, retained only until callers are migrated.
+     * It must NOT be used to authorize new Registry-based dependencies.
+     */
+    pub fn from_contracts(contracts: &BTreeMap<String, LifecycleContract>) -> Result<Self, String> {
+        let requires = contracts
+            .iter()
+            .map(|(module_id, lifecycle)| {
+                (
+                    module_id.clone(),
+                    lifecycle.require.keys().cloned().collect::<BTreeSet<_>>(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        Self::from_installed_requirements(requires)
     }
 
     pub fn contains(&self, module_id: &str) -> bool {
@@ -110,6 +308,19 @@ impl InstalledDependencyGraph {
 
         Err(format!(
             "module '{}' cannot be uninstalled because it is required by installed modules: {}",
+            module_id,
+            blockers.join(", "),
+        ))
+    }
+
+    /* A provider required by ANY installed consumer cannot be disabled. */
+    pub fn can_disable(&self, module_id: &str) -> Result<(), String> {
+        let blockers = self.uninstall_blockers(module_id)?;
+        if blockers.is_empty() {
+            return Ok(());
+        }
+        Err(format!(
+            "module '{}' cannot be disabled because it is required by installed modules: {}",
             module_id,
             blockers.join(", "),
         ))
@@ -224,6 +435,56 @@ impl InstalledDependencyGraph {
 
         Ok(())
     }
+}
+
+/*
+ * Pure Registry install-requirement evaluator.
+ *
+ * "expected" comes ONLY from declared Registry depends_install.
+ * "observed" comes ONLY from authenticated live module publications.
+ * "installed" comes ONLY from the installed module inventory.
+ *
+ * Keys and values are opaque strings. This function never interprets
+ * master keys, vaults, databases, services, booleans or semantic names.
+ * No UI text or authorization state is persisted in Registry.
+ */
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstallRequirementFailure {
+    ProviderNotInstalled { provider: String },
+    VariableNotPublished { provider: String, variable: String },
+    VariableDoesNotMatch { provider: String, variable: String },
+}
+
+pub fn unmet_install_requirements(
+    expected: &BTreeMap<String, BTreeMap<String, String>>,
+    installed: &BTreeSet<String>,
+    observed: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Vec<InstallRequirementFailure> {
+    let mut failures = Vec::new();
+    for (provider, required_variables) in expected {
+        if !installed.contains(provider) {
+            failures.push(InstallRequirementFailure::ProviderNotInstalled {
+                provider: provider.clone(),
+            });
+            continue;
+        }
+        for (variable, expected_value) in required_variables {
+            match observed.get(provider).and_then(|published| published.get(variable)) {
+                None => failures.push(InstallRequirementFailure::VariableNotPublished {
+                    provider: provider.clone(),
+                    variable: variable.clone(),
+                }),
+                Some(actual_value) if actual_value != expected_value => {
+                    failures.push(InstallRequirementFailure::VariableDoesNotMatch {
+                        provider: provider.clone(),
+                        variable: variable.clone(),
+                    });
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    failures
 }
 
 /*
@@ -535,4 +796,203 @@ mod tests {
             vec!["whatever.future.module".to_string()]
         );
     }
+
+    fn f02f_fixture(
+        root: &std::path::Path,
+        module: &str,
+        version: &str,
+        dependencies: &[&str],
+    ) -> (std::path::PathBuf, String) {
+        let directory = root.join(module);
+        std::fs::create_dir(&directory).unwrap();
+        let entry = crate::modules::RegistryModule {
+            repo: format!("https://github.com/example/{module}.git"),
+            commit: "a".repeat(40),
+            version: version.into(),
+            folder: None,
+            short_name: module.into(),
+            depends_install: dependencies.iter().map(|provider| (
+                (*provider).to_string(),
+                crate::modules::RegistryInstallDependency {
+                    variables: BTreeMap::from([
+                        ("first".into(), "one".into()),
+                        ("second".into(), "two".into()),
+                    ]),
+                }
+            )).collect(),
+        };
+        stage_installed_requirements(&directory, module, &entry).unwrap();
+        (directory, version.to_string())
+    }
+
+    #[test]
+    fn f02f_installed_snapshots_protect_multiple_consumers_without_remote_registry() {
+        let root = tempfile::tempdir().unwrap();
+        let modules = BTreeMap::from([
+            ("neebles-secrets".to_string(),
+                f02f_fixture(root.path(), "neebles-secrets", "1.0.0", &[])),
+            ("neebles-connect".to_string(),
+                f02f_fixture(root.path(), "neebles-connect", "1.0.0", &["neebles-secrets"])),
+            ("neebles-db".to_string(),
+                f02f_fixture(root.path(), "neebles-db", "2.0.0", &["neebles-secrets"])),
+        ]);
+        let graph = InstalledDependencyGraph::from_installed_snapshot_paths(&modules).unwrap();
+        assert_eq!(graph.uninstall_blockers("neebles-secrets").unwrap(), vec![
+            "neebles-connect".to_string(), "neebles-db".to_string(),
+        ]);
+        assert!(graph.can_disable("neebles-secrets").is_err());
+        assert!(graph.can_uninstall("neebles-secrets").is_err());
+        graph.can_disable("neebles-connect").unwrap();
+    }
+
+    #[test]
+    fn f02f_missing_or_invalid_snapshot_fails_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let legacy = root.path().join("legacy-module");
+        std::fs::create_dir(&legacy).unwrap();
+        let modules = BTreeMap::from([
+            ("legacy-module".to_string(), (legacy.clone(), "1.0.0".to_string())),
+        ]);
+        let error = InstalledDependencyGraph::from_installed_snapshot_paths(&modules).unwrap_err();
+        assert!(error.contains("migration is required"));
+        // A malformed snapshot is also a hard failure rather than empty deps.
+        std::fs::write(legacy.join(INSTALLED_REQUIREMENTS_FILENAME), b"{}").unwrap();
+        assert!(InstalledDependencyGraph::from_installed_snapshot_paths(&modules).is_err());
+    }
+
+    #[test]
+    fn f02f_missing_provider_in_snapshot_is_not_silently_ignored() {
+        let root = tempfile::tempdir().unwrap();
+        let modules = BTreeMap::from([
+            ("neebles-connect".to_string(),
+                f02f_fixture(root.path(), "neebles-connect", "1.0.0", &["neebles-secrets"])),
+        ]);
+        let error = InstalledDependencyGraph::from_installed_snapshot_paths(&modules).unwrap_err();
+        assert!(error.contains("is not installed"));
+    }
+
+    #[test]
+    fn f02f_snapshot_version_must_equal_installed_manifest_version() {
+        let root = tempfile::tempdir().unwrap();
+        let (directory, _) = f02f_fixture(root.path(), "neebles-connect", "1.0.0", &[]);
+        let modules = BTreeMap::from([
+            ("neebles-connect".to_string(), (directory, "1.0.1".to_string())),
+        ]);
+        assert!(InstalledDependencyGraph::from_installed_snapshot_paths(&modules).is_err());
+    }
+
+    #[test]
+    fn f02e_snapshot_preserves_registry_variables_and_short_name() {
+        let entry = crate::modules::RegistryModule {
+            repo: "https://github.com/example/connect.git".into(),
+            commit: "a".repeat(40),
+            version: "1.2.3".into(),
+            folder: None,
+            short_name: "Connect".into(),
+            depends_install: BTreeMap::from([(
+                "neebles-secrets".into(),
+                crate::modules::RegistryInstallDependency {
+                    variables: BTreeMap::from([
+                        ("master-key".into(), "enabled".into()),
+                        ("vault".into(), "unlocked".into()),
+                    ]),
+                },
+            )]),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        stage_installed_requirements(dir.path(), "neebles-connect", &entry).unwrap();
+        let snap = read_installed_requirements(dir.path(), "neebles-connect", "1.2.3").unwrap();
+        assert_eq!(snap.short_name, "Connect");
+        assert_eq!(snap.provider_ids(), BTreeSet::from(["neebles-secrets".into()]));
+        assert_eq!(snap.depends_install["neebles-secrets"]["vault"], "unlocked");
+        assert!(read_installed_requirements(dir.path(), "foreign", "1.2.3").is_err());
+        assert!(read_installed_requirements(dir.path(), "neebles-connect", "2.0.0").is_err());
+        assert!(stage_installed_requirements(dir.path(), "neebles-connect", &entry).is_err());
+    }
+
+    #[test]
+    fn f02e_snapshot_rejects_tampering_and_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INSTALLED_REQUIREMENTS_FILENAME);
+        std::fs::write(&path, b"{\"schema\":1}").unwrap();
+        assert!(read_installed_requirements(dir.path(), "example", "1.0.0").is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", &path).unwrap();
+        assert!(read_installed_requirements(dir.path(), "example", "1.0.0").is_err());
+    }
+
+    #[test]
+    fn schema3_installed_graph_protects_provider_even_when_consumer_is_inactive() {
+        // Active/Inactive is deliberately not an input to the installed graph.
+        let requires = BTreeMap::from([
+            ("neebles-connect".to_string(), BTreeSet::from(["neebles-secrets".to_string()])),
+            ("neebles-db".to_string(), BTreeSet::from(["neebles-secrets".to_string()])),
+            ("neebles-secrets".to_string(), BTreeSet::new()),
+        ]);
+        let graph = InstalledDependencyGraph::from_installed_requirements(requires).unwrap();
+        assert_eq!(graph.uninstall_blockers("neebles-secrets").unwrap(), vec![
+            "neebles-connect".to_string(), "neebles-db".to_string()
+        ]);
+        assert!(graph.can_uninstall("neebles-secrets").is_err());
+        assert!(graph.can_disable("neebles-secrets").is_err());
+        graph.can_disable("neebles-connect").unwrap();
+    }
+
+    #[test]
+    fn installed_graph_rejects_missing_provider_and_cycles() {
+        let missing = BTreeMap::from([("connect".to_string(), BTreeSet::from(["secrets".to_string()]))]);
+        assert!(InstalledDependencyGraph::from_installed_requirements(missing).is_err());
+        let circular = BTreeMap::from([
+            ("a".to_string(), BTreeSet::from(["b".to_string()])),
+            ("b".to_string(), BTreeSet::from(["a".to_string()])),
+        ]);
+        assert!(InstalledDependencyGraph::from_installed_requirements(circular).is_err());
+    }
+
+    #[test]
+    fn install_policy_checks_all_opaque_variables_with_exact_string_equality() {
+        let expected = BTreeMap::from([("neebles-secrets".to_string(), BTreeMap::from([
+            ("master-key".to_string(), "enabled".to_string()),
+            ("some-other-variable".to_string(), "READY".to_string()),
+        ]))]);
+        let installed = BTreeSet::from(["neebles-secrets".to_string()]);
+        let observed = BTreeMap::from([("neebles-secrets".to_string(), BTreeMap::from([
+            ("master-key".to_string(), "enabled".to_string()),
+            ("some-other-variable".to_string(), "READY".to_string()),
+            ("unrelated".to_string(), "value".to_string()),
+        ]))]);
+        assert!(unmet_install_requirements(&expected, &installed, &observed).is_empty());
+        let observed_wrong = BTreeMap::from([("neebles-secrets".to_string(), BTreeMap::from([
+            ("master-key".to_string(), "Enabled".to_string()),
+            ("some-other-variable".to_string(), "READY".to_string()),
+        ]))]);
+        assert_eq!(unmet_install_requirements(&expected, &installed, &observed_wrong), vec![
+            InstallRequirementFailure::VariableDoesNotMatch {
+                provider: "neebles-secrets".into(), variable: "master-key".into()
+            }
+        ]);
+    }
+
+    #[test]
+    fn install_policy_fails_closed_for_absent_provider_or_publication() {
+        let expected = BTreeMap::from([("secrets".to_string(), BTreeMap::from([
+            ("a".to_string(), "1".to_string()), ("b".to_string(), "2".to_string())
+        ]))]);
+        let no_installed = BTreeSet::new();
+        let missing = unmet_install_requirements(&expected, &no_installed, &BTreeMap::new());
+        assert_eq!(missing, vec![InstallRequirementFailure::ProviderNotInstalled { provider: "secrets".into() }]);
+        let installed = BTreeSet::from(["secrets".to_string()]);
+        let unknown = unmet_install_requirements(&expected, &installed, &BTreeMap::new());
+        assert_eq!(unknown.len(), 2);
+        assert!(unknown.iter().all(|error| matches!(error, InstallRequirementFailure::VariableNotPublished { .. })));
+    }
+
+    #[test]
+    fn install_policy_allows_presence_only_dependency_when_installed() {
+        let expected = BTreeMap::from([("secrets".to_string(), BTreeMap::new())]);
+        let installed = BTreeSet::from(["secrets".to_string()]);
+        assert!(unmet_install_requirements(&expected, &installed, &BTreeMap::new()).is_empty());
+        assert!(!unmet_install_requirements(&expected, &BTreeSet::new(), &BTreeMap::new()).is_empty());
+    }
+
 }

@@ -749,6 +749,59 @@ mod module_surface_relay_contract_tests {
     }
 }
 
+
+/*
+ * Boss 2.0.2 F03C: persistent, read-only snapshot of authenticated publications.
+ * The module publishes ONLY over modules.sock. This administrative read path
+ * transports the Boss-owned state to a short-lived CLI process that cannot
+ * directly observe the persistent daemon's in-memory registry.
+ *
+ * This dispatcher never trusts request.context.caller as an authority and
+ * never accepts module-supplied values or identity. neebles.sock retains its
+ * existing desktop-owned filesystem protection.
+ */
+fn dispatch_module_variables_snapshot(request: &ExecutionRequest) -> ExecutionResponse {
+    if !request.args.is_empty() {
+        return ExecutionResponse::fail(
+            2,
+            "invalid_module_variables_snapshot_arguments",
+            "Boss module-variables-snapshot takes no arguments",
+        );
+    }
+    match crate::module_ipc::variables::live_module_variables().snapshot() {
+        Ok(variables) => ExecutionResponse::ok(Some(json!(variables))),
+        Err(error) => ExecutionResponse::fail(1, "module_variables_snapshot", error),
+    }
+}
+
+#[cfg(test)]
+mod module_variables_snapshot_dispatch_tests {
+    use super::*;
+
+    fn request(args: Vec<&str>) -> ExecutionRequest {
+        ExecutionRequest {
+            target: "boss".to_string(),
+            action: Some("module-variables-snapshot".to_string()),
+            args: args.into_iter().map(str::to_string).collect(),
+            context: crate::request::ExecutionContext::default(),
+        }
+    }
+
+    #[test]
+    fn snapshot_cannot_be_supplied_by_client_arguments() {
+        let invalid = dispatch_module_variables_snapshot(&request(vec!["fake-state"]));
+        assert!(!invalid.ok);
+        assert_eq!(invalid.code, 2);
+    }
+
+    #[test]
+    fn snapshot_is_boss_owned_and_read_only() {
+        let valid = dispatch_module_variables_snapshot(&request(vec![]));
+        assert!(valid.ok);
+        assert!(valid.result.expect("snapshot result").is_object());
+    }
+}
+
 fn dispatch_surface_model(request: &ExecutionRequest) -> ExecutionResponse {
     if !request.args.is_empty() {
         return ExecutionResponse::fail(
@@ -1092,6 +1145,8 @@ fn dispatch_boss(request: ExecutionRequest) -> ExecutionResponse {
         Some("module-surface-changed") => dispatch_module_surface_changed(&request),
 
         Some("surface-model") => dispatch_surface_model(&request),
+
+        Some("module-variables-snapshot") => dispatch_module_variables_snapshot(&request),
 
         Some("surface-action") => dispatch_surface_action(&request),
 

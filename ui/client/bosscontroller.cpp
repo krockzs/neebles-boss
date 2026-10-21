@@ -1026,6 +1026,18 @@ void BossController::loadModules()
                     )
                 );
 
+                // Dependency presentation comes from Boss policy, not QML.
+                // Preserve it while merging remote and installed inventory.
+                const QStringList dependencyFields = {
+                    QStringLiteral("install_allowed"),
+                    QStringLiteral("install_warning"),
+                    QStringLiteral("protected"),
+                    QStringLiteral("protection_warning"),
+                    QStringLiteral("short_name")
+                };
+                for (const QString &field : dependencyFields)
+                    map.insert(field, remote.value(field));
+
                 /*
                  * Installed icon has priority because it belongs
                  * to the exact installed module version.
