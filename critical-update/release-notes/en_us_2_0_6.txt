@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.6
+
+- Fixes temporary staging directory permissions during pinned Git module updates.
+- Executes Git under a safe child-process-only umask (022), including Polkit launches.
+- Preserves strict validation of systemd-user unit directories and does not modify installed file permissions.
+- Addresses Secrets 1.0.2 Update rejection when integration/ inherited group-write permission.
+- Does not modify Master Keys or KDBX vaults.
+
+Save your work before rebooting Boss.

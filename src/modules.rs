@@ -2716,6 +2716,47 @@ fn install_require_tree(
     Ok(())
 }
 
+// Boss 2.0.6: only the controlled Git child changes its umask. Git does not
+// track directory permissions: an inherited 0002 mask would make staging
+// `integration/` group-writable, rightly rejected by user-service certification.
+// This is not a chmod of installed files or a relaxation of that certification.
+fn enforce_module_git_staging_umask(command: &mut std::process::Command) {
+    unsafe {
+        command.pre_exec(|| {
+            libc::umask(0o022);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(test)]
+mod boss206_git_staging_tests {
+    use super::enforce_module_git_staging_umask;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    use std::process::Command;
+
+    #[test]
+    fn boss206_permissive_parent_mask_cannot_make_staging_group_writable() {
+        let root = tempfile::tempdir().expect("temporary test directory");
+        let nested = root.path().join("candidate/integration/systemd-user");
+        let mut command = Command::new("/usr/bin/mkdir");
+        command.arg("-p").arg(&nested);
+        // Simulate the mask an authentication process may otherwise inherit.
+        unsafe {
+            command.pre_exec(|| { libc::umask(0o002); Ok(()) });
+        }
+        enforce_module_git_staging_umask(&mut command);
+        assert!(command.status().expect("mkdir").success());
+        for path in [root.path().join("candidate/integration"), nested] {
+            let metadata = fs::symlink_metadata(&path).expect("staged directory");
+            assert!(metadata.is_dir());
+            assert_eq!(metadata.permissions().mode() & 0o022, 0);
+        }
+    }
+}
+
 fn checkout_registry_commit(
     name: &str,
     entry: &RegistryModule,
@@ -2800,10 +2841,15 @@ fn checkout_registry_commit(
         )?;
 
     let git_command = |arguments: &[std::ffi::OsString]| {
-        neebles_backend::domestic_boundary_execution::build_pure_materialized_boundary_execution_command(
+        let mut command =
+            neebles_backend::domestic_boundary_execution::build_pure_materialized_boundary_execution_command(
                 &plan,
                 arguments,
-            )
+            )?;
+        // Git must not inherit an insecure desktop/Polkit umask. It creates
+        // directories in the pinned staging worktree before service certification.
+        enforce_module_git_staging_umask(&mut command);
+        Ok::<_, String>(command)
     };
 
     let init_arguments = [

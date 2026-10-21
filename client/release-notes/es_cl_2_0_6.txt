@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.6
+
+- Corrige permisos de directorios temporales al descargar y preparar actualizaciones de módulos mediante Git.
+- Git se ejecuta con una umask segura (022) exclusivamente dentro de sus procesos hijos, incluso con Polkit.
+- Conserva la validación estricta de directorios y unidades systemd-user; no altera permisos de instalaciones existentes.
+- Corrige el bloqueo de Update de Secrets 1.0.2 cuando integration/ se creaba con permisos de grupo.
+- No modifica Master Keys ni bóvedas KDBX.
+
+Guarda tu trabajo antes de reiniciar Boss.

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
     neebles_auth_agent
-    VERSION 2.0.5
+    VERSION 2.0.6
     LANGUAGES CXX
 )
 
