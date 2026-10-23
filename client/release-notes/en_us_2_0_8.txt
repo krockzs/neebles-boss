@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.8 — IPC Candidate
+
+- Shared execution middleware for administrative and module sockets.
+- Per-request async and timeout_ms execution parameters.
+- Job IDs, status and bounded concurrency.
+- Explicit inter-module grants; depends_install is not a permission grant.
+- Legacy wire compatibility and centralized Boss-internal defaults.
+
+Save your work before restarting Boss.

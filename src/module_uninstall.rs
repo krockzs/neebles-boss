@@ -1866,23 +1866,23 @@ mod f04b1_candidate_service_gate_tests {
     use crate::modules::ModuleManifest;
 
     fn candidate(extra: Option<serde_json::Value>) -> ModuleManifest {
-        let uninstall = extra.map(|item| {
-            serde_json::json!({"schema":1, "extras":[item]})
-        });
+        let uninstall = extra.map(|item| serde_json::json!({"schema":1, "extras":[item]}));
         serde_json::from_value(serde_json::json!({
             "schema": 4,
             "name": "neebles-secrets",
             "version": "1.0.0",
             "entrypoint": "bin/run",
             "uninstall": uninstall
-        })).expect("test candidate must be a valid manifest shape")
+        }))
+        .expect("test candidate must be a valid manifest shape")
     }
 
     #[test]
     fn ordinary_update_without_services_remains_eligible() {
-        assert_eq!(candidate_declares_managed_user_service(
-            "neebles-secrets", &candidate(None)
-        ), Ok(false));
+        assert_eq!(
+            candidate_declares_managed_user_service("neebles-secrets", &candidate(None)),
+            Ok(false)
+        );
     }
 
     #[test]
@@ -1894,16 +1894,17 @@ mod f04b1_candidate_service_gate_tests {
             "required":true, "verify":"inactive", "remove":true,
             "stop":{"disable":true,"timeout_ms":5000}
         });
-        assert_eq!(candidate_declares_managed_user_service(
-            "neebles-secrets", &candidate(Some(service))
-        ), Ok(true));
+        assert_eq!(
+            candidate_declares_managed_user_service("neebles-secrets", &candidate(Some(service))),
+            Ok(true)
+        );
     }
 
     #[test]
     fn wrong_candidate_identity_fails_closed() {
-        assert!(candidate_declares_managed_user_service(
-            "neebles-connect", &candidate(None)
-        ).is_err());
+        assert!(
+            candidate_declares_managed_user_service("neebles-connect", &candidate(None)).is_err()
+        );
     }
 
     #[test]
@@ -1916,8 +1917,10 @@ mod f04b1_candidate_service_gate_tests {
             "stop":{"disable":true,"timeout_ms":5000}
         });
         assert!(candidate_declares_managed_user_service(
-            "neebles-secrets", &candidate(Some(service))
-        ).is_err());
+            "neebles-secrets",
+            &candidate(Some(service))
+        )
+        .is_err());
     }
 }
 
@@ -1965,7 +1968,9 @@ fn declared_user_service_specs(
     manifest: &crate::modules::ModuleManifest,
 ) -> Result<BTreeMap<String, ManagedServiceSpec>, String> {
     if manifest.schema != 4 || manifest.name != module {
-        return Err(format!("service transition manifest identity mismatch for '{module}'"));
+        return Err(format!(
+            "service transition manifest identity mismatch for '{module}'"
+        ));
     }
     let Some(contract) = manifest.uninstall.as_ref() else {
         return Ok(BTreeMap::new());
@@ -1973,7 +1978,17 @@ fn declared_user_service_specs(
     validate(contract, module, manifest.tray.is_some())?;
     let mut result = BTreeMap::new();
     for extra in &contract.extras {
-        let Extra::Service { id, provider, name, exec_start, required, stop, remove, verify } = extra else {
+        let Extra::Service {
+            id,
+            provider,
+            name,
+            exec_start,
+            required,
+            stop,
+            remove,
+            verify,
+        } = extra
+        else {
             continue;
         };
         if provider != "systemd-user" || !remove || !stop.disable || verify != "inactive" {
@@ -1984,8 +1999,11 @@ fn declared_user_service_specs(
         validate_service_name(module, &unit)?;
         validate_service_exec_start(&command, module)?;
         let spec = ManagedServiceSpec {
-            id: id.clone(), unit: unit.clone(), exec_start: command,
-            required: *required, timeout_ms: stop.timeout_ms,
+            id: id.clone(),
+            unit: unit.clone(),
+            exec_start: command,
+            required: *required,
+            timeout_ms: stop.timeout_ms,
         };
         if result.insert(unit.clone(), spec).is_some() {
             return Err(format!("duplicate governed unit name '{unit}'"));
@@ -2005,7 +2023,9 @@ fn plan_managed_service_changes(
             (Some(before), Some(after)) => {
                 // A reused systemd unit cannot silently switch resource ownership.
                 if before.id != after.id {
-                    return Err(format!("service unit '{unit}' changed its declared resource identity"));
+                    return Err(format!(
+                        "service unit '{unit}' changed its declared resource identity"
+                    ));
                 }
                 if before == after {
                     ManagedServiceTransition::Keep
@@ -2032,11 +2052,17 @@ fn certify_staged_update_service_sources(
     if specs.is_empty() {
         return Ok(());
     }
-    for folder in [candidate_root.join("integration"), candidate_root.join("integration/systemd-user")] {
+    for folder in [
+        candidate_root.join("integration"),
+        candidate_root.join("integration/systemd-user"),
+    ] {
         let meta = fs::symlink_metadata(&folder)
             .map_err(|e| format!("Update staged service directory {}: {e}", folder.display()))?;
         if !meta.file_type().is_dir() || meta.mode() & 0o022 != 0 {
-            return Err(format!("Update staged service directory is not safe: {}", folder.display()));
+            return Err(format!(
+                "Update staged service directory is not safe: {}",
+                folder.display()
+            ));
         }
     }
     let unit_dir = candidate_root.join("integration/systemd-user");
@@ -2045,7 +2071,10 @@ fn certify_staged_update_service_sources(
         let meta = fs::symlink_metadata(&path)
             .map_err(|e| format!("Update staged unit '{}': {e}", spec.unit))?;
         if !meta.file_type().is_file() || meta.mode() & 0o022 != 0 || meta.len() > 8192 {
-            return Err(format!("Update staged unit '{}' is not a safe regular file", spec.unit));
+            return Err(format!(
+                "Update staged unit '{}' is not a safe regular file",
+                spec.unit
+            ));
         }
         let text = fs::read_to_string(&path)
             .map_err(|e| format!("Update staged unit '{}' cannot be read: {e}", spec.unit))?;
@@ -2066,40 +2095,61 @@ pub(crate) fn plan_update_managed_user_services(
     plan_managed_service_changes(&old, &new)
 }
 
-
 // A registered runtime can itself be the systemd-user daemon that Update
 // governs. Do not treat its live IPC session as an independent UI window.
 // SO_PEERCRED and start ticks are already verified by Module IPC; here we
 // additionally match its PID to an authenticated systemd MainPID.
 pub(crate) fn is_managed_user_service_pid(module: &str, pid: u32) -> Result<bool, String> {
-    if pid == 0 { return Ok(false); }
+    if pid == 0 {
+        return Ok(false);
+    }
     let root = crate::modules::installed_module_dir(module)?;
     let manifest: crate::modules::ModuleManifest = serde_json::from_slice(
         &fs::read(root.join("manifest.json"))
             .map_err(|e| format!("read installed service manifest: {e}"))?,
-    ).map_err(|e| format!("parse installed service manifest: {e}"))?;
+    )
+    .map_err(|e| format!("parse installed service manifest: {e}"))?;
     let specs = declared_user_service_specs(module, &manifest)?;
-    if specs.is_empty() { return Ok(false); }
+    if specs.is_empty() {
+        return Ok(false);
+    }
     let (uid, gid) = crate::runtime_identity::desktop_identity()?;
-    if uid == 0 { return Err("cannot inspect a root desktop service".into()); }
+    if uid == 0 {
+        return Err("cannot inspect a root desktop service".into());
+    }
     let home = desktop_home(uid)?;
     for spec in specs.values() {
         let observation = inspect_managed_update_unit_baseline(
-            module, &spec.unit, Some(&spec.exec_start), spec.required,
+            module,
+            &spec.unit,
+            Some(&spec.exec_start),
+            spec.required,
         )?;
-        if !matches!(observation, ManagedUpdateObservedUnit::Present { was_active: true, .. }) {
+        if !matches!(
+            observation,
+            ManagedUpdateObservedUnit::Present {
+                was_active: true,
+                ..
+            }
+        ) {
             continue;
         }
-        let state = systemctl_as_desktop(uid, gid, &home,
-            &["show", "--no-pager", "-p", "MainPID", &spec.unit])?;
-        let main_pid = state.strip_prefix("MainPID=")
+        let state = systemctl_as_desktop(
+            uid,
+            gid,
+            &home,
+            &["show", "--no-pager", "-p", "MainPID", &spec.unit],
+        )?;
+        let main_pid = state
+            .strip_prefix("MainPID=")
             .and_then(|v| v.trim().parse::<u32>().ok())
             .ok_or_else(|| format!("systemd MainPID is invalid for '{}'", spec.unit))?;
-        if main_pid == pid { return Ok(true); }
+        if main_pid == pid {
+            return Ok(true);
+        }
     }
     Ok(false)
 }
-
 
 // 2.0.4: a service publisher must be a live process inside the *certified*
 // installed user-unit cgroup and must execute the unit's declared program.
@@ -2108,33 +2158,76 @@ fn publisher_in_certified_cgroup(proc_cgroup: &str, unit_group: &str) -> bool {
     if !unit_group.starts_with('/') || unit_group == "/" || unit_group.contains("..") {
         return false;
     }
-    proc_cgroup.lines().filter_map(|line| line.strip_prefix("0::"))
-        .any(|path| path == unit_group || path.strip_prefix(unit_group)
-            .map(|tail| tail.starts_with('/')).unwrap_or(false))
+    proc_cgroup
+        .lines()
+        .filter_map(|line| line.strip_prefix("0::"))
+        .any(|path| {
+            path == unit_group
+                || path
+                    .strip_prefix(unit_group)
+                    .map(|tail| tail.starts_with('/'))
+                    .unwrap_or(false)
+        })
 }
 
-pub(crate) fn certify_service_publisher_pid(module: &str, unit: &str, pid: u32) -> Result<(), String> {
-    if pid == 0 { return Err("service publisher has invalid PID".into()); }
+pub(crate) fn certify_service_publisher_pid(
+    module: &str,
+    unit: &str,
+    pid: u32,
+) -> Result<(), String> {
+    if pid == 0 {
+        return Err("service publisher has invalid PID".into());
+    }
     validate_service_name(module, unit)?;
     let manifest = crate::modules::installed_module_manifest(module)?;
     let specs = declared_user_service_specs(module, &manifest)?;
-    let spec = specs.get(unit).ok_or("publisher unit is not declared by installed module")?;
+    let spec = specs
+        .get(unit)
+        .ok_or("publisher unit is not declared by installed module")?;
     let (uid, gid) = crate::runtime_identity::desktop_identity()?;
-    if uid == 0 { return Err("desktop service must not run as root".into()); }
+    if uid == 0 {
+        return Err("desktop service must not run as root".into());
+    }
     let proc_dir = PathBuf::from(format!("/proc/{pid}"));
     let proc_meta = fs::metadata(&proc_dir).map_err(|e| format!("publisher PID missing: {e}"))?;
-    if proc_meta.uid() != uid { return Err("publisher PID does not belong to desktop user".into()); }
-    let observation = inspect_managed_update_unit_baseline(module, unit, Some(&spec.exec_start), spec.required)?;
-    if !matches!(observation, ManagedUpdateObservedUnit::Present { was_active: true, .. }) {
+    if proc_meta.uid() != uid {
+        return Err("publisher PID does not belong to desktop user".into());
+    }
+    let observation =
+        inspect_managed_update_unit_baseline(module, unit, Some(&spec.exec_start), spec.required)?;
+    if !matches!(
+        observation,
+        ManagedUpdateObservedUnit::Present {
+            was_active: true,
+            ..
+        }
+    ) {
         return Err("publisher unit is not an active certified service".into());
     }
     let home = desktop_home(uid)?;
-    let show = systemctl_as_desktop(uid, gid, &home,
-        &["show", "--no-pager", "-p", "ControlGroup", "-p", "MainPID", unit])?;
-    let group = show.lines().find_map(|l| l.strip_prefix("ControlGroup="))
+    let show = systemctl_as_desktop(
+        uid,
+        gid,
+        &home,
+        &[
+            "show",
+            "--no-pager",
+            "-p",
+            "ControlGroup",
+            "-p",
+            "MainPID",
+            unit,
+        ],
+    )?;
+    let group = show
+        .lines()
+        .find_map(|l| l.strip_prefix("ControlGroup="))
         .ok_or("publisher service lacks ControlGroup")?;
-    let main_pid = show.lines().find_map(|l| l.strip_prefix("MainPID="))
-        .and_then(|s| s.parse::<u32>().ok()).filter(|v| *v != 0)
+    let main_pid = show
+        .lines()
+        .find_map(|l| l.strip_prefix("MainPID="))
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|v| *v != 0)
         .ok_or("publisher service lacks live MainPID")?;
     // The process may be a bubblewrap child, NOT the systemd MainPID itself.
     let cgroup = fs::read_to_string(proc_dir.join("cgroup"))
@@ -2151,28 +2244,38 @@ pub(crate) fn certify_service_publisher_pid(module: &str, unit: &str, pid: u32) 
     // The exact declared module file must occur at its declared argv slot.
     let args: Vec<&str> = spec.exec_start.split_ascii_whitespace().collect();
     let owned_prefix = format!("/opt/neebles/modules/{module}/");
-    let owned_idx = if args[0].starts_with(&owned_prefix) { 0 } else { 1 };
-    let owned = args.get(owned_idx).ok_or("service has no module-owned executable")?;
-    if !owned.starts_with(&owned_prefix) { return Err("service lacks owned executable".into()); }
+    let owned_idx = if args[0].starts_with(&owned_prefix) {
+        0
+    } else {
+        1
+    };
+    let owned = args
+        .get(owned_idx)
+        .ok_or("service has no module-owned executable")?;
+    if !owned.starts_with(&owned_prefix) {
+        return Err("service lacks owned executable".into());
+    }
     let argv = fs::read(proc_dir.join("cmdline"))
         .map_err(|e| format!("publisher process command line unavailable: {e}"))?;
-    let process_args: Vec<&[u8]> = argv.split(|byte| *byte == 0)
-        .filter(|arg| !arg.is_empty()).collect();
+    let process_args: Vec<&[u8]> = argv
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty())
+        .collect();
     if process_args.get(owned_idx).copied() != Some(owned.as_bytes()) {
         return Err("publisher command line is not the declared service entrypoint".into());
     }
     // For native executables compare real inode identity, not spoofable argv.
     if owned_idx == 0 {
-        let expected = fs::metadata(owned)
-            .map_err(|e| format!("publisher executable inaccessible: {e}"))?;
+        let expected =
+            fs::metadata(owned).map_err(|e| format!("publisher executable inaccessible: {e}"))?;
         let actual = fs::metadata(proc_dir.join("exe"))
             .map_err(|e| format!("publisher process executable unavailable: {e}"))?;
         if expected.dev() != actual.dev() || expected.ino() != actual.ino() {
             return Err("publisher executable inode differs from installed module binary".into());
         }
     } else {
-        let expected = fs::metadata(args[0])
-            .map_err(|e| format!("publisher interpreter unavailable: {e}"))?;
+        let expected =
+            fs::metadata(args[0]).map_err(|e| format!("publisher interpreter unavailable: {e}"))?;
         let actual = fs::metadata(proc_dir.join("exe"))
             .map_err(|e| format!("publisher interpreter executable unavailable: {e}"))?;
         if expected.dev() != actual.dev() || expected.ino() != actual.ino() {
@@ -2191,18 +2294,29 @@ pub(crate) fn certify_service_publisher_pid(module: &str, unit: &str, pid: u32) 
 
 // Enable/Disable governs the installed unit as well as the interactive UI.
 // Unit files and independent module data are NEVER removed by this operation.
-pub(crate) fn set_declared_user_services_enabled(module: &str, enabled: bool) -> Result<(), String> {
+pub(crate) fn set_declared_user_services_enabled(
+    module: &str,
+    enabled: bool,
+) -> Result<(), String> {
     let manifest = crate::modules::installed_module_manifest(module)?;
     let specs = declared_user_service_specs(module, &manifest)?;
-    if specs.is_empty() { return Ok(()); }
+    if specs.is_empty() {
+        return Ok(());
+    }
     let (uid, gid) = crate::runtime_identity::desktop_identity()?;
-    if uid == 0 { return Err("root cannot own user service".into()); }
+    if uid == 0 {
+        return Err("root cannot own user service".into());
+    }
     let home = desktop_home(uid)?;
     // Authenticate ALL service files before changing any of them.
     let mut present = Vec::new();
     for spec in specs.values() {
-        let state = inspect_managed_update_unit_baseline(module, &spec.unit,
-            Some(&spec.exec_start), spec.required)?;
+        let state = inspect_managed_update_unit_baseline(
+            module,
+            &spec.unit,
+            Some(&spec.exec_start),
+            spec.required,
+        )?;
         if matches!(state, ManagedUpdateObservedUnit::Present { .. }) {
             present.push(spec);
         }
@@ -2215,7 +2329,10 @@ pub(crate) fn set_declared_user_services_enabled(module: &str, enabled: bool) ->
             systemctl_as_desktop(uid, gid, &home, &["disable", "--now", &spec.unit])?;
             let (_, active) = systemd_state(uid, gid, &home, &spec.unit)?;
             if active != "inactive" && active != "failed" {
-                return Err(format!("service '{}' remained active after Disable", spec.unit));
+                return Err(format!(
+                    "service '{}' remained active after Disable",
+                    spec.unit
+                ));
             }
         }
     }
@@ -2229,9 +2346,18 @@ mod service_publisher_cgroup_tests {
     fn membership_allows_wrapper_child_but_not_other_units() {
         let unit = "/user.slice/user-1000.slice/user@1000.service/app.slice/neebles-demo.service";
         assert!(publisher_in_certified_cgroup(&format!("0::{unit}\n"), unit));
-        assert!(publisher_in_certified_cgroup(&format!("0::{unit}/child\n"), unit));
-        assert!(!publisher_in_certified_cgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/foreign.service\n", unit));
-        assert!(!publisher_in_certified_cgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/neebles-demo.service-bad\n", unit));
+        assert!(publisher_in_certified_cgroup(
+            &format!("0::{unit}/child\n"),
+            unit
+        ));
+        assert!(!publisher_in_certified_cgroup(
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/foreign.service\n",
+            unit
+        ));
+        assert!(!publisher_in_certified_cgroup(
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/neebles-demo.service-bad\n",
+            unit
+        ));
         assert!(!publisher_in_certified_cgroup("0::/\n", "/"));
     }
 }
@@ -2262,13 +2388,18 @@ pub(crate) fn prepare_managed_service_cutover(
     // it must not suddenly require a desktop manager or service home.
     if plan.steps.is_empty() {
         return Ok(ManagedServiceCutover {
-            module: module.into(), old, new, plan,
+            module: module.into(),
+            old,
+            new,
+            plan,
             baseline: ManagedServiceUpdateBaseline::default(),
             stopped: BTreeSet::new(),
         });
     }
     let (uid, gid) = crate::runtime_identity::desktop_identity()?;
-    if uid == 0 { return Err("Update cannot manage a root desktop user".into()); }
+    if uid == 0 {
+        return Err("Update cannot manage a root desktop user".into());
+    }
     let home = desktop_home(uid)?;
     // Authenticate the currently installed units before reading/comparing
     // their bytes with the staged candidate.
@@ -2277,13 +2408,21 @@ pub(crate) fn prepare_managed_service_cutover(
     // its ExecStart and resource ID remain identical.
     for step in &mut plan.steps {
         if step.transition == ManagedServiceTransition::Keep {
-            if matches!(_verified_before_comparison.previous.get(&step.unit),
-                Some(ManagedUpdateObservedUnit::Absent)) { continue; }
+            if matches!(
+                _verified_before_comparison.previous.get(&step.unit),
+                Some(ManagedUpdateObservedUnit::Absent)
+            ) {
+                continue;
+            }
             let path = validated_unit_path(&home, uid, gid, &step.unit)?;
             let current_bytes = fs::read(&path)
                 .map_err(|e| format!("read current Update unit '{}': {e}", step.unit))?;
-            let candidate_bytes = fs::read(candidate_root.join("integration/systemd-user").join(&step.unit))
-                .map_err(|e| format!("read staged Update unit '{}': {e}", step.unit))?;
+            let candidate_bytes = fs::read(
+                candidate_root
+                    .join("integration/systemd-user")
+                    .join(&step.unit),
+            )
+            .map_err(|e| format!("read staged Update unit '{}': {e}", step.unit))?;
             if current_bytes != candidate_bytes {
                 step.transition = ManagedServiceTransition::Replace;
             }
@@ -2291,30 +2430,57 @@ pub(crate) fn prepare_managed_service_cutover(
     }
     let baseline = capture_managed_update_baseline(module, current, &plan)?;
     Ok(ManagedServiceCutover {
-        module: module.into(), old, new, plan, baseline,
+        module: module.into(),
+        old,
+        new,
+        plan,
+        baseline,
         stopped: BTreeSet::new(),
     })
 }
 
 impl ManagedServiceCutover {
-    pub(crate) fn has_stopped_services(&self) -> bool { !self.stopped.is_empty() }
+    pub(crate) fn has_stopped_services(&self) -> bool {
+        !self.stopped.is_empty()
+    }
 
     // No service interruption until the candidate has been fully staged.
     // Unit files remain installed while old processes quiesce.
-    pub(crate) fn quiesce(&mut self, current: &crate::modules::ModuleManifest) -> Result<(), String> {
+    pub(crate) fn quiesce(
+        &mut self,
+        current: &crate::modules::ModuleManifest,
+    ) -> Result<(), String> {
         let observed = capture_managed_update_baseline(&self.module, current, &self.plan)?;
         if observed != self.baseline {
             return Err("managed service changed during Update preparation".into());
         }
         for step in &self.plan.steps {
-            let Some(spec) = self.old.get(&step.unit) else { continue; };
-            let state = self.baseline.previous.get(&step.unit)
-                .ok_or_else(|| format!("missing service preflight '{}'", step.unit))?;
-            let ManagedUpdateObservedUnit::Present { was_active: true, .. } = state else {
+            let Some(spec) = self.old.get(&step.unit) else {
                 continue;
             };
-            let stop = ServiceStop { disable: false, timeout_ms: spec.timeout_ms };
-            if let Err(error) = stop_service(&self.module, &step.unit, &spec.exec_start, spec.required, &stop, false) {
+            let state = self
+                .baseline
+                .previous
+                .get(&step.unit)
+                .ok_or_else(|| format!("missing service preflight '{}'", step.unit))?;
+            let ManagedUpdateObservedUnit::Present {
+                was_active: true, ..
+            } = state
+            else {
+                continue;
+            };
+            let stop = ServiceStop {
+                disable: false,
+                timeout_ms: spec.timeout_ms,
+            };
+            if let Err(error) = stop_service(
+                &self.module,
+                &step.unit,
+                &spec.exec_start,
+                spec.required,
+                &stop,
+                false,
+            ) {
                 // A partially stopped unit must be included in recovery.
                 self.stopped.insert(step.unit.clone());
                 let recovery = self.restore_original();
@@ -2334,13 +2500,24 @@ impl ManagedServiceCutover {
         let mut errors = Vec::new();
         for unit in self.stopped.iter().rev() {
             if let Some(spec) = self.old.get(unit) {
-                if let Err(e) = reactivate_certified_service(&self.module, unit, &spec.exec_start, spec.timeout_ms) {
+                if let Err(e) = reactivate_certified_service(
+                    &self.module,
+                    unit,
+                    &spec.exec_start,
+                    spec.timeout_ms,
+                ) {
                     errors.push(format!("{unit}: {e}"));
                 }
             }
         }
-        if errors.is_empty() { Ok(()) }
-        else { Err(format!("CRITICAL: original services not restored: {}", errors.join("; "))) }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "CRITICAL: original services not restored: {}",
+                errors.join("; ")
+            ))
+        }
     }
 
     // This is called after the regular module/material/settings Update is
@@ -2349,26 +2526,54 @@ impl ManagedServiceCutover {
     pub(crate) fn complete(&self) -> Result<(), String> {
         for step in &self.plan.steps {
             let prior = self.baseline.previous.get(&step.unit);
-            let was_active = matches!(prior,
-                Some(ManagedUpdateObservedUnit::Present { was_active: true, .. }));
-            let was_enabled = matches!(prior,
-                Some(ManagedUpdateObservedUnit::Present { was_enabled: true, .. }));
+            let was_active = matches!(
+                prior,
+                Some(ManagedUpdateObservedUnit::Present {
+                    was_active: true,
+                    ..
+                })
+            );
+            let was_enabled = matches!(
+                prior,
+                Some(ManagedUpdateObservedUnit::Present {
+                    was_enabled: true,
+                    ..
+                })
+            );
             match step.transition {
                 ManagedServiceTransition::Keep => {
                     if was_active {
                         let spec = self.old.get(&step.unit).ok_or("Keep lost old service")?;
-                        reactivate_certified_service(&self.module, &step.unit, &spec.exec_start, spec.timeout_ms)?;
+                        reactivate_certified_service(
+                            &self.module,
+                            &step.unit,
+                            &spec.exec_start,
+                            spec.timeout_ms,
+                        )?;
                     }
                 }
                 ManagedServiceTransition::Retire => {
                     if let Some(ManagedUpdateObservedUnit::Present { .. }) = prior {
                         let spec = self.old.get(&step.unit).ok_or("Retire lost old service")?;
-                        let stop = ServiceStop { disable: true, timeout_ms: spec.timeout_ms };
-                        stop_service(&self.module, &step.unit, &spec.exec_start, spec.required, &stop, true)?;
+                        let stop = ServiceStop {
+                            disable: true,
+                            timeout_ms: spec.timeout_ms,
+                        };
+                        stop_service(
+                            &self.module,
+                            &step.unit,
+                            &spec.exec_start,
+                            spec.required,
+                            &stop,
+                            true,
+                        )?;
                     }
                 }
                 ManagedServiceTransition::Add | ManagedServiceTransition::Replace => {
-                    let spec = self.new.get(&step.unit).ok_or("new service absent from declared plan")?;
+                    let spec = self
+                        .new
+                        .get(&step.unit)
+                        .ok_or("new service absent from declared plan")?;
                     if step.transition == ManagedServiceTransition::Add
                         || matches!(prior, Some(ManagedUpdateObservedUnit::Absent))
                     {
@@ -2379,8 +2584,12 @@ impl ManagedServiceCutover {
                         let home = desktop_home(uid)?;
                         // Preserve the user's prior enablement and runtime
                         // state, not merely the candidate unit's existence.
-                        let state = systemctl_as_desktop(uid, gid, &home,
-                            &["show", "--no-pager", "-p", "UnitFileState", &step.unit])?;
+                        let state = systemctl_as_desktop(
+                            uid,
+                            gid,
+                            &home,
+                            &["show", "--no-pager", "-p", "UnitFileState", &step.unit],
+                        )?;
                         let enabled = parse_unit_file_state(&state)? == "enabled";
                         if enabled != was_enabled {
                             if was_enabled {
@@ -2390,7 +2599,12 @@ impl ManagedServiceCutover {
                             }
                         }
                         if was_active {
-                            reactivate_certified_service(&self.module, &step.unit, &spec.exec_start, spec.timeout_ms)?;
+                            reactivate_certified_service(
+                                &self.module,
+                                &step.unit,
+                                &spec.exec_start,
+                                spec.timeout_ms,
+                            )?;
                         }
                     }
                 }
@@ -2407,35 +2621,57 @@ fn replace_owned_update_service(module: &str, spec: &ManagedServiceSpec) -> Resu
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let (uid, gid) = crate::runtime_identity::desktop_identity()?;
-    if uid == 0 { return Err("cannot replace service for root desktop user".into()); }
+    if uid == 0 {
+        return Err("cannot replace service for root desktop user".into());
+    }
     let home = desktop_home(uid)?;
     let destination = validated_unit_path(&home, uid, gid, &spec.unit)?;
     let old_meta = fs::symlink_metadata(&destination)
         .map_err(|e| format!("Update installed unit metadata '{}': {e}", spec.unit))?;
-    if !old_meta.file_type().is_file() || old_meta.uid() != uid || old_meta.gid() != gid
-        || old_meta.mode() & 0o022 != 0 || old_meta.len() > 8192
+    if !old_meta.file_type().is_file()
+        || old_meta.uid() != uid
+        || old_meta.gid() != gid
+        || old_meta.mode() & 0o022 != 0
+        || old_meta.len() > 8192
     {
         return Err(format!("Update refuses foreign unit '{}'", spec.unit));
     }
-    let source = PathBuf::from(format!("/opt/neebles/modules/{module}/integration/systemd-user/{}", spec.unit));
-    let content = fs::read_to_string(&source)
-        .map_err(|e| format!("Update new unit '{}': {e}", spec.unit))?;
+    let source = PathBuf::from(format!(
+        "/opt/neebles/modules/{module}/integration/systemd-user/{}",
+        spec.unit
+    ));
+    let content =
+        fs::read_to_string(&source).map_err(|e| format!("Update new unit '{}': {e}", spec.unit))?;
     certify_install_unit(&content, module, &spec.exec_start)?;
-    let tmp = destination.with_file_name(format!(".{}.neebles-update-{}", spec.unit, std::process::id()));
+    let tmp = destination.with_file_name(format!(
+        ".{}.neebles-update-{}",
+        spec.unit,
+        std::process::id()
+    ));
     let result = (|| -> Result<(), String> {
-        let mut f = fs::OpenOptions::new().write(true).create_new(true)
-            .mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(&tmp).map_err(|e| format!("create staged unit: {e}"))?;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&tmp)
+            .map_err(|e| format!("create staged unit: {e}"))?;
         if unsafe { libc::fchown(f.as_raw_fd(), uid, gid) } != 0 {
-            return Err(format!("chown staged unit: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "chown staged unit: {}",
+                std::io::Error::last_os_error()
+            ));
         }
-        f.write_all(content.as_bytes()).and_then(|_| f.sync_all())
+        f.write_all(content.as_bytes())
+            .and_then(|_| f.sync_all())
             .map_err(|e| format!("write staged unit: {e}"))?;
         // Refuse a replaced path between preflight and commit.
         let now = fs::symlink_metadata(&destination)
             .map_err(|e| format!("restat installed unit: {e}"))?;
-        if now.ino() != old_meta.ino() || now.dev() != old_meta.dev()
-            || now.uid() != old_meta.uid() || !now.file_type().is_file()
+        if now.ino() != old_meta.ino()
+            || now.dev() != old_meta.dev()
+            || now.uid() != old_meta.uid()
+            || !now.file_type().is_file()
         {
             return Err("Update target unit changed during publication".into());
         }
@@ -2444,7 +2680,9 @@ fn replace_owned_update_service(module: &str, spec: &ManagedServiceSpec) -> Resu
         validate_manager_fragment(uid, gid, &home, &spec.unit, &destination, &spec.exec_start)?;
         Ok(())
     })();
-    if result.is_err() { let _ = fs::remove_file(&tmp); }
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
     result
 }
 
@@ -2454,8 +2692,11 @@ mod f04b2_service_transition_plan_tests {
 
     fn spec(id: &str, unit: &str, cmd: &str) -> ManagedServiceSpec {
         ManagedServiceSpec {
-            id: id.into(), unit: unit.into(), exec_start: cmd.into(),
-            required: true, timeout_ms: 5000,
+            id: id.into(),
+            unit: unit.into(),
+            exec_start: cmd.into(),
+            required: true,
+            timeout_ms: 5000,
         }
     }
 
@@ -2467,10 +2708,22 @@ mod f04b2_service_transition_plan_tests {
 
     #[test]
     fn the_plan_identifies_added_and_retired_units() {
-        let old = BTreeMap::from([("neebles-demo-old.service".into(),
-            spec("old", "neebles-demo-old.service", "/opt/neebles/modules/demo/old"))]);
-        let new = BTreeMap::from([("neebles-demo-new.service".into(),
-            spec("new", "neebles-demo-new.service", "/opt/neebles/modules/demo/new"))]);
+        let old = BTreeMap::from([(
+            "neebles-demo-old.service".into(),
+            spec(
+                "old",
+                "neebles-demo-old.service",
+                "/opt/neebles/modules/demo/old",
+            ),
+        )]);
+        let new = BTreeMap::from([(
+            "neebles-demo-new.service".into(),
+            spec(
+                "new",
+                "neebles-demo-new.service",
+                "/opt/neebles/modules/demo/new",
+            ),
+        )]);
         let plan = plan_managed_service_changes(&old, &new).unwrap();
         assert_eq!(plan.steps.len(), 2);
         assert_eq!(plan.steps[0].transition, ManagedServiceTransition::Add);
@@ -2486,17 +2739,27 @@ mod f04b2_service_transition_plan_tests {
         let old = BTreeMap::from([(unit.into(), unchanged.clone())]);
         let stable = BTreeMap::from([(unit.into(), unchanged)]);
         let changed = BTreeMap::from([(unit.into(), changed)]);
-        assert_eq!(plan_managed_service_changes(&old, &stable).unwrap().steps[0].transition,
-                   ManagedServiceTransition::Keep);
-        assert_eq!(plan_managed_service_changes(&old, &changed).unwrap().steps[0].transition,
-                   ManagedServiceTransition::Replace);
+        assert_eq!(
+            plan_managed_service_changes(&old, &stable).unwrap().steps[0].transition,
+            ManagedServiceTransition::Keep
+        );
+        assert_eq!(
+            plan_managed_service_changes(&old, &changed).unwrap().steps[0].transition,
+            ManagedServiceTransition::Replace
+        );
     }
 
     #[test]
     fn reused_systemd_unit_with_new_resource_identity_is_rejected() {
         let unit = "neebles-demo-daemon.service";
-        let old = BTreeMap::from([(unit.into(), spec("old", unit, "/opt/neebles/modules/demo/bin/v1"))]);
-        let new = BTreeMap::from([(unit.into(), spec("new", unit, "/opt/neebles/modules/demo/bin/v2"))]);
+        let old = BTreeMap::from([(
+            unit.into(),
+            spec("old", unit, "/opt/neebles/modules/demo/bin/v1"),
+        )]);
+        let new = BTreeMap::from([(
+            unit.into(),
+            spec("new", unit, "/opt/neebles/modules/demo/bin/v2"),
+        )]);
         assert!(plan_managed_service_changes(&old, &new).is_err());
     }
 
@@ -2504,18 +2767,25 @@ mod f04b2_service_transition_plan_tests {
     fn manifest_from_other_module_is_not_an_owned_plan() {
         let other: crate::modules::ModuleManifest = serde_json::from_value(serde_json::json!({
             "schema": 4, "name":"neebles-connect", "version":"1.0.0", "entrypoint":"bin/run"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(declared_user_service_specs("neebles-secrets", &other).is_err());
     }
 
     #[test]
     fn staged_unit_validation_rejects_missing_source_file() {
-        let spec = spec("vault", "neebles-neebles-secrets-vault.service",
-                        "/opt/neebles/modules/neebles-secrets/bin/vault");
+        let spec = spec(
+            "vault",
+            "neebles-neebles-secrets-vault.service",
+            "/opt/neebles/modules/neebles-secrets/bin/vault",
+        );
         let specs = BTreeMap::from([(spec.unit.clone(), spec)]);
         assert!(certify_staged_update_service_sources(
-            Path::new("/nonexistent-neebles-staged-unit"), "neebles-secrets", &specs
-        ).is_err());
+            Path::new("/nonexistent-neebles-staged-unit"),
+            "neebles-secrets",
+            &specs
+        )
+        .is_err());
     }
 }
 
@@ -2552,8 +2822,7 @@ fn classify_managed_update_observation(
     sha: Option<&str>,
 ) -> Result<ManagedUpdateObservedUnit, String> {
     if !has_owned_file {
-        if load != "not-found" || active != "inactive"
-            || unit_file_state.is_some() || sha.is_some()
+        if load != "not-found" || active != "inactive" || unit_file_state.is_some() || sha.is_some()
         {
             return Err("Update service absent on disk but present in manager/receipt".into());
         }
@@ -2568,7 +2837,11 @@ fn classify_managed_update_observation(
     let was_active = match active {
         "active" => true,
         "inactive" => false,
-        other => return Err(format!("Update cannot preserve initial ActiveState '{other}'")),
+        other => {
+            return Err(format!(
+                "Update cannot preserve initial ActiveState '{other}'"
+            ))
+        }
     };
     let was_enabled = match unit_file_state {
         Some("enabled") => true,
@@ -2624,29 +2897,33 @@ fn inspect_managed_update_unit_baseline(
     };
     let (load, active) = systemd_state(uid, gid, &home, unit)?;
     let Some(meta) = metadata else {
-        return classify_managed_update_observation(
-            false, required, &load, &active, None, None,
-        );
+        return classify_managed_update_observation(false, required, &load, &active, None, None);
     };
     // For a brand-new unit, ANY existing file is foreign, even if it happens
     // to share the declared name. No implicit takeover of an existing unit.
-    let command = exec_start.ok_or_else(|| format!(
-        "Update attempted to take over pre-existing user unit '{unit}'"
-    ))?;
-    if !meta.file_type().is_file() || meta.uid() != uid || meta.gid() != gid
-        || meta.mode() & 0o022 != 0 || meta.len() > 8192
+    let command = exec_start
+        .ok_or_else(|| format!("Update attempted to take over pre-existing user unit '{unit}'"))?;
+    if !meta.file_type().is_file()
+        || meta.uid() != uid
+        || meta.gid() != gid
+        || meta.mode() & 0o022 != 0
+        || meta.len() > 8192
     {
-        return Err(format!("managed Update unit '{unit}' is not an owned regular file"));
+        return Err(format!(
+            "managed Update unit '{unit}' is not an owned regular file"
+        ));
     }
-    let bytes = fs::read(&path)
-        .map_err(|error| format!("managed Update unit '{unit}' read: {error}"))?;
+    let bytes =
+        fs::read(&path).map_err(|error| format!("managed Update unit '{unit}' read: {error}"))?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| format!("managed Update unit '{unit}' is not UTF-8"))?;
     validate_service_unit_text(text, command, module)?;
     certify_install_unit(text, module, command)?;
     validate_manager_fragment(uid, gid, &home, unit, &path, command)?;
     let unit_file_state = systemctl_as_desktop(
-        uid, gid, &home,
+        uid,
+        gid,
+        &home,
         &["show", "--no-pager", "-p", "UnitFileState", unit],
     )?;
     let unit_file_state = parse_unit_file_state(&unit_file_state)?;
@@ -2655,15 +2932,28 @@ fn inspect_managed_update_unit_baseline(
     let final_metadata = fs::symlink_metadata(&path)
         .map_err(|error| format!("managed Update unit '{unit}' changed: {error}"))?;
     if !final_metadata.file_type().is_file()
-        || final_metadata.ino() != meta.ino() || final_metadata.dev() != meta.dev()
-        || final_metadata.uid() != meta.uid() || final_metadata.gid() != meta.gid()
-        || final_metadata.mode() != meta.mode() || final_metadata.len() != meta.len()
+        || final_metadata.ino() != meta.ino()
+        || final_metadata.dev() != meta.dev()
+        || final_metadata.uid() != meta.uid()
+        || final_metadata.gid() != meta.gid()
+        || final_metadata.mode() != meta.mode()
+        || final_metadata.len() != meta.len()
     {
-        return Err(format!("managed Update unit '{unit}' changed during inspection"));
+        return Err(format!(
+            "managed Update unit '{unit}' changed during inspection"
+        ));
     }
-    let digest = Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    let digest = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     classify_managed_update_observation(
-        true, required, &load, &active, Some(unit_file_state), Some(&digest),
+        true,
+        required,
+        &load,
+        &active,
+        Some(unit_file_state),
+        Some(&digest),
     )
 }
 
@@ -2685,15 +2975,24 @@ fn capture_managed_update_baseline(
             if inspect_managed_update_unit_baseline(module, &step.unit, None, false)?
                 != ManagedUpdateObservedUnit::Absent
             {
-                return Err(format!("new Update service slot '{}' is occupied", step.unit));
+                return Err(format!(
+                    "new Update service slot '{}' is occupied",
+                    step.unit
+                ));
             }
             baseline.reserved_new_units.insert(step.unit.clone());
         } else {
-            let spec = old.get(&step.unit).ok_or_else(|| format!(
-                "Update transition lacks old unit declaration '{}'", step.unit
-            ))?;
+            let spec = old.get(&step.unit).ok_or_else(|| {
+                format!(
+                    "Update transition lacks old unit declaration '{}'",
+                    step.unit
+                )
+            })?;
             let state = inspect_managed_update_unit_baseline(
-                module, &spec.unit, Some(&spec.exec_start), spec.required,
+                module,
+                &spec.unit,
+                Some(&spec.exec_start),
+                spec.required,
             )?;
             baseline.previous.insert(step.unit.clone(), state);
         }
@@ -2714,54 +3013,109 @@ mod f04b3_managed_service_baseline_tests {
 
     #[test]
     fn active_enabled_service_is_recorded_exactly() {
-        assert_eq!(classify_managed_update_observation(
-            true, true, "loaded", "active", Some("enabled"), Some(sha()),
-        ).unwrap(), ManagedUpdateObservedUnit::Present {
-            was_active: true, was_enabled: true, unit_sha256: sha().into(),
-        });
+        assert_eq!(
+            classify_managed_update_observation(
+                true,
+                true,
+                "loaded",
+                "active",
+                Some("enabled"),
+                Some(sha()),
+            )
+            .unwrap(),
+            ManagedUpdateObservedUnit::Present {
+                was_active: true,
+                was_enabled: true,
+                unit_sha256: sha().into(),
+            }
+        );
     }
 
     #[test]
     fn inactive_disabled_service_is_not_auto_started_on_rollback() {
-        assert_eq!(classify_managed_update_observation(
-            true, false, "loaded", "inactive", Some("disabled"), Some(sha()),
-        ).unwrap(), ManagedUpdateObservedUnit::Present {
-            was_active: false, was_enabled: false, unit_sha256: sha().into(),
-        });
+        assert_eq!(
+            classify_managed_update_observation(
+                true,
+                false,
+                "loaded",
+                "inactive",
+                Some("disabled"),
+                Some(sha()),
+            )
+            .unwrap(),
+            ManagedUpdateObservedUnit::Present {
+                was_active: false,
+                was_enabled: false,
+                unit_sha256: sha().into(),
+            }
+        );
     }
 
     #[test]
     fn optional_absent_service_is_recorded_as_absent() {
-        assert_eq!(classify_managed_update_observation(
-            false, false, "not-found", "inactive", None, None,
-        ).unwrap(), ManagedUpdateObservedUnit::Absent);
+        assert_eq!(
+            classify_managed_update_observation(false, false, "not-found", "inactive", None, None,)
+                .unwrap(),
+            ManagedUpdateObservedUnit::Absent
+        );
     }
 
     #[test]
     fn rejects_foreign_manager_and_missing_required_file() {
+        assert!(
+            classify_managed_update_observation(false, false, "loaded", "active", None, None,)
+                .is_err()
+        );
         assert!(classify_managed_update_observation(
-            false, false, "loaded", "active", None, None,
-        ).is_err());
-        assert!(classify_managed_update_observation(
-            false, true, "not-found", "inactive", None, None,
-        ).is_err());
+            false,
+            true,
+            "not-found",
+            "inactive",
+            None,
+            None,
+        )
+        .is_err());
     }
 
     #[test]
     fn rejects_failed_and_transitional_initial_states() {
-        for active in ["failed", "activating", "deactivating", "reloading", "unknown"] {
+        for active in [
+            "failed",
+            "activating",
+            "deactivating",
+            "reloading",
+            "unknown",
+        ] {
             assert!(classify_managed_update_observation(
-                true, false, "loaded", active, Some("enabled"), Some(sha()),
-            ).is_err());
+                true,
+                false,
+                "loaded",
+                active,
+                Some("enabled"),
+                Some(sha()),
+            )
+            .is_err());
         }
     }
 
     #[test]
     fn refuses_ambiguous_disabled_or_masked_unit_states() {
-        for state in [None, Some("static"), Some("masked"), Some("enabled-runtime"), Some("")] {
+        for state in [
+            None,
+            Some("static"),
+            Some("masked"),
+            Some("enabled-runtime"),
+            Some(""),
+        ] {
             assert!(classify_managed_update_observation(
-                true, true, "loaded", "active", state, Some(sha()),
-            ).is_err());
+                true,
+                true,
+                "loaded",
+                "active",
+                state,
+                Some(sha()),
+            )
+            .is_err());
         }
     }
 
@@ -2769,14 +3123,23 @@ mod f04b3_managed_service_baseline_tests {
     fn refuses_fake_or_missing_sha256_receipts() {
         for digest in [None, Some("0000"), Some("not-hex"), Some("")] {
             assert!(classify_managed_update_observation(
-                true, true, "loaded", "active", Some("enabled"), digest,
-            ).is_err());
+                true,
+                true,
+                "loaded",
+                "active",
+                Some("enabled"),
+                digest,
+            )
+            .is_err());
         }
     }
 
     #[test]
     fn systemd_unit_state_must_be_exactly_one_field() {
-        assert_eq!(parse_unit_file_state("UnitFileState=enabled"), Ok("enabled"));
+        assert_eq!(
+            parse_unit_file_state("UnitFileState=enabled"),
+            Ok("enabled")
+        );
         assert!(parse_unit_file_state("UnitFileState=enabled\nUnitFileState=disabled").is_err());
         assert!(parse_unit_file_state("UnitFileState=").is_err());
         assert!(parse_unit_file_state("ActiveState=enabled").is_err());
@@ -2828,11 +3191,15 @@ fn build_managed_service_rollback_receipt(
         }
         let target = match step.transition {
             ManagedServiceTransition::Add => {
-                if specs.contains_key(&step.unit) || baseline.previous.contains_key(&step.unit)
+                if specs.contains_key(&step.unit)
+                    || baseline.previous.contains_key(&step.unit)
                     || original_files.contains_key(&step.unit)
                     || !baseline.reserved_new_units.contains(&step.unit)
                 {
-                    return Err(format!("unsafe rollback receipt for new unit '{}'", step.unit));
+                    return Err(format!(
+                        "unsafe rollback receipt for new unit '{}'",
+                        step.unit
+                    ));
                 }
                 expected_new.insert(step.unit.clone());
                 ManagedUpdateRollbackTarget::InitiallyVacant
@@ -2840,15 +3207,20 @@ fn build_managed_service_rollback_receipt(
             ManagedServiceTransition::Keep
             | ManagedServiceTransition::Replace
             | ManagedServiceTransition::Retire => {
-                let spec = specs.get(&step.unit).ok_or_else(|| format!(
-                    "rollback receipt misses old unit declaration '{}'", step.unit
-                ))?;
+                let spec = specs.get(&step.unit).ok_or_else(|| {
+                    format!(
+                        "rollback receipt misses old unit declaration '{}'",
+                        step.unit
+                    )
+                })?;
                 if spec.unit != step.unit {
                     return Err("rollback receipt old unit identifier mismatch".into());
                 }
-                match baseline.previous.get(&step.unit).ok_or_else(|| format!(
-                    "rollback receipt lacks baseline for '{}'", step.unit
-                ))? {
+                match baseline
+                    .previous
+                    .get(&step.unit)
+                    .ok_or_else(|| format!("rollback receipt lacks baseline for '{}'", step.unit))?
+                {
                     ManagedUpdateObservedUnit::Absent => {
                         if spec.required || original_files.contains_key(&step.unit) {
                             return Err(format!("unsafe absent old unit '{}'", step.unit));
@@ -2856,23 +3228,40 @@ fn build_managed_service_rollback_receipt(
                         ManagedUpdateRollbackTarget::OriginallyAbsent
                     }
                     ManagedUpdateObservedUnit::Present {
-                        was_active, was_enabled, unit_sha256,
+                        was_active,
+                        was_enabled,
+                        unit_sha256,
                     } => {
-                        let (bytes, mode) = original_files.get(&step.unit).ok_or_else(|| format!(
-                            "rollback receipt missing original bytes for '{}'", step.unit
-                        ))?;
-                        if bytes.is_empty() || bytes.len() > 8192 || (*mode & !0o777) != 0
-                            || (*mode & 0o022) != 0 || (*mode & 0o400) == 0
+                        let (bytes, mode) = original_files.get(&step.unit).ok_or_else(|| {
+                            format!(
+                                "rollback receipt missing original bytes for '{}'",
+                                step.unit
+                            )
+                        })?;
+                        if bytes.is_empty()
+                            || bytes.len() > 8192
+                            || (*mode & !0o777) != 0
+                            || (*mode & 0o022) != 0
+                            || (*mode & 0o400) == 0
                         {
                             return Err(format!("unsafe original unit bytes/mode '{}'", step.unit));
                         }
-                        let digest = Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+                        let digest = Sha256::digest(bytes)
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>();
                         if digest != *unit_sha256 {
-                            return Err(format!("original unit '{}' changed since baseline", step.unit));
+                            return Err(format!(
+                                "original unit '{}' changed since baseline",
+                                step.unit
+                            ));
                         }
                         ManagedUpdateRollbackTarget::OriginalUnit {
-                            bytes: bytes.clone(), sha256: digest, mode: *mode,
-                            was_active: *was_active, was_enabled: *was_enabled,
+                            bytes: bytes.clone(),
+                            sha256: digest,
+                            mode: *mode,
+                            was_active: *was_active,
+                            was_enabled: *was_enabled,
                         }
                     }
                 }
@@ -2884,7 +3273,9 @@ fn build_managed_service_rollback_receipt(
     let old_seen: BTreeSet<String> = seen.difference(&expected_new).cloned().collect();
     if old_seen != expected_old
         || baseline.previous.keys().cloned().collect::<BTreeSet<_>>() != expected_old
-        || original_files.keys().any(|unit| !expected_old.contains(unit))
+        || original_files
+            .keys()
+            .any(|unit| !expected_old.contains(unit))
         || expected_new != baseline.reserved_new_units
     {
         return Err("rollback receipt does not exactly cover the installed services".into());
@@ -2914,35 +3305,59 @@ fn capture_managed_update_rollback_receipt(
         let ManagedUpdateObservedUnit::Present { unit_sha256, .. } = state else {
             continue;
         };
-        let spec = specs.get(unit).ok_or("rollback capture lacks installed unit declaration")?;
+        let spec = specs
+            .get(unit)
+            .ok_or("rollback capture lacks installed unit declaration")?;
         // Re-check with service owner/fragment/ExecStart validators, not just
         // the filename; reads must only be from the desktop owner's unit dir.
         let before = inspect_managed_update_unit_baseline(
-            module, unit, Some(&spec.exec_start), spec.required,
+            module,
+            unit,
+            Some(&spec.exec_start),
+            spec.required,
         )?;
         if &before != state {
-            return Err(format!("managed unit '{}' changed before recovery read", unit));
+            return Err(format!(
+                "managed unit '{}' changed before recovery read",
+                unit
+            ));
         }
         let path = validated_unit_path(&home, uid, gid, unit)?;
         let first = fs::symlink_metadata(&path)
             .map_err(|e| format!("rollback receipt metadata '{}': {e}", unit))?;
-        if !first.file_type().is_file() || first.uid() != uid || first.gid() != gid
-            || first.mode() & 0o022 != 0 || first.len() > 8192
+        if !first.file_type().is_file()
+            || first.uid() != uid
+            || first.gid() != gid
+            || first.mode() & 0o022 != 0
+            || first.len() > 8192
         {
-            return Err(format!("rollback receipt old unit '{}' is not owner-safe", unit));
+            return Err(format!(
+                "rollback receipt old unit '{}' is not owner-safe",
+                unit
+            ));
         }
-        let bytes = fs::read(&path)
-            .map_err(|e| format!("rollback receipt read '{}': {e}", unit))?;
+        let bytes =
+            fs::read(&path).map_err(|e| format!("rollback receipt read '{}': {e}", unit))?;
         let second = fs::symlink_metadata(&path)
             .map_err(|e| format!("rollback receipt second metadata '{}': {e}", unit))?;
-        if !second.file_type().is_file() || first.ino() != second.ino()
-            || first.dev() != second.dev() || first.uid() != second.uid()
-            || first.gid() != second.gid() || first.mode() != second.mode()
-            || first.len() != second.len() || bytes.len() > 8192
+        if !second.file_type().is_file()
+            || first.ino() != second.ino()
+            || first.dev() != second.dev()
+            || first.uid() != second.uid()
+            || first.gid() != second.gid()
+            || first.mode() != second.mode()
+            || first.len() != second.len()
+            || bytes.len() > 8192
         {
-            return Err(format!("rollback receipt old unit '{}' changed during read", unit));
+            return Err(format!(
+                "rollback receipt old unit '{}' changed during read",
+                unit
+            ));
         }
-        let digest = Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let digest = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         if &digest != unit_sha256 {
             return Err(format!("rollback receipt unit '{}' digest changed", unit));
         }
@@ -2950,10 +3365,16 @@ fn capture_managed_update_rollback_receipt(
             .map_err(|_| format!("rollback receipt unit '{}' is not UTF-8", unit))?;
         certify_install_unit(text, module, &spec.exec_start)?;
         let after = inspect_managed_update_unit_baseline(
-            module, unit, Some(&spec.exec_start), spec.required,
+            module,
+            unit,
+            Some(&spec.exec_start),
+            spec.required,
         )?;
         if &after != state {
-            return Err(format!("managed unit '{}' changed after recovery read", unit));
+            return Err(format!(
+                "managed unit '{}' changed after recovery read",
+                unit
+            ));
         }
         original_files.insert(unit.clone(), (bytes, first.mode() & 0o777));
     }
@@ -2962,7 +3383,10 @@ fn capture_managed_update_rollback_receipt(
         if inspect_managed_update_unit_baseline(module, unit, None, false)?
             != ManagedUpdateObservedUnit::Absent
         {
-            return Err(format!("new Update unit slot '{}' changed during snapshot", unit));
+            return Err(format!(
+                "new Update unit slot '{}' changed during snapshot",
+                unit
+            ));
         }
     }
     build_managed_service_rollback_receipt(&specs, plan, &baseline, &original_files)
@@ -3005,8 +3429,11 @@ enum ManagedUpdateCompensationTarget {
     RemoveVerifiedCreation,
     // Restoration data comes ONLY from F04B4's original certified receipt.
     RestoreOriginal {
-        bytes: Vec<u8>, sha256: String, mode: u32,
-        was_active: bool, was_enabled: bool,
+        bytes: Vec<u8>,
+        sha256: String,
+        mode: u32,
+        was_active: bool,
+        was_enabled: bool,
     },
 }
 
@@ -3019,16 +3446,25 @@ fn check_managed_journal_contract(
         if !names.insert(step.unit.clone()) {
             return Err("duplicate managed service transition in journal contract".into());
         }
-        let target = receipt.targets.get(&step.unit)
+        let target = receipt
+            .targets
+            .get(&step.unit)
             .ok_or("missing certified service receipt for planned unit")?;
         match (step.transition, target) {
             (ManagedServiceTransition::Add, ManagedUpdateRollbackTarget::InitiallyVacant)
             | (ManagedServiceTransition::Keep, ManagedUpdateRollbackTarget::OriginalUnit { .. })
             | (ManagedServiceTransition::Keep, ManagedUpdateRollbackTarget::OriginallyAbsent)
-            | (ManagedServiceTransition::Replace, ManagedUpdateRollbackTarget::OriginalUnit { .. })
+            | (
+                ManagedServiceTransition::Replace,
+                ManagedUpdateRollbackTarget::OriginalUnit { .. },
+            )
             | (ManagedServiceTransition::Replace, ManagedUpdateRollbackTarget::OriginallyAbsent)
-            | (ManagedServiceTransition::Retire, ManagedUpdateRollbackTarget::OriginalUnit { .. })
-            | (ManagedServiceTransition::Retire, ManagedUpdateRollbackTarget::OriginallyAbsent) => {}
+            | (
+                ManagedServiceTransition::Retire,
+                ManagedUpdateRollbackTarget::OriginalUnit { .. },
+            )
+            | (ManagedServiceTransition::Retire, ManagedUpdateRollbackTarget::OriginallyAbsent) => {
+            }
             _ => return Err("managed service plan and immutable rollback receipt disagree".into()),
         }
     }
@@ -3040,8 +3476,9 @@ fn check_managed_journal_contract(
 
 impl ManagedServiceMutationJournal {
     fn has_verified(&self, unit: &str, action: ManagedUpdateForwardOp) -> bool {
-        self.entries.iter().any(|entry|
-            entry.unit == unit && entry.operation == action && entry.verified)
+        self.entries
+            .iter()
+            .any(|entry| entry.unit == unit && entry.operation == action && entry.verified)
     }
 
     // Only a certified, uniquely planned unit may acquire a mutation intent.
@@ -3057,30 +3494,57 @@ impl ManagedServiceMutationJournal {
         if self.entries.iter().any(|entry| !entry.verified) {
             return Err("unresolved managed service mutation intent".into());
         }
-        if self.entries.iter().any(|entry| entry.unit == unit && entry.operation == action) {
+        if self
+            .entries
+            .iter()
+            .any(|entry| entry.unit == unit && entry.operation == action)
+        {
             return Err("managed service operation was already attempted".into());
         }
-        let step = plan.steps.iter().find(|step| step.unit == unit)
+        let step = plan
+            .steps
+            .iter()
+            .find(|step| step.unit == unit)
             .ok_or("mutation targets a unit not owned by this Update plan")?;
-        let target = receipt.targets.get(unit)
+        let target = receipt
+            .targets
+            .get(unit)
             .ok_or("mutation lacks matching immutable service receipt")?;
         use ManagedServiceTransition as T;
         use ManagedUpdateForwardOp as O;
         use ManagedUpdateRollbackTarget as R;
         let allowed = match (&step.transition, target, action) {
-            (T::Add, R::InitiallyVacant, O::WriteUnit | O::ManagerReload | O::Enable | O::Start)
-            | (T::Replace, R::OriginallyAbsent, O::WriteUnit | O::ManagerReload | O::Enable | O::Start)
-            | (T::Replace, R::OriginalUnit { .. },
-               O::Stop | O::Disable | O::WriteUnit | O::ManagerReload | O::Enable | O::Start)
-            | (T::Retire, R::OriginalUnit { .. },
-               O::Stop | O::Disable | O::RemoveUnit | O::ManagerReload) => true,
+            (
+                T::Add,
+                R::InitiallyVacant,
+                O::WriteUnit | O::ManagerReload | O::Enable | O::Start,
+            )
+            | (
+                T::Replace,
+                R::OriginallyAbsent,
+                O::WriteUnit | O::ManagerReload | O::Enable | O::Start,
+            )
+            | (
+                T::Replace,
+                R::OriginalUnit { .. },
+                O::Stop | O::Disable | O::WriteUnit | O::ManagerReload | O::Enable | O::Start,
+            )
+            | (
+                T::Retire,
+                R::OriginalUnit { .. },
+                O::Stop | O::Disable | O::RemoveUnit | O::ManagerReload,
+            ) => true,
             _ => false,
         };
         if !allowed {
             return Err("operation forbidden by certified service transition".into());
         }
         let (was_active, was_enabled) = match target {
-            R::OriginalUnit { was_active, was_enabled, .. } => (*was_active, *was_enabled),
+            R::OriginalUnit {
+                was_active,
+                was_enabled,
+                ..
+            } => (*was_active, *was_enabled),
             _ => (false, false),
         };
         match action {
@@ -3095,8 +3559,7 @@ impl ManagedServiceMutationJournal {
                 }
             }
             O::ManagerReload => {
-                if !self.has_verified(unit, O::WriteUnit)
-                    && !self.has_verified(unit, O::RemoveUnit)
+                if !self.has_verified(unit, O::WriteUnit) && !self.has_verified(unit, O::RemoveUnit)
                 {
                     return Err("cannot reload before a verified unit file mutation".into());
                 }
@@ -3109,7 +3572,9 @@ impl ManagedServiceMutationJournal {
             _ => {}
         }
         self.entries.push(ManagedUpdateJournalEntry {
-            unit: unit.to_owned(), operation: action, verified: false,
+            unit: unit.to_owned(),
+            operation: action,
+            verified: false,
         });
         Ok(())
     }
@@ -3117,7 +3582,10 @@ impl ManagedServiceMutationJournal {
     // A future executor must confirm only after the real operation and an
     // independent postcondition both succeed; this method never executes them.
     fn confirm(&mut self, unit: &str, action: ManagedUpdateForwardOp) -> Result<(), String> {
-        let entry = self.entries.last_mut().ok_or("no pending service mutation")?;
+        let entry = self
+            .entries
+            .last_mut()
+            .ok_or("no pending service mutation")?;
         if entry.verified || entry.unit != unit || entry.operation != action {
             return Err("service mutation confirmation does not match pending intent".into());
         }
@@ -3140,7 +3608,10 @@ impl ManagedServiceMutationJournal {
         let mut affected = BTreeSet::new();
         let mut seen = BTreeSet::new();
         for entry in &self.entries {
-            let step = plan.steps.iter().find(|step| step.unit == entry.unit)
+            let step = plan
+                .steps
+                .iter()
+                .find(|step| step.unit == entry.unit)
                 .ok_or("unplanned unit in service mutation journal")?;
             if step.transition == ManagedServiceTransition::Keep
                 || !seen.insert((entry.unit.clone(), entry.operation as u8))
@@ -3151,7 +3622,10 @@ impl ManagedServiceMutationJournal {
         }
         let mut result = BTreeMap::new();
         for unit in affected {
-            let target = receipt.targets.get(&unit).ok_or("missing service recovery target")?;
+            let target = receipt
+                .targets
+                .get(&unit)
+                .ok_or("missing service recovery target")?;
             let compensation = match target {
                 ManagedUpdateRollbackTarget::InitiallyVacant
                 | ManagedUpdateRollbackTarget::OriginallyAbsent => {
@@ -3161,10 +3635,17 @@ impl ManagedServiceMutationJournal {
                     ManagedUpdateCompensationTarget::RemoveVerifiedCreation
                 }
                 ManagedUpdateRollbackTarget::OriginalUnit {
-                    bytes, sha256, mode, was_active, was_enabled,
+                    bytes,
+                    sha256,
+                    mode,
+                    was_active,
+                    was_enabled,
                 } => ManagedUpdateCompensationTarget::RestoreOriginal {
-                    bytes: bytes.clone(), sha256: sha256.clone(), mode: *mode,
-                    was_active: *was_active, was_enabled: *was_enabled,
+                    bytes: bytes.clone(),
+                    sha256: sha256.clone(),
+                    mode: *mode,
+                    was_active: *was_active,
+                    was_enabled: *was_enabled,
                 },
             };
             result.insert(unit, compensation);
@@ -3208,11 +3689,17 @@ struct ManagedServiceCheckpointEnvelope {
 
 fn managed_txn_hex_digest(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
-    Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect()
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn managed_txn_pin_is_valid(pin: &str) -> bool {
-    pin.len() == 40 && pin.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    pin.len() == 40
+        && pin
+            .bytes()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
 fn validate_managed_txn_checkpoint(record: &ManagedServiceUpdateCheckpoint) -> Result<(), String> {
@@ -3220,7 +3707,8 @@ fn validate_managed_txn_checkpoint(record: &ManagedServiceUpdateCheckpoint) -> R
         || !neebles_backend::module_material::valid_module_id(&record.module)
         || !managed_txn_pin_is_valid(&record.old_commit)
         || !managed_txn_pin_is_valid(&record.candidate_commit)
-        || record.plan.steps.is_empty() || record.plan.steps.len() > 64
+        || record.plan.steps.is_empty()
+        || record.plan.steps.len() > 64
         || record.journal.entries.len() > 512
     {
         return Err("invalid durable managed service transaction identity/limits".into());
@@ -3229,10 +3717,17 @@ fn validate_managed_txn_checkpoint(record: &ManagedServiceUpdateCheckpoint) -> R
     for (unit, target) in &record.receipt.targets {
         validate_service_name(&record.module, unit)?;
         if let ManagedUpdateRollbackTarget::OriginalUnit {
-            bytes, sha256, mode, ..
-        } = target {
-            if bytes.is_empty() || bytes.len() > 8192 || *mode & !0o777 != 0
-                || *mode & 0o022 != 0 || *mode & 0o400 == 0
+            bytes,
+            sha256,
+            mode,
+            ..
+        } = target
+        {
+            if bytes.is_empty()
+                || bytes.len() > 8192
+                || *mode & !0o777 != 0
+                || *mode & 0o022 != 0
+                || *mode & 0o400 == 0
                 || *sha256 != managed_txn_hex_digest(bytes)
             {
                 return Err("invalid original unit recovery bytes or checksum".into());
@@ -3254,11 +3749,16 @@ fn validate_managed_txn_checkpoint(record: &ManagedServiceUpdateCheckpoint) -> R
     Ok(())
 }
 
-fn encode_managed_txn_checkpoint(record: &ManagedServiceUpdateCheckpoint) -> Result<Vec<u8>, String> {
+fn encode_managed_txn_checkpoint(
+    record: &ManagedServiceUpdateCheckpoint,
+) -> Result<Vec<u8>, String> {
     validate_managed_txn_checkpoint(record)?;
-    let canonical = serde_json::to_vec(record).map_err(|e| format!("encode service checkpoint: {e}"))?;
+    let canonical =
+        serde_json::to_vec(record).map_err(|e| format!("encode service checkpoint: {e}"))?;
     let envelope = ManagedServiceCheckpointEnvelope {
-        schema: 1, sha256: managed_txn_hex_digest(&canonical), payload: record.clone(),
+        schema: 1,
+        sha256: managed_txn_hex_digest(&canonical),
+        payload: record.clone(),
     };
     let bytes = serde_json::to_vec(&envelope)
         .map_err(|e| format!("encode service checkpoint envelope: {e}"))?;
@@ -3272,8 +3772,8 @@ fn decode_managed_txn_checkpoint(bytes: &[u8]) -> Result<ManagedServiceUpdateChe
     if bytes.is_empty() || bytes.len() > MAX_MANAGED_TXN_CHECKPOINT_BYTES {
         return Err("invalid persistent service checkpoint size".into());
     }
-    let envelope: ManagedServiceCheckpointEnvelope = serde_json::from_slice(bytes)
-        .map_err(|e| format!("decode service checkpoint: {e}"))?;
+    let envelope: ManagedServiceCheckpointEnvelope =
+        serde_json::from_slice(bytes).map_err(|e| format!("decode service checkpoint: {e}"))?;
     if envelope.schema != 1 || serde_json::to_vec(&envelope).ok().as_deref() != Some(bytes) {
         return Err("noncanonical or unsupported service checkpoint".into());
     }
@@ -3295,23 +3795,42 @@ fn validate_managed_txn_successor(
 ) -> Result<(), String> {
     validate_managed_txn_checkpoint(previous)?;
     validate_managed_txn_checkpoint(next)?;
-    if next.generation != previous.generation.checked_add(1).ok_or("checkpoint generation overflow")?
-        || next.schema != previous.schema || next.module != previous.module
+    if next.generation
+        != previous
+            .generation
+            .checked_add(1)
+            .ok_or("checkpoint generation overflow")?
+        || next.schema != previous.schema
+        || next.module != previous.module
         || next.old_commit != previous.old_commit
         || next.candidate_commit != previous.candidate_commit
-        || next.plan != previous.plan || next.receipt != previous.receipt
+        || next.plan != previous.plan
+        || next.receipt != previous.receipt
     {
         return Err("persistent service checkpoint identity or generation drift".into());
     }
     let mut expected = previous.journal.clone();
     if next.journal.entries.len() == previous.journal.entries.len() + 1 {
-        let appended = next.journal.entries.last().ok_or("missing appended intent")?;
+        let appended = next
+            .journal
+            .entries
+            .last()
+            .ok_or("missing appended intent")?;
         if appended.verified {
             return Err("new service mutation intent cannot be born confirmed".into());
         }
-        expected.begin(&next.plan, &next.receipt, &appended.unit, appended.operation)?;
+        expected.begin(
+            &next.plan,
+            &next.receipt,
+            &appended.unit,
+            appended.operation,
+        )?;
     } else if next.journal.entries.len() == previous.journal.entries.len() {
-        let pending = previous.journal.entries.last().ok_or("no intent to confirm")?;
+        let pending = previous
+            .journal
+            .entries
+            .last()
+            .ok_or("no intent to confirm")?;
         if pending.verified {
             return Err("no pending service mutation intent".into());
         }
@@ -3328,8 +3847,10 @@ fn validate_managed_txn_successor(
 fn managed_txn_private_directory(dir: &Path) -> Result<(), String> {
     let meta = fs::symlink_metadata(dir).map_err(|e| format!("checkpoint directory: {e}"))?;
     let owner = unsafe { libc::geteuid() };
-    if !meta.file_type().is_dir() || meta.uid() != owner
-        || meta.mode() & 0o077 != 0 || meta.mode() & 0o700 != 0o700
+    if !meta.file_type().is_dir()
+        || meta.uid() != owner
+        || meta.mode() & 0o077 != 0
+        || meta.mode() & 0o700 != 0o700
     {
         return Err("service checkpoint directory must be owned private 0700 directory".into());
     }
@@ -3338,12 +3859,20 @@ fn managed_txn_private_directory(dir: &Path) -> Result<(), String> {
 
 fn managed_txn_open_owned_file(path: &Path) -> Result<fs::File, String> {
     use std::os::unix::fs::OpenOptionsExt;
-    let f = fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(path).map_err(|e| format!("open service checkpoint: {e}"))?;
-    let m = f.metadata().map_err(|e| format!("service checkpoint file stat: {e}"))?;
-    if !m.file_type().is_file() || m.uid() != unsafe { libc::geteuid() }
-        || m.nlink() != 1 || m.mode() & 0o777 != 0o600
-        || m.len() == 0 || m.len() > MAX_MANAGED_TXN_CHECKPOINT_BYTES as u64
+    let f = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|e| format!("open service checkpoint: {e}"))?;
+    let m = f
+        .metadata()
+        .map_err(|e| format!("service checkpoint file stat: {e}"))?;
+    if !m.file_type().is_file()
+        || m.uid() != unsafe { libc::geteuid() }
+        || m.nlink() != 1
+        || m.mode() & 0o777 != 0o600
+        || m.len() == 0
+        || m.len() > MAX_MANAGED_TXN_CHECKPOINT_BYTES as u64
     {
         return Err("service checkpoint is foreign, linked or has unsafe mode/size".into());
     }
@@ -3360,24 +3889,39 @@ fn managed_txn_checkpoint_path(dir: &Path, module: &str) -> Result<PathBuf, Stri
 // Callers must NOT treat a successful write as permission to execute the
 // recorded operation: this helper merely persists exactly one valid transition.
 // The .lock file is permanent and must never be deleted opportunistically.
-fn store_managed_txn_checkpoint(dir: &Path, next: &ManagedServiceUpdateCheckpoint) -> Result<(), String> {
+fn store_managed_txn_checkpoint(
+    dir: &Path,
+    next: &ManagedServiceUpdateCheckpoint,
+) -> Result<(), String> {
     use std::io::{Read, Write};
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
     managed_txn_private_directory(dir)?;
     validate_managed_txn_checkpoint(next)?;
     let lock_path = dir.join(format!("{}.managed-services-update.lock", next.module));
-    let lock = fs::OpenOptions::new().read(true).write(true).create(true).mode(0o600)
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(&lock_path).map_err(|e| format!("open checkpoint lock: {e}"))?;
-    let lm = lock.metadata().map_err(|e| format!("checkpoint lock stat: {e}"))?;
-    if !lm.file_type().is_file() || lm.uid() != unsafe { libc::geteuid() }
-        || lm.nlink() != 1 || lm.mode() & 0o777 != 0o600
+        .open(&lock_path)
+        .map_err(|e| format!("open checkpoint lock: {e}"))?;
+    let lm = lock
+        .metadata()
+        .map_err(|e| format!("checkpoint lock stat: {e}"))?;
+    if !lm.file_type().is_file()
+        || lm.uid() != unsafe { libc::geteuid() }
+        || lm.nlink() != 1
+        || lm.mode() & 0o777 != 0o600
     {
         return Err("foreign or unsafe service checkpoint lock".into());
     }
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
-        return Err(format!("lock service checkpoint: {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "lock service checkpoint: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     // `lock` remains alive until after the rename+fsync or any error.
     let target = managed_txn_checkpoint_path(dir, &next.module)?;
@@ -3405,23 +3949,34 @@ fn store_managed_txn_checkpoint(dir: &Path, next: &ManagedServiceUpdateCheckpoin
     let bytes = encode_managed_txn_checkpoint(next)?;
     let tmp = dir.join(format!(".{}.{}.tmp", next.module, uuid::Uuid::new_v4()));
     let write_result = (|| -> Result<(), String> {
-        let mut f = fs::OpenOptions::new().write(true).create_new(true).mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(&tmp)
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&tmp)
             .map_err(|e| format!("create service checkpoint temporary: {e}"))?;
-        f.write_all(&bytes).and_then(|_| f.sync_all())
+        f.write_all(&bytes)
+            .and_then(|_| f.sync_all())
             .map_err(|e| format!("sync service checkpoint temporary: {e}"))?;
         fs::rename(&tmp, &target).map_err(|e| format!("publish service checkpoint: {e}"))?;
-        fs::File::open(dir).and_then(|directory| directory.sync_all())
+        fs::File::open(dir)
+            .and_then(|directory| directory.sync_all())
             .map_err(|e| format!("sync service checkpoint directory: {e}"))?;
         Ok(())
     })();
-    if write_result.is_err() { let _ = fs::remove_file(&tmp); }
+    if write_result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
     // The caller must treat a post-rename fsync error as an indeterminate
     // durability result, never skip to systemd under the assumption of success.
     write_result
 }
 
-fn load_managed_txn_checkpoint(dir: &Path, module: &str) -> Result<ManagedServiceUpdateCheckpoint, String> {
+fn load_managed_txn_checkpoint(
+    dir: &Path,
+    module: &str,
+) -> Result<ManagedServiceUpdateCheckpoint, String> {
     use std::io::Read;
     managed_txn_private_directory(dir)?;
     let path = managed_txn_checkpoint_path(dir, module)?;
@@ -3450,12 +4005,21 @@ fn managed_txn_open_lifetime_lock(dir: &Path, module: &str) -> Result<fs::File, 
     managed_txn_private_directory(dir)?;
     managed_txn_checkpoint_path(dir, module)?; // validate id before constructing any path
     let path = dir.join(format!("{module}.managed-services-driver.lock"));
-    let file = fs::OpenOptions::new().read(true).write(true).create(true)
-        .mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(&path).map_err(|e| format!("open service driver lock: {e}"))?;
-    let metadata = file.metadata().map_err(|e| format!("stat service driver lock: {e}"))?;
-    if !metadata.file_type().is_file() || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.nlink() != 1 || metadata.mode() & 0o777 != 0o600
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&path)
+        .map_err(|e| format!("open service driver lock: {e}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("stat service driver lock: {e}"))?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.nlink() != 1
+        || metadata.mode() & 0o777 != 0o600
     {
         return Err("foreign or unsafe service driver lock".into());
     }
@@ -3489,8 +4053,12 @@ where
     {
         return Err("service step rejected: pinned revisions no longer match".into());
     }
-    pending.journal.begin(&pending.plan, &pending.receipt, unit, operation)?;
-    pending.generation = pending.generation.checked_add(1)
+    pending
+        .journal
+        .begin(&pending.plan, &pending.receipt, unit, operation)?;
+    pending.generation = pending
+        .generation
+        .checked_add(1)
         .ok_or("service checkpoint generation overflow")?;
     // If this fails, the caller-supplied effect MUST NOT execute.
     store_managed_txn_checkpoint(dir, &pending)?;
@@ -3504,7 +4072,9 @@ where
     }
     let mut acknowledged = current;
     acknowledged.journal.confirm(unit, operation)?;
-    acknowledged.generation = acknowledged.generation.checked_add(1)
+    acknowledged.generation = acknowledged
+        .generation
+        .checked_add(1)
         .ok_or("service checkpoint generation overflow")?;
     store_managed_txn_checkpoint(dir, &acknowledged)?;
     Ok(acknowledged)
@@ -3524,14 +4094,23 @@ mod f04b12_durable_step_driver_tests {
         let module = "neebles-demo";
         let unit = "neebles-neebles-demo-agent.service";
         let checkpoint = ManagedServiceUpdateCheckpoint {
-            schema: 1, module: module.into(), old_commit: "a".repeat(40),
-            candidate_commit: "b".repeat(40), generation: 0,
-            plan: ManagedServiceUpdatePlan { steps: vec![ManagedServiceStep {
-                unit: unit.into(), transition: ManagedServiceTransition::Add,
-            }] },
-            receipt: ManagedServiceRollbackReceipt { targets: BTreeMap::from([(
-                unit.into(), ManagedUpdateRollbackTarget::InitiallyVacant,
-            )]) },
+            schema: 1,
+            module: module.into(),
+            old_commit: "a".repeat(40),
+            candidate_commit: "b".repeat(40),
+            generation: 0,
+            plan: ManagedServiceUpdatePlan {
+                steps: vec![ManagedServiceStep {
+                    unit: unit.into(),
+                    transition: ManagedServiceTransition::Add,
+                }],
+            },
+            receipt: ManagedServiceRollbackReceipt {
+                targets: BTreeMap::from([(
+                    unit.into(),
+                    ManagedUpdateRollbackTarget::InitiallyVacant,
+                )]),
+            },
             journal: ManagedServiceMutationJournal::default(),
         };
         store_managed_txn_checkpoint(&dir, &checkpoint).unwrap();
@@ -3539,13 +4118,24 @@ mod f04b12_durable_step_driver_tests {
     }
 
     fn execute<Apply, Verify>(
-        dir: &Path, c: &ManagedServiceUpdateCheckpoint, apply: Apply, verify: Verify,
+        dir: &Path,
+        c: &ManagedServiceUpdateCheckpoint,
+        apply: Apply,
+        verify: Verify,
     ) -> Result<ManagedServiceUpdateCheckpoint, String>
-    where Apply: FnOnce() -> Result<(), String>, Verify: FnOnce() -> Result<(), String> {
+    where
+        Apply: FnOnce() -> Result<(), String>,
+        Verify: FnOnce() -> Result<(), String>,
+    {
         managed_txn_perform_verified_step(
-            dir, &c.module, &c.old_commit, &c.candidate_commit,
-            "neebles-neebles-demo-agent.service", ManagedUpdateForwardOp::WriteUnit,
-            apply, verify,
+            dir,
+            &c.module,
+            &c.old_commit,
+            &c.candidate_commit,
+            "neebles-neebles-demo-agent.service",
+            ManagedUpdateForwardOp::WriteUnit,
+            apply,
+            verify,
         )
     }
 
@@ -3557,7 +4147,9 @@ mod f04b12_durable_step_driver_tests {
         let marker = dir.join("effect-marker");
         let marker_write = marker.clone();
         let marker_read = marker.clone();
-        let last = execute(&dir, &c,
+        let last = execute(
+            &dir,
+            &c,
             move || {
                 let current = load_managed_txn_checkpoint(&effect_dir, &effect_module)?;
                 assert_eq!(current.generation, 1);
@@ -3565,12 +4157,17 @@ mod f04b12_durable_step_driver_tests {
                 fs::write(&marker_write, b"effect applied").map_err(|e| e.to_string())
             },
             move || {
-                if fs::read(&marker_read).map_err(|e| e.to_string())?.as_slice() != b"effect applied" {
+                if fs::read(&marker_read)
+                    .map_err(|e| e.to_string())?
+                    .as_slice()
+                    != b"effect applied"
+                {
                     return Err("effect postcondition missing".into());
                 }
                 Ok(())
             },
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(last.generation, 2);
         assert!(last.journal.entries[0].verified);
         assert_eq!(load_managed_txn_checkpoint(&dir, &c.module).unwrap(), last);
@@ -3580,15 +4177,31 @@ mod f04b12_durable_step_driver_tests {
     fn failed_effect_leaves_durable_pending_intent_and_blocks_retry() {
         let (_tmp, dir, c) = fresh();
         let called_verify = Cell::new(false);
-        assert!(execute(&dir, &c, || Err("injected failure".into()), || {
-            called_verify.set(true); Ok(())
-        }).is_err());
+        assert!(execute(
+            &dir,
+            &c,
+            || Err("injected failure".into()),
+            || {
+                called_verify.set(true);
+                Ok(())
+            }
+        )
+        .is_err());
         assert!(!called_verify.get());
         let pending = load_managed_txn_checkpoint(&dir, &c.module).unwrap();
         assert_eq!(pending.generation, 1);
         assert!(!pending.journal.entries[0].verified);
         let called_apply = Cell::new(false);
-        assert!(execute(&dir, &c, || { called_apply.set(true); Ok(()) }, || Ok(())).is_err());
+        assert!(execute(
+            &dir,
+            &c,
+            || {
+                called_apply.set(true);
+                Ok(())
+            },
+            || Ok(())
+        )
+        .is_err());
         assert!(!called_apply.get());
     }
 
@@ -3596,40 +4209,91 @@ mod f04b12_durable_step_driver_tests {
     fn failed_postcondition_does_not_confirm_or_discard_intent() {
         let (_tmp, dir, c) = fresh();
         let called_apply = Cell::new(false);
-        assert!(execute(&dir, &c, || { called_apply.set(true); Ok(()) },
-            || Err("independently observed wrong state".into())).is_err());
+        assert!(execute(
+            &dir,
+            &c,
+            || {
+                called_apply.set(true);
+                Ok(())
+            },
+            || Err("independently observed wrong state".into())
+        )
+        .is_err());
         assert!(called_apply.get());
         let pending = load_managed_txn_checkpoint(&dir, &c.module).unwrap();
         assert_eq!(pending.generation, 1);
         assert!(!pending.journal.entries[0].verified);
-        assert!(pending.journal.compensation_scope(&pending.plan, &pending.receipt).is_err());
+        assert!(pending
+            .journal
+            .compensation_scope(&pending.plan, &pending.receipt)
+            .is_err());
     }
 
     #[test]
     fn wrong_revision_and_foreign_unit_never_invoke_effect() {
         let (_tmp, dir, c) = fresh();
         let touched = Cell::new(false);
-        assert!(managed_txn_perform_verified_step(&dir, &c.module, &c.old_commit,
-            &"c".repeat(40), "neebles-neebles-demo-agent.service",
+        assert!(managed_txn_perform_verified_step(
+            &dir,
+            &c.module,
+            &c.old_commit,
+            &"c".repeat(40),
+            "neebles-neebles-demo-agent.service",
             ManagedUpdateForwardOp::WriteUnit,
-            || { touched.set(true); Ok(()) }, || Ok(())).is_err());
-        assert!(managed_txn_perform_verified_step(&dir, &c.module, &c.old_commit,
-            &c.candidate_commit, "foreign.service", ManagedUpdateForwardOp::WriteUnit,
-            || { touched.set(true); Ok(()) }, || Ok(())).is_err());
+            || {
+                touched.set(true);
+                Ok(())
+            },
+            || Ok(())
+        )
+        .is_err());
+        assert!(managed_txn_perform_verified_step(
+            &dir,
+            &c.module,
+            &c.old_commit,
+            &c.candidate_commit,
+            "foreign.service",
+            ManagedUpdateForwardOp::WriteUnit,
+            || {
+                touched.set(true);
+                Ok(())
+            },
+            || Ok(())
+        )
+        .is_err());
         assert!(!touched.get());
-        assert_eq!(load_managed_txn_checkpoint(&dir, &c.module).unwrap().generation, 0);
+        assert_eq!(
+            load_managed_txn_checkpoint(&dir, &c.module)
+                .unwrap()
+                .generation,
+            0
+        );
     }
 
     #[test]
     fn concurrent_driver_is_rejected_without_mutating_other_checkpoint() {
         let (_tmp, dir, c) = fresh();
         let touched = Cell::new(false);
-        let result = execute(&dir, &c, || {
-            let nested = execute(&dir, &c, || { touched.set(true); Ok(()) }, || Ok(()));
-            assert!(nested.is_err());
-            assert!(nested.unwrap_err().contains("already owns"));
-            Ok(())
-        }, || Ok(())).unwrap();
+        let result = execute(
+            &dir,
+            &c,
+            || {
+                let nested = execute(
+                    &dir,
+                    &c,
+                    || {
+                        touched.set(true);
+                        Ok(())
+                    },
+                    || Ok(()),
+                );
+                assert!(nested.is_err());
+                assert!(nested.unwrap_err().contains("already owns"));
+                Ok(())
+            },
+            || Ok(()),
+        )
+        .unwrap();
         assert!(!touched.get());
         assert_eq!(result.generation, 2);
     }
@@ -3640,7 +4304,16 @@ mod f04b12_durable_step_driver_tests {
         let path = managed_txn_checkpoint_path(&dir, &c.module).unwrap();
         fs::write(&path, b"malformed checkpoint").unwrap();
         let touched = Cell::new(false);
-        assert!(execute(&dir, &c, || { touched.set(true); Ok(()) }, || Ok(())).is_err());
+        assert!(execute(
+            &dir,
+            &c,
+            || {
+                touched.set(true);
+                Ok(())
+            },
+            || Ok(())
+        )
+        .is_err());
         assert!(!touched.get());
         // Use an independent fresh directory: the prior attempt created its
         // permanent driver lock, which must NOT be removed.
@@ -3652,7 +4325,16 @@ mod f04b12_durable_step_driver_tests {
         fs::write(&foreign, b"unaltered").unwrap();
         let lock = dir2.join(format!("{}.managed-services-driver.lock", c2.module));
         symlink(&foreign, &lock).unwrap();
-        assert!(execute(&dir2, &c2, || { touched.set(true); Ok(()) }, || Ok(())).is_err());
+        assert!(execute(
+            &dir2,
+            &c2,
+            || {
+                touched.set(true);
+                Ok(())
+            },
+            || Ok(())
+        )
+        .is_err());
         assert_eq!(fs::read(&foreign).unwrap(), b"unaltered");
         assert!(!touched.get());
     }
@@ -3661,23 +4343,29 @@ mod f04b12_durable_step_driver_tests {
 #[cfg(test)]
 mod f04b9_persistent_service_journal_tests {
     use super::*;
+    use std::os::unix::fs::{symlink, PermissionsExt};
     use ManagedServiceTransition as T;
     use ManagedUpdateForwardOp as O;
     use ManagedUpdateRollbackTarget as R;
-    use std::os::unix::fs::{symlink, PermissionsExt};
 
     fn checkpoint() -> ManagedServiceUpdateCheckpoint {
         let module = "neebles-demo";
         let unit = "neebles-neebles-demo-agent.service";
         ManagedServiceUpdateCheckpoint {
-            schema: 1, module: module.into(), old_commit: "a".repeat(40),
-            candidate_commit: "b".repeat(40), generation: 0,
-            plan: ManagedServiceUpdatePlan { steps: vec![
-                ManagedServiceStep { unit: unit.into(), transition: T::Add },
-            ] },
-            receipt: ManagedServiceRollbackReceipt { targets: BTreeMap::from([
-                (unit.into(), R::InitiallyVacant),
-            ]) },
+            schema: 1,
+            module: module.into(),
+            old_commit: "a".repeat(40),
+            candidate_commit: "b".repeat(40),
+            generation: 0,
+            plan: ManagedServiceUpdatePlan {
+                steps: vec![ManagedServiceStep {
+                    unit: unit.into(),
+                    transition: T::Add,
+                }],
+            },
+            receipt: ManagedServiceRollbackReceipt {
+                targets: BTreeMap::from([(unit.into(), R::InitiallyVacant)]),
+            },
             journal: ManagedServiceMutationJournal::default(),
         }
     }
@@ -3695,7 +4383,10 @@ mod f04b9_persistent_service_journal_tests {
         let (_tmp, dir) = secure_dir();
         let saved = checkpoint();
         store_managed_txn_checkpoint(&dir, &saved).unwrap();
-        assert_eq!(load_managed_txn_checkpoint(&dir, &saved.module).unwrap(), saved);
+        assert_eq!(
+            load_managed_txn_checkpoint(&dir, &saved.module).unwrap(),
+            saved
+        );
         assert!(store_managed_txn_checkpoint(&dir, &saved).is_err());
     }
 
@@ -3705,17 +4396,33 @@ mod f04b9_persistent_service_journal_tests {
         let original = checkpoint();
         store_managed_txn_checkpoint(&dir, &original).unwrap();
         let mut pending = original.clone();
-        pending.journal.begin(&pending.plan, &pending.receipt,
-            "neebles-neebles-demo-agent.service", O::WriteUnit).unwrap();
+        pending
+            .journal
+            .begin(
+                &pending.plan,
+                &pending.receipt,
+                "neebles-neebles-demo-agent.service",
+                O::WriteUnit,
+            )
+            .unwrap();
         pending.generation = 1;
         store_managed_txn_checkpoint(&dir, &pending).unwrap();
         let mut loaded = load_managed_txn_checkpoint(&dir, &pending.module).unwrap();
-        assert!(loaded.journal.compensation_scope(&loaded.plan, &loaded.receipt).is_err());
-        loaded.journal.confirm("neebles-neebles-demo-agent.service", O::WriteUnit).unwrap();
+        assert!(loaded
+            .journal
+            .compensation_scope(&loaded.plan, &loaded.receipt)
+            .is_err());
+        loaded
+            .journal
+            .confirm("neebles-neebles-demo-agent.service", O::WriteUnit)
+            .unwrap();
         loaded.generation = 2;
         store_managed_txn_checkpoint(&dir, &loaded).unwrap();
-        assert!(load_managed_txn_checkpoint(&dir, &loaded.module).unwrap()
-            .journal.compensation_scope(&loaded.plan, &loaded.receipt).is_ok());
+        assert!(load_managed_txn_checkpoint(&dir, &loaded.module)
+            .unwrap()
+            .journal
+            .compensation_scope(&loaded.plan, &loaded.receipt)
+            .is_ok());
     }
 
     #[test]
@@ -3724,8 +4431,14 @@ mod f04b9_persistent_service_journal_tests {
         let mut next = old.clone();
         next.generation = 1;
         assert!(validate_managed_txn_successor(&old, &next).is_err());
-        next.journal.begin(&old.plan, &old.receipt,
-            "neebles-neebles-demo-agent.service", O::WriteUnit).unwrap();
+        next.journal
+            .begin(
+                &old.plan,
+                &old.receipt,
+                "neebles-neebles-demo-agent.service",
+                O::WriteUnit,
+            )
+            .unwrap();
         assert!(validate_managed_txn_successor(&old, &next).is_ok());
         next.candidate_commit = "c".repeat(40);
         assert!(validate_managed_txn_successor(&old, &next).is_err());
@@ -3762,10 +4475,17 @@ mod f04b9_persistent_service_journal_tests {
         let mut x = checkpoint();
         let u = "neebles-neebles-demo-agent.service";
         x.plan.steps[0].transition = T::Replace;
-        x.receipt.targets.insert(u.into(), R::OriginalUnit {
-            bytes: b"[Service]\nExecStart=/opt/neebles/modules/neebles-demo/bin/server\n".to_vec(),
-            sha256: "f".repeat(64), mode: 0o600, was_active: false, was_enabled: false,
-        });
+        x.receipt.targets.insert(
+            u.into(),
+            R::OriginalUnit {
+                bytes: b"[Service]\nExecStart=/opt/neebles/modules/neebles-demo/bin/server\n"
+                    .to_vec(),
+                sha256: "f".repeat(64),
+                mode: 0o600,
+                was_active: false,
+                was_enabled: false,
+            },
+        );
         assert!(encode_managed_txn_checkpoint(&x).is_err());
     }
 }
@@ -3778,23 +4498,40 @@ mod f04b8_mutation_journal_tests {
     use ManagedUpdateRollbackTarget as R;
 
     fn context(
-        unit: &str, transition: T, target: R,
+        unit: &str,
+        transition: T,
+        target: R,
     ) -> (ManagedServiceUpdatePlan, ManagedServiceRollbackReceipt) {
-        (ManagedServiceUpdatePlan {
-            steps: vec![ManagedServiceStep { unit: unit.into(), transition }],
-        }, ManagedServiceRollbackReceipt {
-            targets: BTreeMap::from([(unit.into(), target)]),
-        })
+        (
+            ManagedServiceUpdatePlan {
+                steps: vec![ManagedServiceStep {
+                    unit: unit.into(),
+                    transition,
+                }],
+            },
+            ManagedServiceRollbackReceipt {
+                targets: BTreeMap::from([(unit.into(), target)]),
+            },
+        )
     }
 
     fn original(active: bool, enabled: bool) -> R {
-        R::OriginalUnit { bytes: b"[Service]\\nExecStart=/test".to_vec(),
-            sha256: "original-sha256".into(), mode: 0o600,
-            was_active: active, was_enabled: enabled }
+        R::OriginalUnit {
+            bytes: b"[Service]\\nExecStart=/test".to_vec(),
+            sha256: "original-sha256".into(),
+            mode: 0o600,
+            was_active: active,
+            was_enabled: enabled,
+        }
     }
 
-    fn done(journal: &mut ManagedServiceMutationJournal, plan: &ManagedServiceUpdatePlan,
-            receipt: &ManagedServiceRollbackReceipt, unit: &str, op: O) {
+    fn done(
+        journal: &mut ManagedServiceMutationJournal,
+        plan: &ManagedServiceUpdatePlan,
+        receipt: &ManagedServiceRollbackReceipt,
+        unit: &str,
+        op: O,
+    ) {
         journal.begin(plan, receipt, unit, op).unwrap();
         journal.confirm(unit, op).unwrap();
     }
@@ -3802,7 +4539,10 @@ mod f04b8_mutation_journal_tests {
     #[test]
     fn empty_journal_does_not_invent_work() {
         let (p, r) = context("neebles-demo.service", T::Add, R::InitiallyVacant);
-        assert!(ManagedServiceMutationJournal::default().compensation_scope(&p, &r).unwrap().is_empty());
+        assert!(ManagedServiceMutationJournal::default()
+            .compensation_scope(&p, &r)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -3817,8 +4557,10 @@ mod f04b8_mutation_journal_tests {
         j.confirm(u, O::WriteUnit).unwrap();
         done(&mut j, &p, &r, u, O::ManagerReload);
         done(&mut j, &p, &r, u, O::Start);
-        assert_eq!(j.compensation_scope(&p, &r).unwrap().get(u),
-            Some(&ManagedUpdateCompensationTarget::RemoveVerifiedCreation));
+        assert_eq!(
+            j.compensation_scope(&p, &r).unwrap().get(u),
+            Some(&ManagedUpdateCompensationTarget::RemoveVerifiedCreation)
+        );
     }
 
     #[test]
@@ -3833,11 +4575,16 @@ mod f04b8_mutation_journal_tests {
         done(&mut j, &p, &r, u, O::WriteUnit);
         done(&mut j, &p, &r, u, O::ManagerReload);
         let scope = j.compensation_scope(&p, &r).unwrap();
-        assert_eq!(scope.get(u), Some(&ManagedUpdateCompensationTarget::RestoreOriginal {
-            bytes: b"[Service]\\nExecStart=/test".to_vec(),
-            sha256: "original-sha256".into(), mode: 0o600,
-            was_active: true, was_enabled: true,
-        }));
+        assert_eq!(
+            scope.get(u),
+            Some(&ManagedUpdateCompensationTarget::RestoreOriginal {
+                bytes: b"[Service]\\nExecStart=/test".to_vec(),
+                sha256: "original-sha256".into(),
+                mode: 0o600,
+                was_active: true,
+                was_enabled: true,
+            })
+        );
     }
 
     #[test]
@@ -3847,17 +4594,25 @@ mod f04b8_mutation_journal_tests {
         let mut j = ManagedServiceMutationJournal::default();
         done(&mut j, &p, &r, u, O::RemoveUnit);
         done(&mut j, &p, &r, u, O::ManagerReload);
-        assert!(matches!(j.compensation_scope(&p, &r).unwrap().get(u),
+        assert!(matches!(
+            j.compensation_scope(&p, &r).unwrap().get(u),
             Some(ManagedUpdateCompensationTarget::RestoreOriginal {
-                was_active: false, was_enabled: false, ..
-            })));
+                was_active: false,
+                was_enabled: false,
+                ..
+            })
+        ));
     }
 
     #[test]
     fn keep_and_old_optional_absent_do_not_grant_mutation() {
         let u = "neebles-demo.service";
         for transition in [T::Keep, T::Retire] {
-            let target = if transition == T::Keep { original(false, false) } else { R::OriginallyAbsent };
+            let target = if transition == T::Keep {
+                original(false, false)
+            } else {
+                R::OriginallyAbsent
+            };
             let (p, r) = context(u, transition, target);
             let mut j = ManagedServiceMutationJournal::default();
             assert!(j.begin(&p, &r, u, O::WriteUnit).is_err());
@@ -3872,8 +4627,10 @@ mod f04b8_mutation_journal_tests {
         let (p, r) = context(u, T::Replace, R::OriginallyAbsent);
         let mut j = ManagedServiceMutationJournal::default();
         done(&mut j, &p, &r, u, O::WriteUnit);
-        assert_eq!(j.compensation_scope(&p, &r).unwrap().get(u),
-            Some(&ManagedUpdateCompensationTarget::RemoveVerifiedCreation));
+        assert_eq!(
+            j.compensation_scope(&p, &r).unwrap().get(u),
+            Some(&ManagedUpdateCompensationTarget::RemoveVerifiedCreation)
+        );
     }
 
     #[test]
@@ -3893,7 +4650,8 @@ mod f04b8_mutation_journal_tests {
         let u = "neebles-demo.service";
         let (p, mut r) = context(u, T::Add, R::InitiallyVacant);
         let mut j = ManagedServiceMutationJournal::default();
-        r.targets.insert("foreign.service".into(), R::InitiallyVacant);
+        r.targets
+            .insert("foreign.service".into(), R::InitiallyVacant);
         assert!(j.begin(&p, &r, u, O::WriteUnit).is_err());
         assert!(j.compensation_scope(&p, &r).is_err());
     }
@@ -3916,30 +4674,56 @@ mod f04b4_rollback_receipt_tests {
 
     fn spec(unit: &str) -> ManagedServiceSpec {
         ManagedServiceSpec {
-            id: "daemon".into(), unit: unit.into(),
+            id: "daemon".into(),
+            unit: unit.into(),
             exec_start: "/opt/neebles/modules/example/bin/server".into(),
-            required: true, timeout_ms: 5000,
+            required: true,
+            timeout_ms: 5000,
         }
     }
-    fn old_unit() -> String { "neebles-example-server.service".into() }
-    fn new_unit() -> String { "neebles-example-new.service".into() }
-    fn digest(bytes: &[u8]) -> String { Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>() }
+    fn old_unit() -> String {
+        "neebles-example-server.service".into()
+    }
+    fn new_unit() -> String {
+        "neebles-example-new.service".into()
+    }
+    fn digest(bytes: &[u8]) -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    }
     fn fixture() -> (
-        BTreeMap<String, ManagedServiceSpec>, ManagedServiceUpdatePlan,
-        ManagedServiceUpdateBaseline, BTreeMap<String, (Vec<u8>, u32)>,
+        BTreeMap<String, ManagedServiceSpec>,
+        ManagedServiceUpdatePlan,
+        ManagedServiceUpdateBaseline,
+        BTreeMap<String, (Vec<u8>, u32)>,
     ) {
         let old = old_unit();
         let new = new_unit();
         let bytes = b"[Unit]\nDescription=Example\n".to_vec();
         let specs = BTreeMap::from([(old.clone(), spec(&old))]);
-        let plan = ManagedServiceUpdatePlan { steps: vec![
-            ManagedServiceStep { unit: old.clone(), transition: ManagedServiceTransition::Replace },
-            ManagedServiceStep { unit: new.clone(), transition: ManagedServiceTransition::Add },
-        ] };
+        let plan = ManagedServiceUpdatePlan {
+            steps: vec![
+                ManagedServiceStep {
+                    unit: old.clone(),
+                    transition: ManagedServiceTransition::Replace,
+                },
+                ManagedServiceStep {
+                    unit: new.clone(),
+                    transition: ManagedServiceTransition::Add,
+                },
+            ],
+        };
         let baseline = ManagedServiceUpdateBaseline {
-            previous: BTreeMap::from([(old.clone(), ManagedUpdateObservedUnit::Present {
-                was_active: false, was_enabled: true, unit_sha256: digest(&bytes),
-            })]),
+            previous: BTreeMap::from([(
+                old.clone(),
+                ManagedUpdateObservedUnit::Present {
+                    was_active: false,
+                    was_enabled: true,
+                    unit_sha256: digest(&bytes),
+                },
+            )]),
             reserved_new_units: BTreeSet::from([new]),
         };
         let files = BTreeMap::from([(old, (bytes, 0o644))]);
@@ -3949,11 +4733,18 @@ mod f04b4_rollback_receipt_tests {
     #[test]
     fn preserves_original_bytes_and_exact_disabled_running_state() {
         let (specs, plan, baseline, files) = fixture();
-        let receipt = build_managed_service_rollback_receipt(&specs, &plan, &baseline, &files).unwrap();
+        let receipt =
+            build_managed_service_rollback_receipt(&specs, &plan, &baseline, &files).unwrap();
         let old = old_unit();
         let target = receipt.targets.get(&old).unwrap();
         match target {
-            ManagedUpdateRollbackTarget::OriginalUnit { bytes, mode, was_active, was_enabled, sha256 } => {
+            ManagedUpdateRollbackTarget::OriginalUnit {
+                bytes,
+                mode,
+                was_active,
+                was_enabled,
+                sha256,
+            } => {
                 assert_eq!(bytes, &files[&old].0);
                 assert_eq!(*mode, 0o644);
                 assert!(!*was_active);
@@ -3962,7 +4753,10 @@ mod f04b4_rollback_receipt_tests {
             }
             other => panic!("expected original file, got {other:?}"),
         }
-        assert_eq!(receipt.targets.get(&new_unit()), Some(&ManagedUpdateRollbackTarget::InitiallyVacant));
+        assert_eq!(
+            receipt.targets.get(&new_unit()),
+            Some(&ManagedUpdateRollbackTarget::InitiallyVacant)
+        );
     }
 
     #[test]
@@ -3998,10 +4792,16 @@ mod f04b4_rollback_receipt_tests {
     fn optional_old_unit_absence_stays_absent() {
         let (mut specs, plan, mut baseline, mut files) = fixture();
         specs.get_mut(&old_unit()).unwrap().required = false;
-        baseline.previous.insert(old_unit(), ManagedUpdateObservedUnit::Absent);
+        baseline
+            .previous
+            .insert(old_unit(), ManagedUpdateObservedUnit::Absent);
         files.clear();
-        let receipt = build_managed_service_rollback_receipt(&specs, &plan, &baseline, &files).unwrap();
-        assert_eq!(receipt.targets[&old_unit()], ManagedUpdateRollbackTarget::OriginallyAbsent);
+        let receipt =
+            build_managed_service_rollback_receipt(&specs, &plan, &baseline, &files).unwrap();
+        assert_eq!(
+            receipt.targets[&old_unit()],
+            ManagedUpdateRollbackTarget::OriginallyAbsent
+        );
     }
 
     #[test]
@@ -4036,12 +4836,17 @@ fn classify_owned_service_presence(
         return Ok(false);
     }
     if load != "loaded" {
-        return Err(format!("declared service has unexpected LoadState '{load}'"));
+        return Err(format!(
+            "declared service has unexpected LoadState '{load}'"
+        ));
     }
-    if !matches!(active,
+    if !matches!(
+        active,
         "active" | "inactive" | "failed" | "activating" | "deactivating" | "reloading"
     ) {
-        return Err(format!("declared service has unknown ActiveState '{active}'"));
+        return Err(format!(
+            "declared service has unknown ActiveState '{active}'"
+        ));
     }
     // Even inactive and failed loaded units may be restarted by the user manager.
     Ok(true)
@@ -4065,7 +4870,11 @@ pub(crate) fn declared_user_services_present(module: &str) -> Result<bool, Strin
     let contract: UninstallContract = serde_json::from_value(uninstall.clone())
         .map_err(|e| format!("invalid installed service ownership: {e}"))?;
     validate(&contract, module, manifest.get("tray").is_some())?;
-    if !contract.extras.iter().any(|extra| matches!(extra, Extra::Service { .. })) {
+    if !contract
+        .extras
+        .iter()
+        .any(|extra| matches!(extra, Extra::Service { .. }))
+    {
         return Ok(false);
     }
 
@@ -4077,8 +4886,12 @@ pub(crate) fn declared_user_services_present(module: &str) -> Result<bool, Strin
     let mut present = false;
     for extra in &contract.extras {
         let Extra::Service {
-            name, exec_start, required, ..
-        } = extra else {
+            name,
+            exec_start,
+            required,
+            ..
+        } = extra
+        else {
             continue;
         };
         let unit = resolve(name, &contract, module)?;
@@ -4089,14 +4902,22 @@ pub(crate) fn declared_user_services_present(module: &str) -> Result<bool, Strin
         let metadata = match fs::symlink_metadata(&path) {
             Ok(meta) => Some(meta),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(format!("cannot inspect declared user unit '{unit}': {error}")),
+            Err(error) => {
+                return Err(format!(
+                    "cannot inspect declared user unit '{unit}': {error}"
+                ))
+            }
         };
         let (load, active) = systemd_state(uid, gid, &home, &unit)?;
         if let Some(meta) = metadata.as_ref() {
-            if !meta.file_type().is_file() || meta.uid() != uid || meta.gid() != gid
+            if !meta.file_type().is_file()
+                || meta.uid() != uid
+                || meta.gid() != gid
                 || meta.mode() & 0o022 != 0
             {
-                return Err(format!("declared service '{unit}' has unsafe ownership or mode"));
+                return Err(format!(
+                    "declared service '{unit}' has unsafe ownership or mode"
+                ));
             }
             let contents = fs::read_to_string(&path)
                 .map_err(|e| format!("cannot read declared service '{unit}': {e}"))?;
@@ -4116,14 +4937,26 @@ mod service_presence_gate_f04a_tests {
 
     #[test]
     fn an_inactive_but_installed_unit_is_still_a_resource() {
-        assert_eq!(classify_owned_service_presence(true, false, "loaded", "inactive"), Ok(true));
-        assert_eq!(classify_owned_service_presence(true, false, "loaded", "failed"), Ok(true));
-        assert_eq!(classify_owned_service_presence(true, true, "loaded", "active"), Ok(true));
+        assert_eq!(
+            classify_owned_service_presence(true, false, "loaded", "inactive"),
+            Ok(true)
+        );
+        assert_eq!(
+            classify_owned_service_presence(true, false, "loaded", "failed"),
+            Ok(true)
+        );
+        assert_eq!(
+            classify_owned_service_presence(true, true, "loaded", "active"),
+            Ok(true)
+        );
     }
 
     #[test]
     fn absent_optional_unit_is_not_a_resource() {
-        assert_eq!(classify_owned_service_presence(false, false, "not-found", "inactive"), Ok(false));
+        assert_eq!(
+            classify_owned_service_presence(false, false, "not-found", "inactive"),
+            Ok(false)
+        );
     }
 
     #[test]
@@ -4156,9 +4989,11 @@ fn certify_install_unit(contents: &str, module: &str, exec: &str) -> Result<(), 
     let mut section = "";
     let mut seen = BTreeSet::<(String, String)>::new();
     for line in contents.lines() {
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         if line.starts_with('[') && line.ends_with(']') {
-            section = &line[1..line.len()-1];
+            section = &line[1..line.len() - 1];
             if !matches!(section, "Unit" | "Service" | "Install") {
                 return Err("user service contains unsupported section".into());
             }
@@ -4168,13 +5003,16 @@ fn certify_install_unit(contents: &str, module: &str, exec: &str) -> Result<(), 
         if !seen.insert((section.into(), key.into())) {
             return Err("duplicate user service key".into());
         }
-        if section == "Unit" && key == "Description"
-            && !value.is_empty() && value.len() <= 160
-        {
+        if section == "Unit" && key == "Description" && !value.is_empty() && value.len() <= 160 {
             continue;
         }
-        if !expected.iter().any(|(s, k, v)| *s == section && *k == key && *v == value) {
-            return Err(format!("user service has unsupported or altered key {section}/{key}"));
+        if !expected
+            .iter()
+            .any(|(s, k, v)| *s == section && *k == key && *v == value)
+        {
+            return Err(format!(
+                "user service has unsupported or altered key {section}/{key}"
+            ));
         }
     }
     for (s, k, _) in expected {
@@ -4191,35 +5029,56 @@ pub fn install_declared_user_service(module: &str, resource_id: &str) -> Result<
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
     neebles_backend::domestic_construction::validate_domestic_construction_subject(module)?;
-    if resource_id.is_empty() || resource_id.len() > 128
-        || !resource_id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    if resource_id.is_empty()
+        || resource_id.len() > 128
+        || !resource_id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
     {
         return Err("user service resource id is invalid".into());
     }
     let module_root = PathBuf::from(format!("/opt/neebles/modules/{module}"));
     let manifest_path = module_root.join("manifest.json");
     let manifest: serde_json::Value = serde_json::from_slice(
-        &fs::read(&manifest_path).map_err(|e| format!("service manifest unavailable: {e}"))?
-    ).map_err(|e| format!("service manifest JSON: {e}"))?;
-    if manifest.get("schema").and_then(|v|v.as_u64()) != Some(4)
-        || manifest.get("name").and_then(|v|v.as_str()) != Some(module)
+        &fs::read(&manifest_path).map_err(|e| format!("service manifest unavailable: {e}"))?,
+    )
+    .map_err(|e| format!("service manifest JSON: {e}"))?;
+    if manifest.get("schema").and_then(|v| v.as_u64()) != Some(4)
+        || manifest.get("name").and_then(|v| v.as_str()) != Some(module)
     {
         return Err("user service installed manifest identity mismatch".into());
     }
     let contract: UninstallContract = serde_json::from_value(
-        manifest.get("uninstall").ok_or("user service has no uninstall contract")?.clone()
-    ).map_err(|e| format!("invalid service ownership declaration: {e}"))?;
+        manifest
+            .get("uninstall")
+            .ok_or("user service has no uninstall contract")?
+            .clone(),
+    )
+    .map_err(|e| format!("invalid service ownership declaration: {e}"))?;
     validate(&contract, module, manifest.get("tray").is_some())?;
-    let matches: Vec<_> = contract.extras.iter().filter(|extra| match extra {
-        Extra::Service { id, .. } => id == resource_id,
-        _ => false,
-    }).collect();
-    if matches.len() != 1 { return Err("user service resource is not uniquely declared".into()); }
+    let matches: Vec<_> = contract
+        .extras
+        .iter()
+        .filter(|extra| match extra {
+            Extra::Service { id, .. } => id == resource_id,
+            _ => false,
+        })
+        .collect();
+    if matches.len() != 1 {
+        return Err("user service resource is not uniquely declared".into());
+    }
     let (unit, exec_start) = match matches[0] {
-        Extra::Service { provider, name, exec_start, stop, remove, .. }
-            if provider == "systemd-user" && *remove && stop.disable => {
-            (resolve(name, &contract, module)?, resolve(exec_start, &contract, module)?)
-        }
+        Extra::Service {
+            provider,
+            name,
+            exec_start,
+            stop,
+            remove,
+            ..
+        } if provider == "systemd-user" && *remove && stop.disable => (
+            resolve(name, &contract, module)?,
+            resolve(exec_start, &contract, module)?,
+        ),
         _ => return Err("user service resource is not uninstall-governed".into()),
     };
     validate_service_name(module, &unit)?;
@@ -4228,40 +5087,45 @@ pub fn install_declared_user_service(module: &str, resource_id: &str) -> Result<
     let folder = module_root.join("integration/systemd-user");
     for directory in [module_root.join("integration"), folder.clone()] {
         let m = fs::symlink_metadata(&directory)
-            .map_err(|e|format!("user service source directory: {e}"))?;
+            .map_err(|e| format!("user service source directory: {e}"))?;
         if !m.file_type().is_dir() || m.mode() & 0o002 != 0 {
             return Err("unsafe user service source directory".into());
         }
     }
     let source = folder.join(&unit);
-    let source_meta = fs::symlink_metadata(&source)
-        .map_err(|e| format!("user service source unit: {e}"))?;
+    let source_meta =
+        fs::symlink_metadata(&source).map_err(|e| format!("user service source unit: {e}"))?;
     if !source_meta.file_type().is_file() || source_meta.mode() & 0o002 != 0 {
         return Err("untrusted user service source unit".into());
     }
-    let content = fs::read_to_string(&source)
-        .map_err(|e| format!("cannot read user service unit: {e}"))?;
+    let content =
+        fs::read_to_string(&source).map_err(|e| format!("cannot read user service unit: {e}"))?;
     certify_install_unit(&content, module, &exec_start)?;
 
     let (uid, gid) = crate::runtime_identity::desktop_identity()?;
-    if uid == 0 { return Err("refusing root as desktop service user".into()); }
+    if uid == 0 {
+        return Err("refusing root as desktop service user".into());
+    }
     let home = desktop_home(uid)?;
     let mut dir = home.clone();
     for segment in [".config", "systemd", "user"] {
         dir.push(segment);
         match fs::symlink_metadata(&dir) {
             Ok(meta) => {
-                if !meta.file_type().is_dir() || meta.uid() != uid
-                    || meta.gid() != gid || meta.mode() & 0o002 != 0 {
+                if !meta.file_type().is_dir()
+                    || meta.uid() != uid
+                    || meta.gid() != gid
+                    || meta.mode() & 0o002 != 0
+                {
                     return Err(format!("unsafe systemd user directory {}", dir.display()));
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                fs::create_dir(&dir).map_err(|e|format!("create systemd directory: {e}"))?;
+                fs::create_dir(&dir).map_err(|e| format!("create systemd directory: {e}"))?;
                 std::os::unix::fs::chown(&dir, Some(uid), Some(gid))
-                    .map_err(|e|format!("set systemd directory owner: {e}"))?;
+                    .map_err(|e| format!("set systemd directory owner: {e}"))?;
                 fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))
-                    .map_err(|e|format!("secure systemd directory: {e}"))?;
+                    .map_err(|e| format!("secure systemd directory: {e}"))?;
             }
             Err(e) => return Err(format!("cannot inspect systemd user directory: {e}")),
         }
@@ -4269,23 +5133,37 @@ pub fn install_declared_user_service(module: &str, resource_id: &str) -> Result<
     let target = dir.join(&unit);
     let created = match fs::symlink_metadata(&target) {
         Ok(meta) => {
-            if !meta.file_type().is_file() || meta.uid() != uid || meta.gid() != gid
-                || meta.mode() & 0o077 != 0 || fs::read_to_string(&target).ok().as_deref() != Some(&content)
+            if !meta.file_type().is_file()
+                || meta.uid() != uid
+                || meta.gid() != gid
+                || meta.mode() & 0o077 != 0
+                || fs::read_to_string(&target).ok().as_deref() != Some(&content)
             {
-                return Err("existing systemd unit is foreign or modified; refusing overwrite".into());
+                return Err(
+                    "existing systemd unit is foreign or modified; refusing overwrite".into(),
+                );
             }
             false
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let mut file = fs::OpenOptions::new().write(true).create_new(true)
-                .mode(0o600).open(&target)
-                .map_err(|e|format!("create user service unit exclusively: {e}"))?;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&target)
+                .map_err(|e| format!("create user service unit exclusively: {e}"))?;
             let rc = unsafe { libc::fchown(file.as_raw_fd(), uid, gid) };
             if rc != 0 {
                 let _ = fs::remove_file(&target);
-                return Err(format!("set user service unit owner: {}", std::io::Error::last_os_error()));
+                return Err(format!(
+                    "set user service unit owner: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
-            if let Err(e) = file.write_all(content.as_bytes()).and_then(|_|file.sync_all()) {
+            if let Err(e) = file
+                .write_all(content.as_bytes())
+                .and_then(|_| file.sync_all())
+            {
                 let _ = fs::remove_file(&target);
                 return Err(format!("write user service unit: {e}"));
             }
@@ -4299,7 +5177,9 @@ pub fn install_declared_user_service(module: &str, resource_id: &str) -> Result<
         systemctl_as_desktop(uid, gid, &home, &["enable", "--now", &unit])?;
         systemctl_as_desktop(uid, gid, &home, &["is-active", "--quiet", &unit])?;
         let enabled = systemctl_as_desktop(uid, gid, &home, &["is-enabled", &unit])?;
-        if enabled != "enabled" { return Err("user service unit did not become enabled".into()); }
+        if enabled != "enabled" {
+            return Err("user service unit did not become enabled".into());
+        }
         validate_manager_fragment(uid, gid, &home, &unit, &target, &exec_start)?;
         Ok::<(), String>(())
     })();
@@ -4307,9 +5187,12 @@ pub fn install_declared_user_service(module: &str, resource_id: &str) -> Result<
         if created {
             let stop = systemctl_as_desktop(uid, gid, &home, &["disable", "--now", &unit]);
             if let Err(cleanup) = stop {
-                return Err(format!("user service install failed: {error}; CRITICAL: rollback failed: {cleanup}"));
+                return Err(format!(
+                    "user service install failed: {error}; CRITICAL: rollback failed: {cleanup}"
+                ));
             }
-            fs::remove_file(&target).map_err(|e|format!("user service rollback removal failed: {e}"))?;
+            fs::remove_file(&target)
+                .map_err(|e| format!("user service rollback removal failed: {e}"))?;
             systemctl_as_desktop(uid, gid, &home, &["daemon-reload"])?;
         }
         return Err(error);
@@ -4323,8 +5206,23 @@ mod user_service_install_contract_tests {
     #[test]
     fn allow_minimal_certified_unit() {
         let unit = "[Unit]\nDescription=Secrets daemon\nAfter=basic.target\nConditionPathExists=/opt/neebles/modules/example/manifest.json\n\n[Service]\nType=simple\nExecStart=/opt/neebles/modules/example/bin/service --serve\nRestart=on-failure\nRestartSec=2\nUMask=0077\nNoNewPrivileges=true\n\n[Install]\nWantedBy=default.target\n";
-        assert!(certify_install_unit(unit, "example", "/opt/neebles/modules/example/bin/service --serve").is_ok());
-        assert!(certify_install_unit(&unit.replace("WantedBy=default.target", "WantedBy=multi-user.target"), "example", "/opt/neebles/modules/example/bin/service --serve").is_err());
-        assert!(certify_install_unit(&unit.replace("Type=simple", "ExecStartPre=/bin/true\nType=simple"), "example", "/opt/neebles/modules/example/bin/service --serve").is_err());
+        assert!(certify_install_unit(
+            unit,
+            "example",
+            "/opt/neebles/modules/example/bin/service --serve"
+        )
+        .is_ok());
+        assert!(certify_install_unit(
+            &unit.replace("WantedBy=default.target", "WantedBy=multi-user.target"),
+            "example",
+            "/opt/neebles/modules/example/bin/service --serve"
+        )
+        .is_err());
+        assert!(certify_install_unit(
+            &unit.replace("Type=simple", "ExecStartPre=/bin/true\nType=simple"),
+            "example",
+            "/opt/neebles/modules/example/bin/service --serve"
+        )
+        .is_err());
     }
 }

@@ -2,7 +2,7 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Version:** **2.0.7** (candidato en desarrollo; no publicado).
+**Version:** **2.0.8** (candidato middleware IPC; pendiente compilación, QA y publicación). Boss 2.0.7 es la última versión instalada certificada en la auditoría del 23/10/2026.
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -1133,3 +1133,7 @@ If adding a normal new module requires a module-specific branch in Boss, the abs
 The intended model is:
 
 > **Declare the module, certify its material/worlds in CUSTOM/Esbirro, expose required OS authority, let Boss govern the generic contract, and keep module implementation outside the core.**
+
+## Boss 2.0.8 — IPC execution middleware (candidate)
+
+See `IPC_MIDDLEWARE_2_0_8.md` for socket ownership, wire formats, installed provider IPC grants, per-request execution deadlines, jobs, backward compatibility and certification requirements. Boss 2.0.8 is **NOT** a published release until all controlled build and runtime gates pass.

@@ -454,7 +454,11 @@ fn dispatch_module(module: &str, request: ExecutionRequest) -> ExecutionResponse
                 request.args,
                 None,
                 context,
-                None,
+                request
+                    .execution
+                    .as_ref()
+                    .and_then(|options| options.timeout_ms)
+                    .map(std::time::Duration::from_millis),
             ) {
                 Ok(ModuleMessage::Response {
                     ok,
@@ -715,6 +719,7 @@ mod module_surface_relay_contract_tests {
 
     fn request(args: &[&str]) -> ExecutionRequest {
         ExecutionRequest {
+            execution: None,
             target: "boss".to_string(),
             action: Some("module-surface-changed".to_string()),
             args: args.iter().map(|value| value.to_string()).collect(),
@@ -749,7 +754,6 @@ mod module_surface_relay_contract_tests {
     }
 }
 
-
 /*
  * Boss 2.0.2 F03C: persistent, read-only snapshot of authenticated publications.
  * The module publishes ONLY over modules.sock. This administrative read path
@@ -780,6 +784,7 @@ mod module_variables_snapshot_dispatch_tests {
 
     fn request(args: Vec<&str>) -> ExecutionRequest {
         ExecutionRequest {
+            execution: None,
             target: "boss".to_string(),
             action: Some("module-variables-snapshot".to_string()),
             args: args.into_iter().map(str::to_string).collect(),
@@ -823,6 +828,7 @@ mod module_governor_action_dispatch_tests {
 
     fn request(args: Vec<&str>) -> ExecutionRequest {
         ExecutionRequest {
+            execution: None,
             target: "boss".to_string(),
             action: Some("module-governor-action".to_string()),
             args: args.into_iter().map(str::to_string).collect(),
@@ -866,6 +872,7 @@ mod surface_action_dispatch_tests {
 
     fn request(args: Vec<&str>) -> ExecutionRequest {
         ExecutionRequest {
+            execution: None,
             target: "boss".to_string(),
             action: Some("surface-action".to_string()),
             args: args.into_iter().map(str::to_string).collect(),
@@ -1074,6 +1081,7 @@ mod persistent_runtime_dispatch_tests {
 
     fn request(action: &str, args: &[&str]) -> ExecutionRequest {
         ExecutionRequest {
+            execution: None,
             target: "boss".to_string(),
             action: Some(action.to_string()),
             args: args.iter().map(|value| value.to_string()).collect(),
@@ -1332,6 +1340,7 @@ mod domestic_construction_dispatch_tests {
 
     fn request(args: Vec<&str>) -> ExecutionRequest {
         ExecutionRequest {
+            execution: None,
             target: "boss".to_string(),
             action: Some("domestic-construction-execute".to_string()),
             args: args.into_iter().map(str::to_string).collect(),

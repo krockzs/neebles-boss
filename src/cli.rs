@@ -46,6 +46,7 @@ pub fn run(args: Vec<String>) -> i32 {
 
 fn start_boss(session_autostart: bool) -> Result<(), String> {
     let request = ExecutionRequest {
+        execution: None,
         target: "boss".to_string(),
         action: Some(
             if session_autostart {
@@ -75,6 +76,7 @@ fn start_boss(session_autostart: bool) -> Result<(), String> {
 
 fn notify_boss_config_changed() -> Result<(), String> {
     let request = ExecutionRequest {
+        execution: None,
         target: "boss".to_string(),
         action: Some("config-changed".to_string()),
         args: Vec::new(),
@@ -107,7 +109,41 @@ fn request_json(args: &[String]) -> i32 {
         }
     };
 
-    let response = dispatcher::dispatch(request);
+    // --request-json is a short-lived local process, sometimes holding the
+    // explicit authority required for Boss Update. It must NOT dispatch an
+    // asynchronous job that dies with the CLI, nor silently impersonate a
+    // daemon-side privileged operation.
+    if request.execution.is_some() {
+        eprintln!("N.E.E.B.L.E.S.: --request-json does not accept execution metadata; use the persistent Boss IPC for finite/async requests");
+        return 2;
+    }
+    let policy = match crate::ipc_middleware::Policy::for_internal_request(
+        &request,
+        crate::ipc_middleware::Surface::Administrative,
+    ) {
+        Ok(policy) => policy,
+        Err(error) => {
+            eprintln!("N.E.E.B.L.E.S.: invalid local IPC execution policy: {error}");
+            return 2;
+        }
+    };
+    let response_value = match crate::ipc_middleware::run_inline(policy, || {
+        serde_json::to_value(dispatcher::dispatch(request)).unwrap_or_else(|error|
+            serde_json::json!({"ok":false,"code":1,"error":{"kind":"serialize","message":error.to_string()}}))
+    }) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("N.E.E.B.L.E.S.: local IPC middleware rejected execution: {error}");
+            return 2;
+        }
+    };
+    let response: crate::request::ExecutionResponse = match serde_json::from_value(response_value) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("N.E.E.B.L.E.S.: invalid local IPC response: {error}");
+            return 1;
+        }
+    };
     match serde_json::to_string(&response) {
         Ok(json) => println!("{json}"),
         Err(error) => {
@@ -656,6 +692,7 @@ fn modules_command(args: &[String]) -> i32 {
             };
 
             let request = ExecutionRequest {
+        execution: None,
                 target: "boss".to_string(),
                 action:
                     Some("module-governor-action".to_string()),
@@ -799,6 +836,7 @@ fn modules_command(args: &[String]) -> i32 {
                 Some("list") => {
                     let request =
                         ExecutionRequest {
+        execution: None,
                             target:
                                 "boss".to_string(),
 
@@ -870,6 +908,7 @@ fn modules_command(args: &[String]) -> i32 {
 
                     let request =
                         ExecutionRequest {
+        execution: None,
                             target:
                                 "boss".to_string(),
 
@@ -1120,6 +1159,7 @@ fn notify_command(args: &[String]) -> i32 {
         );
     }
     let request = ExecutionRequest {
+        execution: None,
         target: "notifications".to_string(),
         action: Some("emit".to_string()),
         args: vec![severity.clone(), title, message],
@@ -1147,6 +1187,7 @@ fn domestic_command(args: &[String]) -> i32 {
             }
 
             let request = ExecutionRequest {
+                execution: None,
                 target: "boss".to_string(),
                 action: Some("domestic-construction-execute".to_string()),
                 args: vec![args[1].clone(), args[2].clone()],
@@ -1198,6 +1239,7 @@ fn module_command(target: &str, args: &[String]) -> i32 {
     };
 
     let request = ExecutionRequest {
+        execution: None,
         target: target.to_string(),
         action,
         args: rest,

@@ -152,6 +152,21 @@ pub fn request(request: &ExecutionRequest) -> Result<ExecutionResponse, String> 
         )
     })?;
 
+    // The administrative client uses Boss-owned execution defaults, not caller overrides.
+    // A finite read gets a small transport margin. Legacy mutating operations
+    // retain their original unbounded wait to avoid aborting an update halfway.
+    let policy = crate::ipc_middleware::Policy::for_internal_request(
+        request,
+        crate::ipc_middleware::Surface::Administrative,
+    )?;
+    if let Some(budget) = policy.timeout {
+        stream
+            .set_read_timeout(Some(
+                budget.saturating_add(std::time::Duration::from_secs(5)),
+            ))
+            .map_err(|error| format!("could not configure Boss IPC client deadline: {error}"))?;
+    }
+
     let payload = serde_json::to_vec(request)
         .map_err(|error| format!("could not serialize ExecutionRequest: {error}"))?;
 
@@ -303,6 +318,22 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         format!("invalid ExecutionRequest received through Unix socket: {error}")
     })?;
 
+    // The administrative socket rejects caller-chosen execution metadata.
+    // Dynamic async and timeout_ms belong to the authenticated modules.sock channel.
+    if request.execution.is_some() {
+        let response = ExecutionResponse::fail(
+            2,
+            "invalid_execution_policy",
+            "administrative socket policy belongs to Boss; use modules.sock for dynamic execution",
+        );
+        let payload = serde_json::to_vec(&response)
+            .map_err(|error| format!("cannot serialize administrative policy error: {error}"))?;
+        stream
+            .write_all(&payload)
+            .map_err(|error| format!("cannot return administrative policy error: {error}"))?;
+        return Ok(());
+    }
+
     if request.target == "events" {
         match request.action.as_deref() {
             Some("subscribe") => {
@@ -317,7 +348,41 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         }
     }
 
-    let response = dispatcher::dispatch(request);
+    // Administrative requests use the same execution engine as modules.sock.
+    // Stream subscriptions and UI leases are handled above; they are NOT jobs.
+    let response = if request.target == "ipc.middleware" {
+        match (request.action.as_deref(), request.args.first()) {
+            (Some("status"), Some(id)) => match crate::ipc_middleware::status("admin", id) {
+                Ok(value) => ExecutionResponse::ok(Some(value)),
+                Err(error) => ExecutionResponse::fail(1, "ipc_job_status", error),
+            },
+            _ => ExecutionResponse::fail(
+                2,
+                "invalid_ipc_action",
+                "expected ipc.middleware status <job_id>",
+            ),
+        }
+    } else {
+        use crate::ipc_middleware::{Outcome, Policy, Surface};
+        match Policy::for_internal_request(&request, Surface::Administrative) {
+            Err(error) => ExecutionResponse::fail(2, "invalid_execution_policy", error),
+            Ok(policy) => match crate::ipc_middleware::run(
+                "admin".to_string(), policy, move || {
+                    serde_json::to_value(dispatcher::dispatch(request)).unwrap_or_else(|error|
+                        serde_json::json!({"ok":false,"code":1,"error":{"kind":"serialize","message":error.to_string()}}))
+                },
+            ) {
+                Ok(Outcome::Complete(value)) => serde_json::from_value(value).unwrap_or_else(|error|
+                    ExecutionResponse::fail(1, "ipc_response", error.to_string())),
+                Ok(Outcome::Accepted(job_id)) => ExecutionResponse::ok(Some(serde_json::json!({
+                    "job_id": job_id, "state": "running"
+                }))),
+                Ok(Outcome::TimedOut(job_id)) => ExecutionResponse::fail(124, "ipc_deadline_exceeded",
+                    format!("deadline exceeded; work may continue; query ipc.middleware status {job_id}")),
+                Err(error) => ExecutionResponse::fail(1, "ipc_execution", error),
+            },
+        }
+    };
 
     let payload = serde_json::to_vec(&response).map_err(|error| {
         format!("could not serialize ExecutionResponse for Unix socket: {error}")

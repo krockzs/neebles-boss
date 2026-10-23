@@ -267,6 +267,43 @@ pub enum ModuleMessage {
         activation_token: String,
     },
 
+    // Runtime-originated governed request. Unlike Invoke (Boss -> runtime),
+    // this may only arrive from the physically authenticated session owner.
+    Execute {
+        id: String,
+        module: String,
+        session_id: String,
+        target: String,
+        contract: String,
+        endpoint: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        payload: Option<Value>,
+        #[serde(default)]
+        context: BTreeMap<String, Value>,
+        #[serde(default)]
+        execution: Option<crate::ipc_middleware::ExecutionOptions>,
+    },
+    ExecuteReply {
+        id: String,
+        module: String,
+        session_id: String,
+        response: Value,
+    },
+    JobQuery {
+        id: String,
+        module: String,
+        session_id: String,
+        job_id: String,
+    },
+    JobSnapshot {
+        id: String,
+        module: String,
+        session_id: String,
+        snapshot: Value,
+    },
+
     Invoke {
         id: String,
         module: String,
@@ -584,7 +621,9 @@ mod live_variables_protocol_tests {
         let variables = [
             ("master-key".to_string(), "enabled".to_string()),
             ("vault".to_string(), "unlocked".to_string()),
-        ].into_iter().collect();
+        ]
+        .into_iter()
+        .collect();
         let message = ModuleMessage::VariablesPublish {
             module: "neebles-secrets".into(),
             session_id: "test-session".into(),
@@ -593,7 +632,11 @@ mod live_variables_protocol_tests {
         let serialized = serde_json::to_string(&message).unwrap();
         assert!(serialized.contains("\"type\":\"variables_publish\""));
         match serde_json::from_str::<ModuleMessage>(&serialized).unwrap() {
-            ModuleMessage::VariablesPublish { module, session_id, variables } => {
+            ModuleMessage::VariablesPublish {
+                module,
+                session_id,
+                variables,
+            } => {
                 assert_eq!(module, "neebles-secrets");
                 assert_eq!(session_id, "test-session");
                 assert_eq!(variables["master-key"], "enabled");
@@ -612,7 +655,11 @@ mod live_variables_protocol_tests {
         };
         let serialized = serde_json::to_string(&message).unwrap();
         match serde_json::from_str::<ModuleMessage>(&serialized).unwrap() {
-            ModuleMessage::VariablesPublished { module, session_id, changed } => {
+            ModuleMessage::VariablesPublished {
+                module,
+                session_id,
+                changed,
+            } => {
                 assert_eq!(module, "neebles-secrets");
                 assert_eq!(session_id, "test-session");
                 assert!(changed);
@@ -633,9 +680,52 @@ mod service_registration_wire_tests {
             module: "neebles-secrets".into(),
             session_id: "daemon-1".into(),
             unit: "neebles-neebles-secrets-daemon.service".into(),
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(value["type"], "register_service");
         assert_eq!(value["unit"], "neebles-neebles-secrets-daemon.service");
         assert_eq!(value["session_id"], "daemon-1");
+    }
+}
+
+#[cfg(test)]
+mod middleware_protocol_tests {
+    use super::*;
+    #[test]
+    fn runtime_request_roundtrips_dynamic_execution_options() {
+        let msg = ModuleMessage::Execute {
+            id: "test-1".into(),
+            module: "consumer".into(),
+            session_id: "session-1".into(),
+            target: "provider".into(),
+            contract: "commands".into(),
+            endpoint: "fetch".into(),
+            args: Vec::new(),
+            payload: None,
+            context: BTreeMap::new(),
+            execution: Some(crate::ipc_middleware::ExecutionOptions {
+                asynchronous: true,
+                timeout_ms: Some(300_000),
+                max_retries: Some(3),
+                retry_delay_ms: Some(100),
+            }),
+        };
+        let raw = serde_json::to_value(&msg).unwrap();
+        assert_eq!(raw["execution"]["async"], true);
+        assert_eq!(raw["execution"]["timeout_ms"], 300_000);
+        assert_eq!(raw["execution"]["max_retries"], 3);
+        assert_eq!(raw["execution"]["retry_delay_ms"], 100);
+        assert_eq!(raw["type"], "execute");
+        let decoded: ModuleMessage = serde_json::from_value(raw).unwrap();
+        assert!(matches!(decoded, ModuleMessage::Execute { .. }));
+    }
+    #[test]
+    fn previous_runtime_messages_keep_protocol_v1() {
+        let msg = ModuleMessage::Ping {
+            module: "old".into(),
+            session_id: "s".into(),
+        };
+        assert_eq!(MODULES_PROTOCOL_VERSION, 1);
+        assert_eq!(serde_json::to_value(msg).unwrap()["type"], "ping");
     }
 }

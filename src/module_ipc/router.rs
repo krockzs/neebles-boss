@@ -7,7 +7,7 @@ use crate::{modules, privileges};
 use serde_json::Value;
 
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /*
  * Invoke one endpoint through its installed declarative contract.
@@ -33,6 +33,29 @@ pub fn invoke_declared(
     payload: Option<Value>,
     context: BTreeMap<String, Value>,
     timeout: Option<Duration>,
+) -> Result<ModuleMessage, String> {
+    invoke_declared_with_retry(
+        module,
+        contract_type,
+        endpoint_name,
+        args,
+        payload,
+        context,
+        timeout,
+        crate::ipc_middleware::RetryPolicy::legacy(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn invoke_declared_with_retry(
+    module: &str,
+    contract_type: &str,
+    endpoint_name: &str,
+    args: Vec<String>,
+    payload: Option<Value>,
+    context: BTreeMap<String, Value>,
+    timeout: Option<Duration>,
+    retries: crate::ipc_middleware::RetryPolicy,
 ) -> Result<ModuleMessage, String> {
     if module.trim().is_empty() {
         return Err("module name cannot be empty".to_string());
@@ -73,12 +96,15 @@ pub fn invoke_declared(
      * require that the currently connected runtime actually
      * advertised this declared endpoint.
      */
-    let runtime = runtime_registry().get(module)?.ok_or_else(|| {
-        format!(
-            "module '{}' declares '{}:{}' but has no registered runtime",
-            module, contract_type, endpoint_name
-        )
-    })?;
+    let wait_started = Instant::now();
+    let runtime = retries
+        .wait_for_available(timeout, || runtime_registry().get(module))?
+        .ok_or_else(|| {
+            format!(
+                "module '{}' declares '{}:{}' but has no registered runtime",
+                module, contract_type, endpoint_name
+            )
+        })?;
 
     let advertised = runtime
         .endpoints
@@ -103,6 +129,20 @@ pub fn invoke_declared(
      *
      * Callers cannot override them.
      */
+    // Retry delays count against the total transport deadline. Once a provider
+    // is registered, invoke exactly once. Never replay a delivered write.
+    let remaining = match timeout {
+        Some(limit) => Some(
+            limit
+                .checked_sub(wait_started.elapsed())
+                .filter(|time| !time.is_zero())
+                .ok_or_else(|| {
+                    "IPC pre-dispatch deadline exceeded; request was not sent".to_string()
+                })?,
+        ),
+        None => None,
+    };
+
     client::invoke(
         module,
         contract_type,
@@ -112,6 +152,6 @@ pub fn invoke_declared(
         args,
         payload,
         context,
-        timeout,
+        remaining,
     )
 }

@@ -6,6 +6,7 @@ mod critical_update;
 mod dispatcher;
 mod external;
 mod ipc;
+mod ipc_middleware;
 mod languages;
 mod lifecycle;
 mod lifecycle_arsenal;

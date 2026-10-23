@@ -338,6 +338,12 @@ pub struct RegistryModule {
     pub short_name: String,
 
     pub depends_install: BTreeMap<String, RegistryInstallDependency>,
+
+    // Explicit IPC capabilities granted by this provider to named consumers.
+    // Values are logical "contract:endpoint" declarations; depends_install is
+    // NOT an IPC permission grant. Empty by default: fail closed.
+    #[serde(default)]
+    pub ipc_invoke_allow: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -376,7 +382,9 @@ fn valid_registry_text(value: &str, max_chars: usize) -> bool {
 fn valid_registry_locale(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 32
-        && value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
 }
 
 pub fn validate_registry_messages(
@@ -390,7 +398,10 @@ pub fn validate_registry_messages(
 
     for (locale, text) in &boss.messages {
         if !valid_registry_locale(locale) || !valid_registry_text(text, 1024) {
-            return Err(format!("invalid registry-boss message for locale '{}'", locale));
+            return Err(format!(
+                "invalid registry-boss message for locale '{}'",
+                locale
+            ));
         }
         if !text.contains("{module}") || !text.contains("[dependents]") {
             return Err(format!(
@@ -517,6 +528,39 @@ fn validate_registry(registry: &Registry) -> Result<(), String> {
         if !valid_registry_text(&module.short_name, 64) {
             return Err(format!("module '{}' has invalid registry short_name", name));
         }
+        if module.ipc_invoke_allow.len() > 128 {
+            return Err(format!("module '{name}' grants too many IPC consumers"));
+        }
+        for (consumer, endpoints) in &module.ipc_invoke_allow {
+            if consumer == name
+                || !valid_module_id(consumer)
+                || !registry.modules.contains_key(consumer)
+                || endpoints.len() > 256
+                || endpoints.is_empty()
+            {
+                return Err(format!(
+                    "module '{name}' has invalid IPC grant consumer '{consumer}'"
+                ));
+            }
+            for endpoint in endpoints {
+                let (contract, logical) = endpoint.split_once(':').unwrap_or(("", ""));
+                if contract.is_empty()
+                    || logical.is_empty()
+                    || contract.len() > 128
+                    || logical.len() > 128
+                    || !contract
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+                    || !logical
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+                {
+                    return Err(format!(
+                        "module '{name}' has invalid IPC grant endpoint '{endpoint}'"
+                    ));
+                }
+            }
+        }
         if module.depends_install.len() > 128 {
             return Err(format!("module '{}' declares too many dependencies", name));
         }
@@ -537,9 +581,7 @@ fn validate_registry(registry: &Registry) -> Result<(), String> {
                 ));
             }
             for (variable, expected) in &dependency.variables {
-                if !valid_registry_text(variable, 128)
-                    || !valid_registry_text(expected, 512)
-                {
+                if !valid_registry_text(variable, 128) || !valid_registry_text(expected, 512) {
                     return Err(format!(
                         "module '{}' dependency '{}' declares invalid String pair",
                         name, provider
@@ -560,11 +602,15 @@ fn validate_registry(registry: &Registry) -> Result<(), String> {
             return Ok(());
         }
         if !visiting.insert(name.to_string()) {
-            return Err(format!("registry depends_install cycle involving '{}'", name));
+            return Err(format!(
+                "registry depends_install cycle involving '{}'",
+                name
+            ));
         }
-        let entry = registry.modules.get(name).ok_or_else(|| {
-            format!("missing registry module '{}' during cycle validation", name)
-        })?;
+        let entry = registry
+            .modules
+            .get(name)
+            .ok_or_else(|| format!("missing registry module '{}' during cycle validation", name))?;
         for provider in entry.depends_install.keys() {
             visit(registry, provider, visiting, visited)?;
         }
@@ -595,24 +641,27 @@ mod registry_schema3_f02_tests {
         parsed
     }
 
-    fn catalogs() -> (RegistryBossMessages, BTreeMap<String, RegistryModuleMessages>) {
-        let boss = serde_json::from_str::<RegistryBossMessages>(
-            include_str!("../registry/registry-boss.json"),
-        )
+    fn catalogs() -> (
+        RegistryBossMessages,
+        BTreeMap<String, RegistryModuleMessages>,
+    ) {
+        let boss = serde_json::from_str::<RegistryBossMessages>(include_str!(
+            "../registry/registry-boss.json"
+        ))
         .unwrap();
         let mut modules = BTreeMap::new();
         modules.insert(
             "neebles-connect".into(),
-            serde_json::from_str::<RegistryModuleMessages>(
-                include_str!("../registry/registry-connect.json"),
-            )
+            serde_json::from_str::<RegistryModuleMessages>(include_str!(
+                "../registry/registry-connect.json"
+            ))
             .unwrap(),
         );
         modules.insert(
             "neebles-secrets".into(),
-            serde_json::from_str::<RegistryModuleMessages>(
-                include_str!("../registry/registry-secrets.json"),
-            )
+            serde_json::from_str::<RegistryModuleMessages>(include_str!(
+                "../registry/registry-secrets.json"
+            ))
             .unwrap(),
         );
         (boss, modules)
@@ -624,9 +673,18 @@ mod registry_schema3_f02_tests {
         assert_eq!(registry.schema, 3);
         assert_eq!(registry.modules.len(), 2);
         assert!(!registry.modules.contains_key("test-module"));
+        // These are real runtime state variables published by Secrets and
+        // required by Connect at installation. Do not reduce the dependency
+        // to mere module presence: it would weaken installation governance.
+        let secrets_requirements =
+            &registry.modules["neebles-connect"].depends_install["neebles-secrets"].variables;
         assert_eq!(
-            registry.modules["neebles-connect"].depends_install["neebles-secrets"].variables.len(),
-            0, // Presence-only for the first 2.0.2 integration; no fictitious vault signals.
+            secrets_requirements.get("master_key").map(String::as_str),
+            Some("true"),
+        );
+        assert_eq!(
+            secrets_requirements.get("unblock").map(String::as_str),
+            Some("true"),
         );
         validate_registry(&registry).unwrap();
         let (boss, modules) = catalogs();
@@ -640,28 +698,33 @@ mod registry_schema3_f02_tests {
         old.schema = 2;
         assert!(validate_registry(&old).is_err());
         let mut unknown = serde_json::to_value(registry).unwrap();
-        unknown["modules"]["neebles-connect"]["unsafe_future_field"] =
-            serde_json::json!("bypass");
+        unknown["modules"]["neebles-connect"]["unsafe_future_field"] = serde_json::json!("bypass");
         assert!(serde_json::from_value::<Registry>(unknown).is_err());
     }
 
     #[test]
     fn multiple_opaque_string_variables_are_preserved() {
         let mut registry = registry();
-        registry.modules.get_mut("neebles-connect").unwrap().depends_install.insert(
-            "neebles-secrets".into(),
-            RegistryInstallDependency {
-                variables: BTreeMap::from([
-                    ("opaque.alpha".into(), "READY".into()),
-                    ("master-key".into(), "enabled".into()),
-                ]),
-            },
-        );
+        registry
+            .modules
+            .get_mut("neebles-connect")
+            .unwrap()
+            .depends_install
+            .insert(
+                "neebles-secrets".into(),
+                RegistryInstallDependency {
+                    variables: BTreeMap::from([
+                        ("opaque.alpha".into(), "READY".into()),
+                        ("master-key".into(), "enabled".into()),
+                    ]),
+                },
+            );
         validate_registry(&registry).unwrap();
         let (_, modules) = catalogs();
         let boss = catalogs().0;
         validate_registry_messages(&registry, &boss, &modules).unwrap();
-        let actual = &registry.modules["neebles-connect"].depends_install["neebles-secrets"].variables;
+        let actual =
+            &registry.modules["neebles-connect"].depends_install["neebles-secrets"].variables;
         assert_eq!(actual["opaque.alpha"], "READY");
         assert_eq!(actual["master-key"], "enabled");
     }
@@ -670,26 +733,54 @@ mod registry_schema3_f02_tests {
     fn unknown_self_and_circular_dependencies_are_rejected() {
         let baseline = registry();
         let mut invalid = baseline.clone();
-        invalid.modules.get_mut("neebles-connect").unwrap().depends_install.insert(
-            "not-a-real-provider".into(),
-            RegistryInstallDependency { variables: BTreeMap::new() },
-        );
+        invalid
+            .modules
+            .get_mut("neebles-connect")
+            .unwrap()
+            .depends_install
+            .insert(
+                "not-a-real-provider".into(),
+                RegistryInstallDependency {
+                    variables: BTreeMap::new(),
+                },
+            );
         assert!(validate_registry(&invalid).is_err());
         let mut self_ref = baseline.clone();
-        self_ref.modules.get_mut("neebles-connect").unwrap().depends_install.insert(
-            "neebles-connect".into(),
-            RegistryInstallDependency { variables: BTreeMap::new() },
-        );
+        self_ref
+            .modules
+            .get_mut("neebles-connect")
+            .unwrap()
+            .depends_install
+            .insert(
+                "neebles-connect".into(),
+                RegistryInstallDependency {
+                    variables: BTreeMap::new(),
+                },
+            );
         assert!(validate_registry(&self_ref).is_err());
         let mut cycle = baseline;
-        cycle.modules.get_mut("neebles-connect").unwrap().depends_install.insert(
-            "neebles-secrets".into(),
-            RegistryInstallDependency { variables: BTreeMap::new() },
-        );
-        cycle.modules.get_mut("neebles-secrets").unwrap().depends_install.insert(
-            "neebles-connect".into(),
-            RegistryInstallDependency { variables: BTreeMap::new() },
-        );
+        cycle
+            .modules
+            .get_mut("neebles-connect")
+            .unwrap()
+            .depends_install
+            .insert(
+                "neebles-secrets".into(),
+                RegistryInstallDependency {
+                    variables: BTreeMap::new(),
+                },
+            );
+        cycle
+            .modules
+            .get_mut("neebles-secrets")
+            .unwrap()
+            .depends_install
+            .insert(
+                "neebles-connect".into(),
+                RegistryInstallDependency {
+                    variables: BTreeMap::new(),
+                },
+            );
         assert!(validate_registry(&cycle).is_err());
     }
 
@@ -697,13 +788,21 @@ mod registry_schema3_f02_tests {
     fn missing_dependency_message_and_bad_templates_are_rejected() {
         let baseline = registry();
         let mut candidate = baseline.clone();
-        candidate.modules.get_mut("neebles-secrets").unwrap().depends_install.insert(
-            "neebles-connect".into(),
-            RegistryInstallDependency { variables: BTreeMap::new() },
-        );
+        candidate
+            .modules
+            .get_mut("neebles-secrets")
+            .unwrap()
+            .depends_install
+            .insert(
+                "neebles-connect".into(),
+                RegistryInstallDependency {
+                    variables: BTreeMap::new(),
+                },
+            );
         let (mut boss, modules) = catalogs();
         assert!(validate_registry_messages(&candidate, &boss, &modules).is_err());
-        boss.messages.insert("en_US".into(), "No dependents marker".into());
+        boss.messages
+            .insert("en_US".into(), "No dependents marker".into());
         assert!(validate_registry_messages(&baseline, &boss, &modules).is_err());
     }
 
@@ -722,66 +821,135 @@ mod registry_schema3_f02_tests {
     #[test]
     fn f02d_legacy_require_is_refused_instead_of_recursively_acquired() {
         let mut lifecycle = crate::lifecycle::LifecycleContract::default();
-        lifecycle.require.insert("neebles-secrets".into(), BTreeMap::new());
-        assert!(single_target_require_plan(
-            "neebles-connect",
-            BTreeSet::new(),
-            &lifecycle
-        ).is_err());
+        lifecycle
+            .require
+            .insert("neebles-secrets".into(), BTreeMap::new());
+        assert!(
+            single_target_require_plan("neebles-connect", BTreeSet::new(), &lifecycle).is_err()
+        );
     }
 
     #[test]
     fn f03d_install_requires_all_opaque_values_simultaneously() {
         let mut catalog = registry();
-        catalog.modules.get_mut("neebles-connect").unwrap().depends_install.insert(
-            "neebles-secrets".into(),
-            RegistryInstallDependency {
-                variables: BTreeMap::from([
-                    ("opaque.first".into(), "one".into()),
-                    ("opaque.second".into(), "two".into()),
-                ]),
-            },
-        );
+        catalog
+            .modules
+            .get_mut("neebles-connect")
+            .unwrap()
+            .depends_install
+            .insert(
+                "neebles-secrets".into(),
+                RegistryInstallDependency {
+                    variables: BTreeMap::from([
+                        ("opaque.first".into(), "one".into()),
+                        ("opaque.second".into(), "two".into()),
+                    ]),
+                },
+            );
         let installed = BTreeSet::from(["neebles-secrets".to_string()]);
-        let good = BTreeMap::from([("neebles-secrets".to_string(), BTreeMap::from([
-            ("opaque.first".to_string(), "one".to_string()),
-            ("opaque.second".to_string(), "two".to_string()),
-        ]))]);
-        assert!(evaluate_registry_install_requirements("neebles-connect", &catalog, &installed, &good).is_ok());
+        let good = BTreeMap::from([(
+            "neebles-secrets".to_string(),
+            BTreeMap::from([
+                ("opaque.first".to_string(), "one".to_string()),
+                ("opaque.second".to_string(), "two".to_string()),
+            ]),
+        )]);
+        assert!(evaluate_registry_install_requirements(
+            "neebles-connect",
+            &catalog,
+            &installed,
+            &good
+        )
+        .is_ok());
         let mut missing = good.clone();
-        missing.get_mut("neebles-secrets").unwrap().remove("opaque.second");
-        assert!(evaluate_registry_install_requirements("neebles-connect", &catalog, &installed, &missing).is_err());
+        missing
+            .get_mut("neebles-secrets")
+            .unwrap()
+            .remove("opaque.second");
+        assert!(evaluate_registry_install_requirements(
+            "neebles-connect",
+            &catalog,
+            &installed,
+            &missing
+        )
+        .is_err());
         let mut mismatch = good.clone();
-        mismatch.get_mut("neebles-secrets").unwrap().insert("opaque.second".into(), "TWO".into());
-        assert!(evaluate_registry_install_requirements("neebles-connect", &catalog, &installed, &mismatch).is_err());
-        assert!(evaluate_registry_install_requirements("neebles-connect", &catalog, &BTreeSet::new(), &good).is_err());
-        assert!(evaluate_registry_install_requirements("not-in-registry", &catalog, &installed, &good).is_err());
+        mismatch
+            .get_mut("neebles-secrets")
+            .unwrap()
+            .insert("opaque.second".into(), "TWO".into());
+        assert!(evaluate_registry_install_requirements(
+            "neebles-connect",
+            &catalog,
+            &installed,
+            &mismatch
+        )
+        .is_err());
+        assert!(evaluate_registry_install_requirements(
+            "neebles-connect",
+            &catalog,
+            &BTreeSet::new(),
+            &good
+        )
+        .is_err());
+        assert!(evaluate_registry_install_requirements(
+            "not-in-registry",
+            &catalog,
+            &installed,
+            &good
+        )
+        .is_err());
     }
 
     #[test]
     fn f03d_presence_only_dependency_needs_no_variable_publication() {
         let mut catalog = registry();
-        catalog.modules.get_mut("neebles-connect").unwrap().depends_install.insert(
-            "neebles-secrets".into(), RegistryInstallDependency { variables: BTreeMap::new() }
-        );
+        catalog
+            .modules
+            .get_mut("neebles-connect")
+            .unwrap()
+            .depends_install
+            .insert(
+                "neebles-secrets".into(),
+                RegistryInstallDependency {
+                    variables: BTreeMap::new(),
+                },
+            );
         assert!(evaluate_registry_install_requirements(
-            "neebles-connect", &catalog,
-            &BTreeSet::from(["neebles-secrets".into()]), &BTreeMap::new()
-        ).is_ok());
+            "neebles-connect",
+            &catalog,
+            &BTreeSet::from(["neebles-secrets".into()]),
+            &BTreeMap::new()
+        )
+        .is_ok());
     }
 
     #[test]
     fn invalid_variable_values_and_empty_short_names_are_rejected() {
         let mut registry = registry();
-        registry.modules.get_mut("neebles-connect").unwrap().short_name.clear();
+        registry
+            .modules
+            .get_mut("neebles-connect")
+            .unwrap()
+            .short_name
+            .clear();
         assert!(validate_registry(&registry).is_err());
-        registry.modules.get_mut("neebles-connect").unwrap().short_name = "Connect".into();
-        registry.modules.get_mut("neebles-connect").unwrap().depends_install.insert(
-            "neebles-secrets".into(),
-            RegistryInstallDependency {
-                variables: BTreeMap::from([("master-key".into(), "".into())]),
-            },
-        );
+        registry
+            .modules
+            .get_mut("neebles-connect")
+            .unwrap()
+            .short_name = "Connect".into();
+        registry
+            .modules
+            .get_mut("neebles-connect")
+            .unwrap()
+            .depends_install
+            .insert(
+                "neebles-secrets".into(),
+                RegistryInstallDependency {
+                    variables: BTreeMap::from([("master-key".into(), "".into())]),
+                },
+            );
         assert!(validate_registry(&registry).is_err());
     }
 }
@@ -1943,9 +2111,7 @@ fn stage_require_candidate(name: &str, registry: &Registry) -> Result<RequireCan
 
     // Boss captures the exact Registry requirements alongside the candidate,
     // so a later remote Registry edit cannot silently change installed truth.
-    crate::module_dependency_policy::stage_installed_requirements(
-        staging.path(), name, entry,
-    )?;
+    crate::module_dependency_policy::stage_installed_requirements(staging.path(), name, entry)?;
 
     let lifecycle = lifecycle_contract_from_module(staging.path(), &manifest)?;
 
@@ -1979,34 +2145,62 @@ fn evaluate_registry_install_requirements(
     observed: &BTreeMap<String, BTreeMap<String, String>>,
 ) -> Result<(), String> {
     let entry = registry.modules.get(root).ok_or_else(|| {
-        format!("module '{}' is not declared in the N.E.E.B.L.E.S. registry", root)
+        format!(
+            "module '{}' is not declared in the N.E.E.B.L.E.S. registry",
+            root
+        )
     })?;
-    let expected = entry.depends_install.iter().map(|(provider, item)| {
-        (provider.clone(), item.variables.clone())
-    }).collect::<BTreeMap<_, _>>();
-    let failures = crate::module_dependency_policy::unmet_install_requirements(
-        &expected, installed, observed,
-    );
+    let expected = entry
+        .depends_install
+        .iter()
+        .map(|(provider, item)| (provider.clone(), item.variables.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let failures =
+        crate::module_dependency_policy::unmet_install_requirements(&expected, installed, observed);
     if failures.is_empty() {
         return Ok(());
     }
-    let descriptions = failures.iter().map(|failure| match failure {
-        crate::module_dependency_policy::InstallRequirementFailure::ProviderNotInstalled { provider } => {
-            format!("required provider '{}' is not installed", provider)
-        }
-        crate::module_dependency_policy::InstallRequirementFailure::VariableNotPublished { provider, variable } => {
-            format!("provider '{}' has no live publication for '{}'", provider, variable)
-        }
-        crate::module_dependency_policy::InstallRequirementFailure::VariableDoesNotMatch { provider, variable } => {
-            format!("provider '{}' variable '{}' does not match Registry requirement", provider, variable)
-        }
-    }).collect::<Vec<_>>().join("; ");
-    Err(format!("module '{}' Install blocked by Registry depends_install: {}", root, descriptions))
+    let descriptions = failures
+        .iter()
+        .map(|failure| match failure {
+            crate::module_dependency_policy::InstallRequirementFailure::ProviderNotInstalled {
+                provider,
+            } => {
+                format!("required provider '{}' is not installed", provider)
+            }
+            crate::module_dependency_policy::InstallRequirementFailure::VariableNotPublished {
+                provider,
+                variable,
+            } => {
+                format!(
+                    "provider '{}' has no live publication for '{}'",
+                    provider, variable
+                )
+            }
+            crate::module_dependency_policy::InstallRequirementFailure::VariableDoesNotMatch {
+                provider,
+                variable,
+            } => {
+                format!(
+                    "provider '{}' variable '{}' does not match Registry requirement",
+                    provider, variable
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(format!(
+        "module '{}' Install blocked by Registry depends_install: {}",
+        root, descriptions
+    ))
 }
 
 fn ensure_registry_install_supported(root: &str, registry: &Registry) -> Result<(), String> {
     let entry = registry.modules.get(root).ok_or_else(|| {
-        format!("module '{}' is not declared in the N.E.E.B.L.E.S. registry", root)
+        format!(
+            "module '{}' is not declared in the N.E.E.B.L.E.S. registry",
+            root
+        )
     })?;
     if entry.depends_install.is_empty() {
         return Ok(());
@@ -2014,7 +2208,9 @@ fn ensure_registry_install_supported(root: &str, registry: &Registry) -> Result<
     let installed = installed_names()?.into_iter().collect::<BTreeSet<_>>();
     // Presence-only dependencies don't require a live state publication.
     // Any variable requirement, however, MUST query the persistent Boss.
-    let needs_live_values = entry.depends_install.values()
+    let needs_live_values = entry
+        .depends_install
+        .values()
         .any(|requirement| !requirement.variables.is_empty());
     let observed = if needs_live_values {
         persistent_live_variables_snapshot()?
@@ -2239,6 +2435,7 @@ pub(crate) fn broadcast_surface_module_change(name: &str, reason: &str) {
      * It is reported, and surfaces can still recover from canonical reads.
      */
     let response = crate::ipc::request(&crate::request::ExecutionRequest {
+        execution: None,
         target: "boss".to_string(),
         action: Some("module-surface-changed".to_string()),
         args: vec![name.to_string(), reason.to_string()],
@@ -2585,7 +2782,10 @@ fn install_require_tree(
         // The first gate runs before staging in resolve_require_candidates().
         if let Err(error) = ensure_registry_install_supported(&module_id, registry) {
             return Err(require_install_failure(
-                format!("module '{}' final Install requirement check failed: {}", module_id, error),
+                format!(
+                    "module '{}' final Install requirement check failed: {}",
+                    module_id, error
+                ),
                 &mut transaction,
             ));
         }
@@ -2745,7 +2945,10 @@ mod boss206_git_staging_tests {
         command.arg("-p").arg(&nested);
         // Simulate the mask an authentication process may otherwise inherit.
         unsafe {
-            command.pre_exec(|| { libc::umask(0o002); Ok(()) });
+            command.pre_exec(|| {
+                libc::umask(0o002);
+                Ok(())
+            });
         }
         enforce_module_git_staging_umask(&mut command);
         assert!(command.status().expect("mkdir").success());
@@ -3446,6 +3649,7 @@ pub fn deactivate_runtime_resources_local(name: &str, reason: &str) -> Result<()
 
 fn request_persistent_boss_action(action: &str, args: Vec<String>) -> Result<Value, String> {
     let response = crate::ipc::request(&crate::request::ExecutionRequest {
+        execution: None,
         target: "boss".to_string(),
         action: Some(action.to_string()),
         args,
@@ -3731,9 +3935,10 @@ pub fn verify_module_runtime_process(name: &str, pid: u32) -> Result<(u32, u64),
     Ok((identity.pid, identity.start_time_ticks))
 }
 
-
 pub(crate) fn verify_module_service_publisher_process(
-    module: &str, unit: &str, pid: u32,
+    module: &str,
+    unit: &str,
+    pid: u32,
 ) -> Result<(u32, u64), String> {
     let before = capture_process_identity(pid)?
         .ok_or_else(|| "service publisher process does not exist".to_string())?;
@@ -4686,8 +4891,15 @@ fn fetch_registry_at(url: &str) -> Result<Registry, String> {
 fn registry_catalogs_at(
     modules_url: &str,
     registry: &Registry,
-) -> Result<(RegistryBossMessages, BTreeMap<String, RegistryModuleMessages>), String> {
-    let root_url = modules_url.strip_suffix("modules.json")
+) -> Result<
+    (
+        RegistryBossMessages,
+        BTreeMap<String, RegistryModuleMessages>,
+    ),
+    String,
+> {
+    let root_url = modules_url
+        .strip_suffix("modules.json")
         .ok_or("module registry URL must end with modules.json for sibling catalogs")?;
     let read = |filename: &str| -> Result<Vec<u8>, String> {
         let url = format!("{root_url}{filename}");
@@ -4696,9 +4908,13 @@ fn registry_catalogs_at(
             std::ffi::OsString::from(url),
         ];
         let output = crate::network_boundary::command("boss.curl", &args)?
-            .output().map_err(|e| format!("cannot fetch registry catalog {filename}: {e}"))?;
+            .output()
+            .map_err(|e| format!("cannot fetch registry catalog {filename}: {e}"))?;
         if !output.status.success() {
-            return Err(format!("registry catalog {filename} unavailable: {}", output.status));
+            return Err(format!(
+                "registry catalog {filename} unavailable: {}",
+                output.status
+            ));
         }
         Ok(output.stdout)
     };
@@ -4723,32 +4939,41 @@ fn localized_dependency_warnings(
     installed: &BTreeSet<String>,
     observed: &BTreeMap<String, BTreeMap<String, String>>,
 ) -> Result<(bool, BTreeMap<String, String>), String> {
-    let entry = registry.modules.get(owner).ok_or("unrecognized registry module")?;
-    let expected = entry.depends_install.iter().map(|(provider, contract)| {
-        (provider.clone(), contract.variables.clone())
-    }).collect::<BTreeMap<_, _>>();
-    let failures = crate::module_dependency_policy::unmet_install_requirements(
-        &expected, installed, observed,
-    );
+    let entry = registry
+        .modules
+        .get(owner)
+        .ok_or("unrecognized registry module")?;
+    let expected = entry
+        .depends_install
+        .iter()
+        .map(|(provider, contract)| (provider.clone(), contract.variables.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let failures =
+        crate::module_dependency_policy::unmet_install_requirements(&expected, installed, observed);
     let mut messages = BTreeMap::<String, String>::new();
     let mut providers = BTreeSet::<String>::new();
     for failure in &failures {
         use crate::module_dependency_policy::InstallRequirementFailure::*;
         let provider = match failure {
-            ProviderNotInstalled { provider } | VariableNotPublished { provider, .. }
-                | VariableDoesNotMatch { provider, .. } => provider,
+            ProviderNotInstalled { provider }
+            | VariableNotPublished { provider, .. }
+            | VariableDoesNotMatch { provider, .. } => provider,
         };
         providers.insert(provider.clone());
     }
     for provider in providers {
-        let localized = catalogs.get(owner)
+        let localized = catalogs
+            .get(owner)
             .and_then(|c| c.messages.get(&provider))
             .ok_or_else(|| format!("missing dependency message: {owner} -> {provider}"))?;
         for (locale, text) in localized {
-            messages.entry(locale.clone()).and_modify(|v| {
-                v.push('\n');
-                v.push_str(text);
-            }).or_insert_with(|| text.clone());
+            messages
+                .entry(locale.clone())
+                .and_modify(|v| {
+                    v.push('\n');
+                    v.push_str(text);
+                })
+                .or_insert_with(|| text.clone());
         }
     }
     Ok((failures.is_empty(), messages))
@@ -4760,15 +4985,33 @@ fn localized_protection_warning(
     registry: &Registry,
     messages: &RegistryBossMessages,
 ) -> BTreeMap<String, String> {
-    let short_name = registry.modules.get(module)
-        .map(|entry| entry.short_name.as_str()).unwrap_or(module);
-    let names = dependents.iter().map(|dependent| {
-        registry.modules.get(dependent).map(|entry| entry.short_name.as_str())
-            .unwrap_or(dependent)
-    }).collect::<Vec<_>>().join(", ");
-    messages.messages.iter().map(|(locale, text)| {
-        (locale.clone(), text.replace("{module}", short_name).replace("[dependents]", &names))
-    }).collect()
+    let short_name = registry
+        .modules
+        .get(module)
+        .map(|entry| entry.short_name.as_str())
+        .unwrap_or(module);
+    let names = dependents
+        .iter()
+        .map(|dependent| {
+            registry
+                .modules
+                .get(dependent)
+                .map(|entry| entry.short_name.as_str())
+                .unwrap_or(dependent)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    messages
+        .messages
+        .iter()
+        .map(|(locale, text)| {
+            (
+                locale.clone(),
+                text.replace("{module}", short_name)
+                    .replace("[dependents]", &names),
+            )
+        })
+        .collect()
 }
 
 fn feature_startup_transaction_directory(name: &str) -> bool {
@@ -5281,13 +5524,17 @@ fn parse_persistent_variables_snapshot(
     response: crate::request::ExecutionResponse,
 ) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
     if !response.ok {
-        let message = response.error.map(|error| error.message)
+        let message = response
+            .error
+            .map(|error| error.message)
             .unwrap_or_else(|| format!("Boss refused variable snapshot (code {})", response.code));
-        return Err(format!("persistent Boss variable snapshot unavailable: {message}"));
+        return Err(format!(
+            "persistent Boss variable snapshot unavailable: {message}"
+        ));
     }
-    let snapshot = response.result.ok_or_else(||
-        "persistent Boss variable snapshot omitted response data".to_string()
-    )?;
+    let snapshot = response
+        .result
+        .ok_or_else(|| "persistent Boss variable snapshot omitted response data".to_string())?;
     serde_json::from_value(snapshot)
         .map_err(|error| format!("invalid persistent Boss variable snapshot: {error}"))
 }
@@ -5295,6 +5542,7 @@ fn parse_persistent_variables_snapshot(
 pub(crate) fn persistent_live_variables_snapshot(
 ) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
     let request = crate::request::ExecutionRequest {
+        execution: None,
         target: "boss".to_string(),
         action: Some("module-variables-snapshot".to_string()),
         args: Vec::new(),
@@ -5326,9 +5574,10 @@ mod persistent_live_variables_snapshot_tests {
     fn rejects_boss_failure_or_missing_snapshot() {
         let failed = crate::request::ExecutionResponse::fail(1, "unavailable", "offline");
         assert!(parse_persistent_variables_snapshot(failed).is_err());
-        assert!(parse_persistent_variables_snapshot(
-            crate::request::ExecutionResponse::ok(None)
-        ).is_err());
+        assert!(
+            parse_persistent_variables_snapshot(crate::request::ExecutionResponse::ok(None))
+                .is_err()
+        );
     }
 
     #[test]
@@ -5473,10 +5722,15 @@ fn installed_dependency_guards() -> Result<BTreeMap<String, Vec<(String, String)
         let module_dir = find_module_dir(&module)?;
         let manifest = read_manifest(&module_dir.join("manifest.json"))?;
         if manifest.name != module {
-            return Err(format!("installed module identity mismatch for '{}'", module));
+            return Err(format!(
+                "installed module identity mismatch for '{}'",
+                module
+            ));
         }
         let snapshot = crate::module_dependency_policy::read_installed_requirements(
-            &module_dir, &module, &manifest.version,
+            &module_dir,
+            &module,
+            &manifest.version,
         )?;
         names.insert(module, snapshot.short_name);
     }
@@ -5484,7 +5738,8 @@ fn installed_dependency_guards() -> Result<BTreeMap<String, Vec<(String, String)
     for module in names.keys() {
         let mut blockers = Vec::new();
         for dependent in graph.uninstall_blockers(module)? {
-            let short_name = names.get(&dependent)
+            let short_name = names
+                .get(&dependent)
                 .ok_or_else(|| format!("missing installed dependent '{}'", dependent))?;
             blockers.push((dependent, short_name.clone()));
         }
@@ -5497,25 +5752,39 @@ fn materialize_dependency_guards_with(
     value: &mut Value,
     guards: &Result<BTreeMap<String, Vec<(String, String)>>, String>,
 ) -> Result<(), String> {
-    let rows = value.as_array_mut().ok_or("installed surface model must be an array")?;
+    let rows = value
+        .as_array_mut()
+        .ok_or("installed surface model must be an array")?;
     for row in rows {
-        let module = row.get("name").and_then(Value::as_str)
-            .ok_or("installed surface row has no module name")?.to_owned();
+        let module = row
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or("installed surface row has no module name")?
+            .to_owned();
         let (verified, protected, blockers) = match guards {
             Ok(map) => match map.get(&module) {
-                Some(dependents) => (true, !dependents.is_empty(), dependents.iter()
-                    .map(|(id, short_name)| json!({"id":id,"short_name":short_name}))
-                    .collect::<Vec<_>>()),
+                Some(dependents) => (
+                    true,
+                    !dependents.is_empty(),
+                    dependents
+                        .iter()
+                        .map(|(id, short_name)| json!({"id":id,"short_name":short_name}))
+                        .collect::<Vec<_>>(),
+                ),
                 None => (false, true, Vec::new()),
             },
             Err(_) => (false, true, Vec::new()),
         };
-        row.as_object_mut().ok_or("invalid installed surface object")?
-            .insert("dependency_guard".into(), json!({
-                "verified": verified,
-                "protected": protected,
-                "blockers": blockers,
-            }));
+        row.as_object_mut()
+            .ok_or("invalid installed surface object")?
+            .insert(
+                "dependency_guard".into(),
+                json!({
+                    "verified": verified,
+                    "protected": protected,
+                    "blockers": blockers,
+                }),
+            );
     }
     Ok(())
 }
@@ -5551,8 +5820,11 @@ pub fn available_modules_json() -> Result<Value, String> {
     let installed = installed_names()?.into_iter().collect::<BTreeSet<_>>();
     // Live-variable failures fail closed. Presence-only dependencies need no IPC.
     let needs_variables = registry.modules.iter().any(|(name, entry)| {
-        !installed.contains(name) && entry.depends_install.values()
-            .any(|contract| !contract.variables.is_empty())
+        !installed.contains(name)
+            && entry
+                .depends_install
+                .values()
+                .any(|contract| !contract.variables.is_empty())
     });
     let observed = if needs_variables {
         persistent_live_variables_snapshot().unwrap_or_default()
@@ -5560,22 +5832,35 @@ pub fn available_modules_json() -> Result<Value, String> {
         BTreeMap::new()
     };
     // Installed pinned snapshots, never remote Registry, control reverse locks.
-    let graph = if installed.is_empty() { None } else { Some(installed_dependency_graph()) };
+    let graph = if installed.is_empty() {
+        None
+    } else {
+        Some(installed_dependency_graph())
+    };
     let mut result = Vec::new();
 
     for (name, module) in &registry.modules {
         let is_installed = installed.contains(name);
         let (install_allowed, install_warning) = localized_dependency_warnings(
-            name, &registry, &module_messages, &installed, &observed,
+            name,
+            &registry,
+            &module_messages,
+            &installed,
+            &observed,
         )?;
         let (protected, protection_warning) = if is_installed {
             match graph.as_ref().ok_or("missing installed dependency graph")? {
                 Ok(graph) => {
                     let blockers = graph.uninstall_blockers(name)?;
                     let protected = !blockers.is_empty();
-                    (protected, if protected {
-                        localized_protection_warning(name, &blockers, &registry, &boss_messages)
-                    } else { BTreeMap::new() })
+                    (
+                        protected,
+                        if protected {
+                            localized_protection_warning(name, &blockers, &registry, &boss_messages)
+                        } else {
+                            BTreeMap::new()
+                        },
+                    )
                 }
                 Err(_) => {
                     // Missing/invalid snapshots are NOT proof of no dependents.
@@ -5585,7 +5870,9 @@ pub fn available_modules_json() -> Result<Value, String> {
                     ]))
                 }
             }
-        } else { (false, BTreeMap::new()) };
+        } else {
+            (false, BTreeMap::new())
+        };
 
         result.push(json!({
             "name": name,
@@ -5649,7 +5936,10 @@ pub fn migrate_installed_dependency_snapshot_access() -> Result<usize, String> {
         let directory = find_module_dir(&module_id)?;
         let manifest = read_manifest(&directory.join("manifest.json"))?;
         if manifest.name != module_id {
-            return Err(format!("installed module identity mismatch: '{}' != '{}'", module_id, manifest.name));
+            return Err(format!(
+                "installed module identity mismatch: '{}' != '{}'",
+                module_id, manifest.name
+            ));
         }
         installed.insert(module_id, (directory, manifest.version));
     }
@@ -6939,7 +7229,6 @@ fn update_with_observer(
 
     let current_path = find_module_dir(name)?;
 
-
     let material_root =
         neebles_backend::module_material_territory::resolve_module_material_territory()?
             .material_root;
@@ -7032,14 +7321,15 @@ fn update_with_observer(
     // while the previous module is still installed and running.
     let installed_manifest = read_manifest(&current_path.join("manifest.json"))?;
     let mut service_cutover = crate::module_uninstall::prepare_managed_service_cutover(
-        name, &installed_manifest, &manifest, staging.path(),
+        name,
+        &installed_manifest,
+        &manifest,
+        staging.path(),
     )?;
 
     // Snapshot is staged with the NEW candidate, and therefore follows the
     // SAME rename/rollback as its module source on Update/Critical Update.
-    crate::module_dependency_policy::stage_installed_requirements(
-        staging.path(), name, entry,
-    )?;
+    crate::module_dependency_policy::stage_installed_requirements(staging.path(), name, entry)?;
 
     // Critical instructions are validated on the authenticated staged source,
     // BEFORE closing active module processes or moving the live installation.
@@ -7110,8 +7400,16 @@ fn update_with_observer(
     if let Err(error) = fs::rename(&current_path, &backup_path) {
         let recovery = service_cutover.restore_original();
         return Err(match recovery {
-            Ok(()) => format!("could not move current module '{}' into transactional backup {}: {error}", name, backup_path.display()),
-            Err(e) => format!("could not move current module '{}' into transactional backup {}: {error}; {e}", name, backup_path.display()),
+            Ok(()) => format!(
+                "could not move current module '{}' into transactional backup {}: {error}",
+                name,
+                backup_path.display()
+            ),
+            Err(e) => format!(
+                "could not move current module '{}' into transactional backup {}: {error}; {e}",
+                name,
+                backup_path.display()
+            ),
         });
     }
 
@@ -7133,10 +7431,16 @@ fn update_with_observer(
             );
 
             let failure = format_live_update_failure_with_binding(
-                name, "candidate publication", &publication_error, &rollback, binding_sync,
+                name,
+                "candidate publication",
+                &publication_error,
+                &rollback,
+                binding_sync,
             );
             return Err(restore_services_after_module_update_failure(
-                failure, &rollback, &service_cutover,
+                failure,
+                &rollback,
+                &service_cutover,
             ));
         }
     }
@@ -7168,11 +7472,17 @@ fn update_with_observer(
             );
 
             let failure = format_live_update_failure_with_binding(
-            name, "material binding activation", &binding_error, &rollback, binding_sync,
-        );
-        return Err(restore_services_after_module_update_failure(
-            failure, &rollback, &service_cutover,
-        ));
+                name,
+                "material binding activation",
+                &binding_error,
+                &rollback,
+                binding_sync,
+            );
+            return Err(restore_services_after_module_update_failure(
+                failure,
+                &rollback,
+                &service_cutover,
+            ));
         }
     };
 
@@ -7201,11 +7511,17 @@ fn update_with_observer(
             );
 
             let failure = format_live_update_failure_with_binding(
-            name, "Lifecycle runtime acquisition", &error, &rollback, binding_sync,
-        );
-        return Err(restore_services_after_module_update_failure(
-            failure, &rollback, &service_cutover,
-        ));
+                name,
+                "Lifecycle runtime acquisition",
+                &error,
+                &rollback,
+                binding_sync,
+            );
+            return Err(restore_services_after_module_update_failure(
+                failure,
+                &rollback,
+                &service_cutover,
+            ));
         }
     };
 
@@ -7230,10 +7546,16 @@ fn update_with_observer(
         );
 
         let failure = format_live_update_failure_with_binding(
-            name, "Lifecycle", &lifecycle_error, &rollback, binding_sync,
+            name,
+            "Lifecycle",
+            &lifecycle_error,
+            &rollback,
+            binding_sync,
         );
         return Err(restore_services_after_module_update_failure(
-            failure, &rollback, &service_cutover,
+            failure,
+            &rollback,
+            &service_cutover,
         ));
     }
 
@@ -7260,10 +7582,16 @@ fn update_with_observer(
         );
 
         let failure = format_live_update_failure_with_binding(
-            name, "settings reconciliation", &settings_error, &rollback, binding_sync,
+            name,
+            "settings reconciliation",
+            &settings_error,
+            &rollback,
+            binding_sync,
         );
         return Err(restore_services_after_module_update_failure(
-            failure, &rollback, &service_cutover,
+            failure,
+            &rollback,
+            &service_cutover,
         ));
     }
 
@@ -7285,10 +7613,16 @@ fn update_with_observer(
         );
 
         let failure = format_live_update_failure_with_binding(
-            name, "feature reconciliation", &feature_error, &rollback, binding_sync,
+            name,
+            "feature reconciliation",
+            &feature_error,
+            &rollback,
+            binding_sync,
         );
         return Err(restore_services_after_module_update_failure(
-            failure, &rollback, &service_cutover,
+            failure,
+            &rollback,
+            &service_cutover,
         ));
     }
 
@@ -7409,7 +7743,8 @@ fn set_enabled_single(name: &str, enabled: bool) -> Result<(), String> {
                 name, error, tray_text, config_text
             ));
         }
-        if let Err(error) = crate::module_uninstall::set_declared_user_services_enabled(name, true) {
+        if let Err(error) = crate::module_uninstall::set_declared_user_services_enabled(name, true)
+        {
             let _ = request_persistent_tray_stop(name);
             let _ = config::set_module_enabled(name, false);
             broadcast_surface_module_change(name, "disabled");
@@ -9489,7 +9824,6 @@ mod module_language_settings_contract_tests {
     }
 }
 
-
 #[cfg(test)]
 mod dependency_surface_guard_f15_tests {
     use super::materialize_dependency_guards_with;
@@ -9500,17 +9834,26 @@ mod dependency_surface_guard_f15_tests {
     fn protects_provider_and_names_installed_dependent() {
         let mut rows = json!([{"name":"neebles-secrets"}, {"name":"neebles-connect"}]);
         let guards = Ok(BTreeMap::from([
-            ("neebles-secrets".to_owned(), vec![("neebles-connect".to_owned(), "Connect".to_owned())]),
+            (
+                "neebles-secrets".to_owned(),
+                vec![("neebles-connect".to_owned(), "Connect".to_owned())],
+            ),
             ("neebles-connect".to_owned(), vec![]),
         ]));
         materialize_dependency_guards_with(&mut rows, &guards).unwrap();
-        assert_eq!(rows[0]["dependency_guard"], json!({
-            "verified":true,"protected":true,
-            "blockers":[{"id":"neebles-connect","short_name":"Connect"}]
-        }));
-        assert_eq!(rows[1]["dependency_guard"], json!({
-            "verified":true,"protected":false,"blockers":[]
-        }));
+        assert_eq!(
+            rows[0]["dependency_guard"],
+            json!({
+                "verified":true,"protected":true,
+                "blockers":[{"id":"neebles-connect","short_name":"Connect"}]
+            })
+        );
+        assert_eq!(
+            rows[1]["dependency_guard"],
+            json!({
+                "verified":true,"protected":false,"blockers":[]
+            })
+        );
     }
 
     #[test]
@@ -9520,7 +9863,8 @@ mod dependency_surface_guard_f15_tests {
         materialize_dependency_guards_with(&mut rows, &missing).unwrap();
         assert_eq!(rows[0]["dependency_guard"]["verified"], Value::Bool(false));
         assert_eq!(rows[0]["dependency_guard"]["protected"], Value::Bool(true));
-        let error: Result<BTreeMap<String,Vec<(String,String)>>,String> = Err("snapshot unreadable".into());
+        let error: Result<BTreeMap<String, Vec<(String, String)>>, String> =
+            Err("snapshot unreadable".into());
         materialize_dependency_guards_with(&mut rows, &error).unwrap();
         assert_eq!(rows[0]["dependency_guard"]["verified"], Value::Bool(false));
         assert_eq!(rows[0]["dependency_guard"]["protected"], Value::Bool(true));

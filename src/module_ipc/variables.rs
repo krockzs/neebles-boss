@@ -107,7 +107,9 @@ impl LiveModuleVariables {
     ) -> Result<bool, String> {
         validate_identity(&owner)?;
         validate_variables(&values)?;
-        let mut state = self.inner.lock()
+        let mut state = self
+            .inner
+            .lock()
             .map_err(|_| "module variable registry lock poisoned".to_string())?;
         let current = state.get(&owner.module).cloned().unwrap_or_default();
         let before = merge_publisher_set(&current)?;
@@ -123,7 +125,13 @@ impl LiveModuleVariables {
             if !candidate.contains_key(&owner.session_id) && candidate.len() >= 32 {
                 return Err("too many simultaneous module variable publishers".to_string());
             }
-            candidate.insert(owner.session_id.clone(), Publication { owner: owner.clone(), variables: values });
+            candidate.insert(
+                owner.session_id.clone(),
+                Publication {
+                    owner: owner.clone(),
+                    variables: values,
+                },
+            );
         }
         let after = merge_publisher_set(&candidate)?;
         if candidate.is_empty() {
@@ -140,7 +148,9 @@ impl LiveModuleVariables {
      */
     pub fn revoke(&self, owner: &PublisherIdentity) -> Result<bool, String> {
         validate_identity(owner)?;
-        let mut state = self.inner.lock()
+        let mut state = self
+            .inner
+            .lock()
             .map_err(|_| "module variable registry lock poisoned".to_string())?;
         let Some(current) = state.get(&owner.module).cloned() else {
             return Ok(false);
@@ -165,7 +175,9 @@ impl LiveModuleVariables {
 
     /* Atomic snapshot used by the generic Registry preflight, not persisted. */
     pub fn snapshot(&self) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
-        let state = self.inner.lock()
+        let state = self
+            .inner
+            .lock()
             .map_err(|_| "module variable registry lock poisoned".to_string())?;
         let mut all = BTreeMap::new();
         for (module, publishers) in state.iter() {
@@ -189,25 +201,56 @@ mod tests {
     }
 
     fn vars(items: &[(&str, &str)]) -> BTreeMap<String, String> {
-        items.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        items
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
     fn two_opaque_variables_require_no_semantic_interpretation() {
         let state = LiveModuleVariables::new();
         let who = owner("neebles-secrets", "daemon", 101);
-        assert!(state.publish(who.clone(), vars(&[("master-key", "enabled"), ("vault", "unlocked")])).unwrap());
-        assert_eq!(state.snapshot().unwrap()["neebles-secrets"], vars(&[("master-key", "enabled"), ("vault", "unlocked")]));
-        assert!(!state.publish(who.clone(), vars(&[("master-key", "enabled"), ("vault", "unlocked")])).unwrap());
-        assert!(state.publish(who, vars(&[("master-key", "enabled"), ("vault", "locked")])).unwrap());
-        assert_eq!(state.snapshot().unwrap()["neebles-secrets"]["vault"], "locked");
+        assert!(state
+            .publish(
+                who.clone(),
+                vars(&[("master-key", "enabled"), ("vault", "unlocked")])
+            )
+            .unwrap());
+        assert_eq!(
+            state.snapshot().unwrap()["neebles-secrets"],
+            vars(&[("master-key", "enabled"), ("vault", "unlocked")])
+        );
+        assert!(!state
+            .publish(
+                who.clone(),
+                vars(&[("master-key", "enabled"), ("vault", "unlocked")])
+            )
+            .unwrap());
+        assert!(state
+            .publish(who, vars(&[("master-key", "enabled"), ("vault", "locked")]))
+            .unwrap());
+        assert_eq!(
+            state.snapshot().unwrap()["neebles-secrets"]["vault"],
+            "locked"
+        );
     }
 
     #[test]
     fn modules_do_not_share_publication_territory() {
         let state = LiveModuleVariables::new();
-        state.publish(owner("neebles-secrets", "daemon", 101), vars(&[("status", "one")])).unwrap();
-        state.publish(owner("neebles-db", "daemon", 201), vars(&[("status", "two")])).unwrap();
+        state
+            .publish(
+                owner("neebles-secrets", "daemon", 101),
+                vars(&[("status", "one")]),
+            )
+            .unwrap();
+        state
+            .publish(
+                owner("neebles-db", "daemon", 201),
+                vars(&[("status", "two")]),
+            )
+            .unwrap();
         assert_eq!(state.snapshot().unwrap().len(), 2);
         assert_eq!(state.snapshot().unwrap()["neebles-db"]["status"], "two");
     }
@@ -215,19 +258,50 @@ mod tests {
     #[test]
     fn two_publishers_with_disjoint_keys_can_coexist() {
         let state = LiveModuleVariables::new();
-        state.publish(owner("neebles-proxy", "service-a", 100), vars(&[("a", "1")])).unwrap();
-        state.publish(owner("neebles-proxy", "service-b", 101), vars(&[("b", "2")])).unwrap();
-        assert_eq!(state.snapshot().unwrap()["neebles-proxy"], vars(&[("a", "1"), ("b", "2")]));
-        assert!(state.revoke(&owner("neebles-proxy", "service-b", 101)).unwrap());
-        assert_eq!(state.snapshot().unwrap()["neebles-proxy"], vars(&[("a", "1")]));
+        state
+            .publish(
+                owner("neebles-proxy", "service-a", 100),
+                vars(&[("a", "1")]),
+            )
+            .unwrap();
+        state
+            .publish(
+                owner("neebles-proxy", "service-b", 101),
+                vars(&[("b", "2")]),
+            )
+            .unwrap();
+        assert_eq!(
+            state.snapshot().unwrap()["neebles-proxy"],
+            vars(&[("a", "1"), ("b", "2")])
+        );
+        assert!(state
+            .revoke(&owner("neebles-proxy", "service-b", 101))
+            .unwrap());
+        assert_eq!(
+            state.snapshot().unwrap()["neebles-proxy"],
+            vars(&[("a", "1")])
+        );
     }
 
     #[test]
     fn conflicting_owners_are_rejected_without_state_mutation() {
         let state = LiveModuleVariables::new();
-        state.publish(owner("neebles-proxy", "service-a", 100), vars(&[("a", "1")])).unwrap();
-        assert!(state.publish(owner("neebles-proxy", "service-b", 101), vars(&[("a", "1")])).is_err());
-        assert_eq!(state.snapshot().unwrap()["neebles-proxy"], vars(&[("a", "1")]));
+        state
+            .publish(
+                owner("neebles-proxy", "service-a", 100),
+                vars(&[("a", "1")]),
+            )
+            .unwrap();
+        assert!(state
+            .publish(
+                owner("neebles-proxy", "service-b", 101),
+                vars(&[("a", "1")])
+            )
+            .is_err());
+        assert_eq!(
+            state.snapshot().unwrap()["neebles-proxy"],
+            vars(&[("a", "1")])
+        );
     }
 
     #[test]
@@ -256,11 +330,24 @@ mod tests {
     #[test]
     fn invalid_identity_and_oversized_values_fail_closed() {
         let state = LiveModuleVariables::new();
-        assert!(state.publish(owner("../../other", "one", 100), vars(&[("x", "1")])).is_err());
-        assert!(state.publish(owner("neebles-secrets", "", 100), vars(&[("x", "1")])).is_err());
-        assert!(state.publish(owner("neebles-secrets", "one", 0), vars(&[("x", "1")])).is_err());
-        assert!(state.publish(owner("neebles-secrets", "one", 100), vars(&[("x", "\n")])).is_err());
-        assert!(state.publish(owner("neebles-secrets", "one", 100), vars(&[("x", &"x".repeat(2049))])).is_err());
+        assert!(state
+            .publish(owner("../../other", "one", 100), vars(&[("x", "1")]))
+            .is_err());
+        assert!(state
+            .publish(owner("neebles-secrets", "", 100), vars(&[("x", "1")]))
+            .is_err());
+        assert!(state
+            .publish(owner("neebles-secrets", "one", 0), vars(&[("x", "1")]))
+            .is_err());
+        assert!(state
+            .publish(owner("neebles-secrets", "one", 100), vars(&[("x", "\n")]))
+            .is_err());
+        assert!(state
+            .publish(
+                owner("neebles-secrets", "one", 100),
+                vars(&[("x", &"x".repeat(2049))])
+            )
+            .is_err());
         assert!(state.snapshot().unwrap().is_empty());
     }
 }

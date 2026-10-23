@@ -27,9 +27,36 @@ use std::os::unix::net::{UnixListener, UnixStream};
 
 use std::path::PathBuf;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, OnceLock};
 
 const DEFAULT_SOCKET_PATH: &str = "/run/neebles/modules.sock";
+// Outer bound: a module cannot spawn unbounded waiting request threads.
+static ACTIVE_EXECUTES: AtomicUsize = AtomicUsize::new(0);
+struct ExecuteSlot;
+impl Drop for ExecuteSlot {
+    fn drop(&mut self) {
+        ACTIVE_EXECUTES.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+fn acquire_execute_slot() -> Option<ExecuteSlot> {
+    let max = std::env::var("NEEBLES_IPC_MAX_INFLIGHT_REQUESTS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| (1..=256).contains(v))
+        .unwrap_or(64);
+    ACTIVE_EXECUTES
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            if current < max {
+                Some(current + 1)
+            } else {
+                None
+            }
+        })
+        .ok()?;
+    Some(ExecuteSlot)
+}
+
 fn emit_module_error_external(module: &str, error: &ModuleError) {
     let Some(envelope) = external::build_external_envelope(
         "error",
@@ -475,18 +502,23 @@ fn validate_registration(
     Ok(())
 }
 
-
 // A separately authenticated service publisher never occupies RuntimeRegistry.
 fn service_publisher_loop(
-    mut stream: UnixStream, protocol: u32, module: String,
-    session_id: String, unit: String, peer: ModulePeerCredentials,
+    mut stream: UnixStream,
+    protocol: u32,
+    module: String,
+    session_id: String,
+    unit: String,
+    peer: ModulePeerCredentials,
 ) -> Result<(), String> {
     let operation = (|| -> Result<(), String> {
         if protocol != MODULES_PROTOCOL_VERSION {
             return Err("unsupported service publisher protocol".into());
         }
-        if session_id.is_empty() || session_id.len() > 256
-            || session_id.chars().any(char::is_control) {
+        if session_id.is_empty()
+            || session_id.len() > 256
+            || session_id.chars().any(char::is_control)
+        {
             return Err("invalid publisher session id".into());
         }
         let (desktop_uid, _) = crate::runtime_identity::desktop_identity()?;
@@ -496,82 +528,143 @@ fn service_publisher_loop(
         if !config::module_enabled(&module)? {
             return Err("disabled module cannot register a service publisher".into());
         }
-        let (pid, start_time_ticks) = modules::verify_module_service_publisher_process(
-            &module, &unit, peer.pid,
-        )?;
+        let (pid, start_time_ticks) =
+            modules::verify_module_service_publisher_process(&module, &unit, peer.pid)?;
         let owner = PublisherIdentity {
-            module: module.clone(), session_id: session_id.clone(), pid, start_time_ticks,
+            module: module.clone(),
+            session_id: session_id.clone(),
+            pid,
+            start_time_ticks,
         };
-        write_message(&mut stream, &ModuleMessage::Registered {
-            protocol, module: module.clone(), session_id: session_id.clone(),
-        })?;
+        write_message(
+            &mut stream,
+            &ModuleMessage::Registered {
+                protocol,
+                module: module.clone(),
+                session_id: session_id.clone(),
+            },
+        )?;
         // Keep the single connection alive. Publisher messages are whitelisted;
         // a daemon is never authorized to invoke endpoints or change settings.
         let run = (|| -> Result<(), String> {
             loop {
-                let Some(msg) = read_message(&mut stream)? else { break; };
+                let Some(msg) = read_message(&mut stream)? else {
+                    break;
+                };
                 match msg {
-                    ModuleMessage::VariablesPublish { module: m, session_id: s, variables } => {
+                    ModuleMessage::VariablesPublish {
+                        module: m,
+                        session_id: s,
+                        variables,
+                    } => {
                         validate_session(&module, &session_id, &m, &s)?;
                         if !config::module_enabled(&module)? {
                             return Err("disabled module cannot publish variables".into());
                         }
                         // Reverify service membership on every publication; the
                         // initial credentials are not a permanent service grant.
-                        if !matches!(crate::modules::process_start_time_ticks(pid)?, Some(t) if t == start_time_ticks) {
+                        if !matches!(crate::modules::process_start_time_ticks(pid)?, Some(t) if t == start_time_ticks)
+                        {
                             return Err("service publisher process identity expired".into());
                         }
-                        crate::module_uninstall::certify_service_publisher_pid(&module, &unit, pid)?;
+                        crate::module_uninstall::certify_service_publisher_pid(
+                            &module, &unit, pid,
+                        )?;
                         match live_module_variables().publish(owner.clone(), variables) {
                             Ok(changed) => {
-                                if changed { crate::ipc::broadcast_event("module.lifecycle", "state_changed",
-                                    serde_json::json!({"module": module, "reason": "variables_changed"})); }
-                                write_message(&mut stream, &ModuleMessage::VariablesPublished {
-                                    module: module.clone(), session_id: session_id.clone(), changed,
-                                })?;
+                                if changed {
+                                    crate::ipc::broadcast_event(
+                                        "module.lifecycle",
+                                        "state_changed",
+                                        serde_json::json!({"module": module, "reason": "variables_changed"}),
+                                    );
+                                }
+                                write_message(
+                                    &mut stream,
+                                    &ModuleMessage::VariablesPublished {
+                                        module: module.clone(),
+                                        session_id: session_id.clone(),
+                                        changed,
+                                    },
+                                )?;
                             }
                             Err(error) => {
-                                write_message(&mut stream, &ModuleMessage::Error {
-                                    id: None, module: Some(module.clone()), error: ModuleError {
-                                        kind: "invalid_variables".into(), message: error, details: None,
+                                write_message(
+                                    &mut stream,
+                                    &ModuleMessage::Error {
+                                        id: None,
+                                        module: Some(module.clone()),
+                                        error: ModuleError {
+                                            kind: "invalid_variables".into(),
+                                            message: error,
+                                            details: None,
+                                        },
                                     },
-                                })?;
+                                )?;
                             }
                         }
                     }
-                    ModuleMessage::Ping { module: m, session_id: s } => {
+                    ModuleMessage::Ping {
+                        module: m,
+                        session_id: s,
+                    } => {
                         validate_session(&module, &session_id, &m, &s)?;
-                        write_message(&mut stream, &ModuleMessage::Pong {
-                            module: module.clone(), session_id: session_id.clone(),
-                        })?;
+                        write_message(
+                            &mut stream,
+                            &ModuleMessage::Pong {
+                                module: module.clone(),
+                                session_id: session_id.clone(),
+                            },
+                        )?;
                     }
-                    ModuleMessage::Pong { module: m, session_id: s } => {
+                    ModuleMessage::Pong {
+                        module: m,
+                        session_id: s,
+                    } => {
                         validate_session(&module, &session_id, &m, &s)?;
                     }
-                    ModuleMessage::Unregister { module: m, session_id: s, .. } => {
+                    ModuleMessage::Unregister {
+                        module: m,
+                        session_id: s,
+                        ..
+                    } => {
                         validate_session(&module, &session_id, &m, &s)?;
                         break;
                     }
-                    _ => return Err("publisher-only IPC forbids runtime and administrative messages".into()),
+                    _ => {
+                        return Err(
+                            "publisher-only IPC forbids runtime and administrative messages".into(),
+                        )
+                    }
                 }
             }
             Ok(())
         })();
         // Separate service owner: UI disconnects must not revoke this record.
         match live_module_variables().revoke(&owner) {
-            Ok(true) => crate::ipc::broadcast_event("module.lifecycle", "state_changed",
-                serde_json::json!({"module": module, "reason": "variables_revoked"})),
-            Ok(false) => {},
+            Ok(true) => crate::ipc::broadcast_event(
+                "module.lifecycle",
+                "state_changed",
+                serde_json::json!({"module": module, "reason": "variables_revoked"}),
+            ),
+            Ok(false) => {}
             Err(e) => eprintln!("N.E.E.B.L.E.S.: publisher revocation failed: {e}"),
         }
         run
     })();
     if let Err(ref error) = operation {
-        let _ = write_message(&mut stream, &ModuleMessage::Error {
-            id: None, module: Some(module), error: ModuleError {
-                kind: "service_register_rejected".into(), message: error.to_owned(), details: None,
+        let _ = write_message(
+            &mut stream,
+            &ModuleMessage::Error {
+                id: None,
+                module: Some(module),
+                error: ModuleError {
+                    kind: "service_register_rejected".into(),
+                    message: error.to_owned(),
+                    details: None,
+                },
             },
-        });
+        );
     }
     operation
 }
@@ -594,7 +687,10 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
 
     let (protocol, module, session_id, endpoints) = match first {
         ModuleMessage::RegisterService {
-            protocol, module, session_id, unit,
+            protocol,
+            module,
+            session_id,
+            unit,
         } => return service_publisher_loop(stream, protocol, module, session_id, unit, peer),
         ModuleMessage::Register {
             protocol,
@@ -818,17 +914,24 @@ fn handle_client(mut stream: UnixStream) -> Result<(), String> {
         pid: runtime_pid,
         start_time_ticks: runtime_start_time_ticks,
     };
-    let result = client_loop(&mut stream, &writer_sender, &module, &session_id, Some(&variables_owner));
+    let result = client_loop(
+        &mut stream,
+        &writer_sender,
+        &module,
+        &session_id,
+        Some(&variables_owner),
+    );
 
     // Every disconnect path (clean Unregister, EOF, malformed frame, error)
     // revokes this exact process incarnation's dynamic publications. A stale
     // session can never remove a newer process owner's variables.
     match live_module_variables().revoke(&variables_owner) {
         Ok(true) => crate::ipc::broadcast_event(
-            "module.lifecycle", "state_changed",
+            "module.lifecycle",
+            "state_changed",
             serde_json::json!({"module": module, "reason": "variables_revoked"}),
         ),
-        Ok(false) => {},
+        Ok(false) => {}
         Err(error) => eprintln!(
             "N.E.E.B.L.E.S.: could not revoke live variables for '{}' on disconnect: {}",
             module, error
@@ -1185,6 +1288,131 @@ fn client_loop(
         };
 
         match message {
+            ModuleMessage::Execute {
+                id,
+                module: origin_module,
+                session_id: origin_session,
+                target,
+                contract,
+                endpoint,
+                args,
+                payload,
+                mut context,
+                execution,
+            } => {
+                validate_session(module, session_id, &origin_module, &origin_session)?;
+                if id.is_empty() || id.len() > 128 {
+                    return Err("module execute ID must be 1..=128 bytes".to_string());
+                }
+                // Never trust security identities supplied in a caller-owned JSON context.
+                context.remove("caller");
+                context.remove("neebles_authenticated_module");
+                context.remove("neebles_authenticated_session");
+                context.insert(
+                    "neebles_authenticated_module".into(),
+                    serde_json::json!(module),
+                );
+                context.insert(
+                    "neebles_authenticated_session".into(),
+                    serde_json::json!(session_id),
+                );
+                let Some(slot) = acquire_execute_slot() else {
+                    writer.send(ModuleMessage::ExecuteReply {
+                        id, module: module.to_owned(), session_id: session_id.to_owned(),
+                        response: serde_json::json!({
+                            "type":"error", "kind":"ipc_capacity", "message":"too many in-flight requests"
+                        }),
+                    }).map_err(|error| format!("could not queue IPC capacity error: {error}"))?;
+                    continue;
+                };
+                let writer = writer.clone();
+                let authenticated_module = module.to_owned();
+                let reply_module = module.to_owned();
+                let reply_session = session_id.to_owned();
+                let owner = format!("module:{module}:{session_id}");
+                std::thread::spawn(move || {
+                    let _slot = slot;
+                    let result = (|| -> Result<crate::ipc_middleware::Outcome, String> {
+                        // Verify the authenticated consumer's authority BEFORE spawning a job.
+                        crate::module_dependency_policy::authorize_ipc_invoke(
+                            &authenticated_module,
+                            &target,
+                            &contract,
+                            &endpoint,
+                        )?;
+                        let policy = crate::ipc_middleware::Policy::resolve(
+                            execution.as_ref(),
+                            crate::ipc_middleware::Surface::Module,
+                        )?;
+                        // Do not expire the provider's pending reply at the same instant
+                        // the caller stops waiting. Bound its late-response window separately.
+                        let duration = policy.module_provider_wait();
+                        let retries =
+                            crate::ipc_middleware::RetryPolicy::for_module(execution.as_ref())?;
+                        crate::ipc_middleware::run(owner, policy, move || {
+                            let routed = crate::module_ipc::invoke_declared_with_retry(
+                                &target, &contract, &endpoint, args, payload, context, duration,
+                                retries,
+                            );
+                            match routed {
+                            Ok(message) => serde_json::to_value(message).unwrap_or_else(|error|
+                                serde_json::json!({"type":"error","message":error.to_string()})),
+                            Err(error) => serde_json::json!({
+                                "type":"error", "kind":"module_invoke", "message":error
+                            }),
+                        }
+                        })
+                    })();
+                    let reply = match result {
+                        Ok(crate::ipc_middleware::Outcome::Complete(value)) => value,
+                        Ok(crate::ipc_middleware::Outcome::Accepted(job_id)) => {
+                            serde_json::json!({"job_id":job_id,"state":"running"})
+                        }
+                        Ok(crate::ipc_middleware::Outcome::TimedOut(job_id)) => {
+                            serde_json::json!({"job_id":job_id,"state":"deadline_exceeded_running"})
+                        }
+                        Err(error) => serde_json::json!({
+                            "type":"error", "kind":"ipc_execution_rejected", "message":error
+                        }),
+                    };
+                    let delivered = writer
+                        .send(ModuleMessage::ExecuteReply {
+                            id,
+                            module: reply_module,
+                            session_id: reply_session,
+                            response: reply,
+                        })
+                        .map_err(|error| {
+                            format!("could not queue module IPC execute reply: {error}")
+                        });
+                    if let Err(error) = delivered {
+                        eprintln!("N.E.E.B.L.E.S.: {error}");
+                    }
+                });
+            }
+            ModuleMessage::JobQuery {
+                id,
+                module: query_module,
+                session_id: query_session,
+                job_id,
+            } => {
+                validate_session(module, session_id, &query_module, &query_session)?;
+                let owner = format!("module:{module}:{session_id}");
+                let snapshot = match crate::ipc_middleware::status(&owner, &job_id) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => serde_json::json!({
+                        "type":"error","kind":"ipc_job_status","message":error
+                    }),
+                };
+                writer
+                    .send(ModuleMessage::JobSnapshot {
+                        id,
+                        module: module.to_owned(),
+                        session_id: session_id.to_owned(),
+                        snapshot,
+                    })
+                    .map_err(|error| format!("could not queue IPC job snapshot: {error}"))?;
+            }
             ModuleMessage::VariablesPublish {
                 module: publisher_module,
                 session_id: publisher_session,
@@ -1193,40 +1421,53 @@ fn client_loop(
                 validate_session(module, session_id, &publisher_module, &publisher_session)?;
                 // No publication is possible from the unauthenticated test
                 // transport or a connection with no process ownership proof.
-                let owner = variables_owner.ok_or_else(||
+                let owner = variables_owner.ok_or_else(|| {
                     "live module variable publication requires a verified process owner".to_string()
-                )?;
+                })?;
                 if owner.module != module || owner.session_id != session_id {
-                    return Err("module variable publisher does not match verified runtime session".into());
+                    return Err(
+                        "module variable publisher does not match verified runtime session".into(),
+                    );
                 }
                 match live_module_variables().publish(owner.clone(), variables) {
                     Ok(changed) => {
                         if changed {
                             crate::ipc::broadcast_event(
-                                "module.lifecycle", "state_changed",
+                                "module.lifecycle",
+                                "state_changed",
                                 serde_json::json!({"module": module, "reason": "variables_changed"}),
                             );
                         }
-                        writer.send(ModuleMessage::VariablesPublished {
-                            module: module.to_string(),
-                            session_id: session_id.to_string(),
-                            changed,
-                        }).map_err(|error| format!(
-                            "could not acknowledge live module variables for '{}': {error}", module
-                        ))?;
+                        writer
+                            .send(ModuleMessage::VariablesPublished {
+                                module: module.to_string(),
+                                session_id: session_id.to_string(),
+                                changed,
+                            })
+                            .map_err(|error| {
+                                format!(
+                                    "could not acknowledge live module variables for '{}': {error}",
+                                    module
+                                )
+                            })?;
                     }
                     Err(error) => {
-                        writer.send(ModuleMessage::Error {
-                            id: None,
-                            module: Some(module.to_string()),
-                            error: ModuleError {
-                                kind: "invalid_variables".to_string(),
-                                message: error,
-                                details: None,
-                            },
-                        }).map_err(|error| format!(
-                            "could not reject module variables for '{}': {error}", module
-                        ))?;
+                        writer
+                            .send(ModuleMessage::Error {
+                                id: None,
+                                module: Some(module.to_string()),
+                                error: ModuleError {
+                                    kind: "invalid_variables".to_string(),
+                                    message: error,
+                                    details: None,
+                                },
+                            })
+                            .map_err(|error| {
+                                format!(
+                                    "could not reject module variables for '{}': {error}",
+                                    module
+                                )
+                            })?;
                     }
                 }
             }
@@ -1640,6 +1881,8 @@ fn client_loop(
             | ModuleMessage::NotificationActivationToken { .. }
             | ModuleMessage::Event { .. }
             | ModuleMessage::Invoke { .. }
+            | ModuleMessage::ExecuteReply { .. }
+            | ModuleMessage::JobSnapshot { .. }
             | ModuleMessage::Shutdown { .. } => {
                 writer
                     .send(
@@ -2761,32 +3004,65 @@ mod live_variables_transport_tests {
         };
         let worker = owner.clone();
         let handle = std::thread::spawn(move || {
-            let result = client_loop(&mut boss, &sender, &worker.module, &worker.session_id, Some(&worker));
+            let result = client_loop(
+                &mut boss,
+                &sender,
+                &worker.module,
+                &worker.session_id,
+                Some(&worker),
+            );
             let revoked = live_module_variables().revoke(&worker).unwrap();
             (result, revoked)
         });
-        let values = [("first".to_string(), "one".to_string()),
-            ("second".to_string(), "two".to_string())].into_iter().collect();
-        write_message(&mut client, &ModuleMessage::VariablesPublish {
-            module: owner.module.clone(), session_id: owner.session_id.clone(), variables: values,
-        }).unwrap();
+        let values = [
+            ("first".to_string(), "one".to_string()),
+            ("second".to_string(), "two".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        write_message(
+            &mut client,
+            &ModuleMessage::VariablesPublish {
+                module: owner.module.clone(),
+                session_id: owner.session_id.clone(),
+                variables: values,
+            },
+        )
+        .unwrap();
         match receiver.recv().unwrap() {
             ModuleMessage::VariablesPublished { changed, .. } => assert!(changed),
             other => panic!("expected publication ACK, got {other:?}"),
         }
-        assert_eq!(live_module_variables().snapshot().unwrap()[&owner.module]["second"], "two");
-        write_message(&mut client, &ModuleMessage::VariablesPublish {
-            module: owner.module.clone(), session_id: owner.session_id.clone(),
-            variables: BTreeMap::new(),
-        }).unwrap();
+        assert_eq!(
+            live_module_variables().snapshot().unwrap()[&owner.module]["second"],
+            "two"
+        );
+        write_message(
+            &mut client,
+            &ModuleMessage::VariablesPublish {
+                module: owner.module.clone(),
+                session_id: owner.session_id.clone(),
+                variables: BTreeMap::new(),
+            },
+        )
+        .unwrap();
         match receiver.recv().unwrap() {
             ModuleMessage::VariablesPublished { changed, .. } => assert!(changed),
             other => panic!("expected clearing ACK, got {other:?}"),
         }
-        assert!(!live_module_variables().snapshot().unwrap().contains_key(&owner.module));
-        write_message(&mut client, &ModuleMessage::Unregister {
-            module: owner.module.clone(), session_id: owner.session_id.clone(), reason: None,
-        }).unwrap();
+        assert!(!live_module_variables()
+            .snapshot()
+            .unwrap()
+            .contains_key(&owner.module));
+        write_message(
+            &mut client,
+            &ModuleMessage::Unregister {
+                module: owner.module.clone(),
+                session_id: owner.session_id.clone(),
+                reason: None,
+            },
+        )
+        .unwrap();
         let (result, revoked) = handle.join().unwrap();
         assert!(result.is_ok());
         assert!(!revoked);
@@ -2796,16 +3072,23 @@ mod live_variables_transport_tests {
     fn unauthenticated_loop_rejects_publication() {
         let (mut boss, mut client) = UnixStream::pair().unwrap();
         let (sender, _receiver) = mpsc::channel();
-        let handle = std::thread::spawn(move ||
+        let handle = std::thread::spawn(move || {
             client_loop(&mut boss, &sender, "f03b-no-owner", "f03b-session", None)
-        );
-        write_message(&mut client, &ModuleMessage::VariablesPublish {
-            module: "f03b-no-owner".into(),
-            session_id: "f03b-session".into(),
-            variables: [("k".to_string(), "v".to_string())].into_iter().collect(),
-        }).unwrap();
+        });
+        write_message(
+            &mut client,
+            &ModuleMessage::VariablesPublish {
+                module: "f03b-no-owner".into(),
+                session_id: "f03b-session".into(),
+                variables: [("k".to_string(), "v".to_string())].into_iter().collect(),
+            },
+        )
+        .unwrap();
         assert!(handle.join().unwrap().is_err());
-        assert!(!live_module_variables().snapshot().unwrap().contains_key("f03b-no-owner"));
+        assert!(!live_module_variables()
+            .snapshot()
+            .unwrap()
+            .contains_key("f03b-no-owner"));
     }
 
     #[test]
@@ -2818,14 +3101,28 @@ mod live_variables_transport_tests {
             pid: 41532,
             start_time_ticks: 41532,
         };
-        let handle = std::thread::spawn(move ||
-            client_loop(&mut boss, &sender, "f03b-real", "f03b-session", Some(&owner))
-        );
-        write_message(&mut client, &ModuleMessage::VariablesPublish {
-            module: "f03b-foreign".into(), session_id: "f03b-session".into(),
-            variables: [("k".to_string(), "v".to_string())].into_iter().collect(),
-        }).unwrap();
+        let handle = std::thread::spawn(move || {
+            client_loop(
+                &mut boss,
+                &sender,
+                "f03b-real",
+                "f03b-session",
+                Some(&owner),
+            )
+        });
+        write_message(
+            &mut client,
+            &ModuleMessage::VariablesPublish {
+                module: "f03b-foreign".into(),
+                session_id: "f03b-session".into(),
+                variables: [("k".to_string(), "v".to_string())].into_iter().collect(),
+            },
+        )
+        .unwrap();
         assert!(handle.join().unwrap().is_err());
-        assert!(!live_module_variables().snapshot().unwrap().contains_key("f03b-foreign"));
+        assert!(!live_module_variables()
+            .snapshot()
+            .unwrap()
+            .contains_key("f03b-foreign"));
     }
 }

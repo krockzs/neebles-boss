@@ -501,7 +501,6 @@ fn workspace_execution_handler(operation: PreparedOperation) -> CapabilityFuture
     Box::pin(execute_workspace_operation(operation))
 }
 
-
 // Generic, Governor-scoped user-service installation. The module can name only
 // one resource already declared in its authenticated uninstall contract.
 const USER_SERVICE_ARTILLERY: &str = "boss.user_service";
@@ -514,10 +513,18 @@ fn user_service_install_handler(operation: PreparedOperation) -> CapabilityFutur
             || !operation.tactics.is_empty()
             || !operation.intelligence.is_empty()
         {
-            return Err("user service requires only objective=install and munition.resource".into());
+            return Err(
+                "user service requires only objective=install and munition.resource".into(),
+            );
         }
-        let module = operation.module_id.ok_or("user service requires Governor-owned module")?;
-        let resource = operation.munition.get("resource").ok_or("missing resource")?.clone();
+        let module = operation
+            .module_id
+            .ok_or("user service requires Governor-owned module")?;
+        let resource = operation
+            .munition
+            .get("resource")
+            .ok_or("missing resource")?
+            .clone();
         crate::module_uninstall::install_declared_user_service(&module, &resource)?;
         Ok(ExecutionPayload::from([
             ("module".to_string(), module),

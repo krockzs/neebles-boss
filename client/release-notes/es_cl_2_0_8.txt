@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.8 — Candidato IPC
+
+- Middleware de ejecución compartido por los sockets administrativo y de módulos.
+- Solicitudes con async y timeout_ms configurables por operación.
+- Trabajos con identificador, estado y límites de concurrencia.
+- Permisos explícitos de IPC entre módulos; depende_install no concede acceso.
+- Compatibilidad de mensajes previos y tiempos internos de Boss centralizados.
+
+Guarda tu trabajo antes de reiniciar Boss.

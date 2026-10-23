@@ -19,6 +19,11 @@
 #include <QTimer>
 #include <QVersionNumber>
 
+namespace {
+constexpr int kBossInternalIpcTimeoutMs = 5000;
+constexpr int kBossProcessStartTimeoutMs = 5000;
+}
+
 BossController::BossController(QObject *parent)
     : QObject(parent)
 {
@@ -563,7 +568,7 @@ QByteArray BossController::run(
     }
 
     const bool started =
-        process.waitForStarted(5000);
+        process.waitForStarted(kBossProcessStartTimeoutMs);
 
     const bool finished =
         started
@@ -764,7 +769,7 @@ void BossController::reload()
 void BossController::loadConfig()
 {
     bool ok = false;
-    const QVariant value = parseJson(run({QStringLiteral("config"), QStringLiteral("show")}, false, 5000, &ok));
+    const QVariant value = parseJson(run({QStringLiteral("config"), QStringLiteral("show")}, false, kBossInternalIpcTimeoutMs, &ok));
     if (!ok || !value.canConvert<QVariantMap>())
         return;
 
@@ -847,7 +852,7 @@ void BossController::loadConfig()
 void BossController::loadLanguages()
 {
     bool ok = false;
-    const QVariant value = parseJson(run({QStringLiteral("i18n"), QStringLiteral("languages")}, false, 5000, &ok));
+    const QVariant value = parseJson(run({QStringLiteral("i18n"), QStringLiteral("languages")}, false, kBossInternalIpcTimeoutMs, &ok));
     if (!ok || !value.canConvert<QVariantMap>())
         return;
     m_languages = value.toMap().value(QStringLiteral("languages")).toList();
@@ -857,7 +862,7 @@ void BossController::loadLanguages()
 void BossController::loadTranslations()
 {
     bool ok = false;
-    const QVariant value = parseJson(run({QStringLiteral("i18n"), QStringLiteral("dump")}, false, 5000, &ok));
+    const QVariant value = parseJson(run({QStringLiteral("i18n"), QStringLiteral("dump")}, false, kBossInternalIpcTimeoutMs, &ok));
     if (!ok || !value.canConvert<QVariantMap>())
         return;
     m_strings = value.toMap();
@@ -994,7 +999,7 @@ void BossController::loadModules()
                 QStringLiteral("surface-model")
             },
             false,
-            5000,
+            kBossInternalIpcTimeoutMs,
             &installedOk
         )
     );
@@ -1238,7 +1243,7 @@ void BossController::pollModuleRuntime()
                 QStringLiteral("surface-model")
             },
             false,
-            5000,
+            kBossInternalIpcTimeoutMs,
             &ok
         )
     );
@@ -1511,7 +1516,7 @@ void BossController::applyModuleLifecycle()
                 message
             },
             false,
-            5000,
+            kBossInternalIpcTimeoutMs,
             &notificationOk
         );
 
@@ -1530,7 +1535,7 @@ void BossController::applyModuleLifecycle()
                 remoteVersion
             },
             false,
-            5000,
+            kBossInternalIpcTimeoutMs,
             &markOk
         );
 
@@ -1719,7 +1724,7 @@ void BossController::saveConfig(const QString &language,
         QStringLiteral("set"),
         QStringLiteral("language"),
         language
-    }, false, 5000, &current);
+    }, false, kBossInternalIpcTimeoutMs, &current);
     ok = ok && current;
 
     run({
@@ -1729,7 +1734,7 @@ void BossController::saveConfig(const QString &language,
         trayEnabled
             ? QStringLiteral("true")
             : QStringLiteral("false")
-    }, false, 5000, &current);
+    }, false, kBossInternalIpcTimeoutMs, &current);
     ok = ok && current;
 
     run({
@@ -1739,7 +1744,7 @@ void BossController::saveConfig(const QString &language,
         launcherEnabled
             ? QStringLiteral("true")
             : QStringLiteral("false")
-    }, false, 5000, &current);
+    }, false, kBossInternalIpcTimeoutMs, &current);
     ok = ok && current;
 
     /*
@@ -1755,7 +1760,7 @@ void BossController::saveConfig(const QString &language,
             text(
                 QStringLiteral("notifications.disabled")
             )
-        }, false, 5000, &notificationOk);
+        }, false, kBossInternalIpcTimeoutMs, &notificationOk);
     }
 
     run({
@@ -1765,7 +1770,7 @@ void BossController::saveConfig(const QString &language,
         normalNotifications
             ? QStringLiteral("true")
             : QStringLiteral("false")
-    }, false, 5000, &current);
+    }, false, kBossInternalIpcTimeoutMs, &current);
     ok = ok && current;
 
     /*
@@ -1785,7 +1790,7 @@ void BossController::saveConfig(const QString &language,
             text(
                 QStringLiteral("notifications.enabled")
             )
-        }, false, 5000, &notificationOk);
+        }, false, kBossInternalIpcTimeoutMs, &notificationOk);
     }
 
     if (ok) {
@@ -2822,7 +2827,7 @@ void BossController::saveConfigValue(
                 )
             },
             false,
-            5000,
+            kBossInternalIpcTimeoutMs,
             &notificationOk
         );
     }
@@ -2836,7 +2841,7 @@ void BossController::saveConfigValue(
             normalized == QStringLiteral("true") ? QStringLiteral("enable") : QStringLiteral("disable"),
             QStringLiteral("neebles-boss-ui-autostart.service")
         });
-        if (!service.waitForStarted(5000) || !service.waitForFinished(10000)
+        if (!service.waitForStarted(kBossProcessStartTimeoutMs) || !service.waitForFinished(10000)
             || service.exitStatus() != QProcess::NormalExit || service.exitCode() != 0) {
             setStatusText(QStringLiteral("Unable to update Boss session autostart service: ")
                 + QString::fromUtf8(service.readAllStandardError()));
@@ -2863,7 +2868,7 @@ void BossController::saveConfigValue(
             normalized
         },
         false,
-        5000,
+        kBossInternalIpcTimeoutMs,
         &ok
     );
 
@@ -2913,7 +2918,7 @@ void BossController::saveConfigValue(
                 )
             },
             false,
-            5000,
+            kBossInternalIpcTimeoutMs,
             &notificationOk
         );
     }
@@ -2962,7 +2967,7 @@ void BossController::saveConfigValue(
                     )
                 },
                 false,
-                5000,
+                kBossInternalIpcTimeoutMs,
                 &notificationOk
             );
         }
@@ -3052,7 +3057,7 @@ int BossController::moduleLocalState(
                 rawRequest
             },
             false,
-            5000,
+            kBossInternalIpcTimeoutMs,
             &ok
         );
 
@@ -3247,7 +3252,7 @@ QVariantMap BossController::dependencyPreflight(
                 name
             },
             false,
-            5000,
+            kBossInternalIpcTimeoutMs,
             &ok
         );
 
@@ -3320,7 +3325,7 @@ void BossController::setSurfaceModuleVisibility(
                 : QStringLiteral("false")
         },
         false,
-        5000,
+        kBossInternalIpcTimeoutMs,
         &ok
     );
 

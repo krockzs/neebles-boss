@@ -100,6 +100,7 @@ fn request_persistent_boss_result(
     args: Vec<String>,
 ) -> Result<Option<serde_json::Value>, String> {
     let response = crate::ipc::request(&ExecutionRequest {
+        execution: None,
         target: "boss".to_string(),
         action: Some(action.to_string()),
         args,
@@ -284,6 +285,7 @@ fn boss_module_setting_request(
     }
 
     let request = ExecutionRequest {
+        execution: None,
         target: "settings".to_string(),
 
         action: Some(action.to_string()),
@@ -358,6 +360,7 @@ fn boss_settings_bridge_once() -> Result<(), String> {
     })?;
 
     let request = ExecutionRequest {
+        execution: None,
         target: "events".to_string(),
 
         action: Some("subscribe".to_string()),

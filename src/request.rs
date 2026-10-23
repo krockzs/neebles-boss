@@ -21,6 +21,8 @@ impl Default for ExecutionContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<crate::ipc_middleware::ExecutionOptions>,
     pub target: String,
     #[serde(default)]
     pub action: Option<String>,
