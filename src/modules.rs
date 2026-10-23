@@ -5457,8 +5457,76 @@ pub fn installed_modules_json() -> Result<Value, String> {
     Ok(Value::Array(result))
 }
 
+/*
+ * The same installed-version dependency projection is consumed by both
+ * Launcher and Tray. Neither desktop surface infers policy from Registry,
+ * presentation state, or live Secrets variables.
+ *
+ * On any graph/snapshot error we still return the Surface Model but mark its
+ * controls unverified so both UIs fail closed. The enforcement remains in
+ * module_dependency_preflight / set_enabled / uninstall.
+ */
+fn installed_dependency_guards() -> Result<BTreeMap<String, Vec<(String, String)>>, String> {
+    let graph = installed_dependency_graph()?;
+    let mut names = BTreeMap::<String, String>::new();
+    for module in installed_names()? {
+        let module_dir = find_module_dir(&module)?;
+        let manifest = read_manifest(&module_dir.join("manifest.json"))?;
+        if manifest.name != module {
+            return Err(format!("installed module identity mismatch for '{}'", module));
+        }
+        let snapshot = crate::module_dependency_policy::read_installed_requirements(
+            &module_dir, &module, &manifest.version,
+        )?;
+        names.insert(module, snapshot.short_name);
+    }
+    let mut locks = BTreeMap::new();
+    for module in names.keys() {
+        let mut blockers = Vec::new();
+        for dependent in graph.uninstall_blockers(module)? {
+            let short_name = names.get(&dependent)
+                .ok_or_else(|| format!("missing installed dependent '{}'", dependent))?;
+            blockers.push((dependent, short_name.clone()));
+        }
+        locks.insert(module.clone(), blockers);
+    }
+    Ok(locks)
+}
+
+fn materialize_dependency_guards_with(
+    value: &mut Value,
+    guards: &Result<BTreeMap<String, Vec<(String, String)>>, String>,
+) -> Result<(), String> {
+    let rows = value.as_array_mut().ok_or("installed surface model must be an array")?;
+    for row in rows {
+        let module = row.get("name").and_then(Value::as_str)
+            .ok_or("installed surface row has no module name")?.to_owned();
+        let (verified, protected, blockers) = match guards {
+            Ok(map) => match map.get(&module) {
+                Some(dependents) => (true, !dependents.is_empty(), dependents.iter()
+                    .map(|(id, short_name)| json!({"id":id,"short_name":short_name}))
+                    .collect::<Vec<_>>()),
+                None => (false, true, Vec::new()),
+            },
+            Err(_) => (false, true, Vec::new()),
+        };
+        row.as_object_mut().ok_or("invalid installed surface object")?
+            .insert("dependency_guard".into(), json!({
+                "verified": verified,
+                "protected": protected,
+                "blockers": blockers,
+            }));
+    }
+    Ok(())
+}
+
 pub fn installed_modules_presentation_json() -> Result<Value, String> {
     let mut value = installed_modules_json()?;
+
+    // Read installed dependency snapshots, never the moving remote Registry.
+    // Deliberately preserve a visible but non-actionable model on policy errors.
+    let guards = installed_dependency_guards();
+    materialize_dependency_guards_with(&mut value, &guards)?;
 
     materialize_surface_requirements_with(&mut value, |owner, requirements| {
         crate::surface_requirement_resolver::requirements_satisfied(owner, requirements)
@@ -9418,5 +9486,44 @@ mod module_language_settings_contract_tests {
         assert!(!declared_module_language(
             &json!({"tray":{"visible":"true"}})
         ));
+    }
+}
+
+
+#[cfg(test)]
+mod dependency_surface_guard_f15_tests {
+    use super::materialize_dependency_guards_with;
+    use serde_json::{json, Value};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn protects_provider_and_names_installed_dependent() {
+        let mut rows = json!([{"name":"neebles-secrets"}, {"name":"neebles-connect"}]);
+        let guards = Ok(BTreeMap::from([
+            ("neebles-secrets".to_owned(), vec![("neebles-connect".to_owned(), "Connect".to_owned())]),
+            ("neebles-connect".to_owned(), vec![]),
+        ]));
+        materialize_dependency_guards_with(&mut rows, &guards).unwrap();
+        assert_eq!(rows[0]["dependency_guard"], json!({
+            "verified":true,"protected":true,
+            "blockers":[{"id":"neebles-connect","short_name":"Connect"}]
+        }));
+        assert_eq!(rows[1]["dependency_guard"], json!({
+            "verified":true,"protected":false,"blockers":[]
+        }));
+    }
+
+    #[test]
+    fn missing_or_unreadable_snapshot_fails_closed_without_inventing_blockers() {
+        let mut rows = json!([{"name":"neebles-secrets"}]);
+        let missing = Ok(BTreeMap::new());
+        materialize_dependency_guards_with(&mut rows, &missing).unwrap();
+        assert_eq!(rows[0]["dependency_guard"]["verified"], Value::Bool(false));
+        assert_eq!(rows[0]["dependency_guard"]["protected"], Value::Bool(true));
+        let error: Result<BTreeMap<String,Vec<(String,String)>>,String> = Err("snapshot unreadable".into());
+        materialize_dependency_guards_with(&mut rows, &error).unwrap();
+        assert_eq!(rows[0]["dependency_guard"]["verified"], Value::Bool(false));
+        assert_eq!(rows[0]["dependency_guard"]["protected"], Value::Bool(true));
+        assert_eq!(rows[0]["dependency_guard"]["blockers"], json!([]));
     }
 }

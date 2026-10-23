@@ -67,6 +67,30 @@ Window {
         )
     }
 
+    function dependencyControlsHidden(module) {
+        if (!module || !module.dependency_guard
+            || module.dependency_guard.verified !== true)
+            return true
+        return module.enabled === true
+            && module.dependency_guard.protected === true
+    }
+
+    function dependencyWarning(module) {
+        if (!module)
+            return ""
+        const guard = module.dependency_guard
+        if (!guard || guard.verified !== true)
+            return root.t("modules.dependency_warning_preflight_failed_body")
+        if (module.enabled !== true || guard.protected !== true)
+            return ""
+        const names = (guard.blockers || []).map(function(blocker) {
+            return String(blocker.short_name || blocker.id)
+        })
+        return root.t("common.disable") + " / " + root.t("common.uninstall")
+            + " — " + root.t("modules.dependency_warning_blockers") + " "
+            + names.join(", ")
+    }
+
     function selectedModuleObject() {
         const modules =
             root.trayModules()
@@ -602,6 +626,9 @@ Window {
                         }
 
                         NeeblesSwitch {
+                            visible:
+                                !root.dependencyControlsHidden(selectedModuleRow.selectedModuleData)
+
                             checked:
                                 !!selectedModuleRow.selectedModuleData
                                 && !!selectedModuleRow.selectedModuleData.enabled
@@ -611,14 +638,27 @@ Window {
                             enabled:
                                 !!selectedModuleRow.selectedModuleData
                                 && !bossCommands.busy
+                                && !root.dependencyControlsHidden(selectedModuleRow.selectedModuleData)
 
                             onClicked: {
+                                if (root.dependencyControlsHidden(selectedModuleRow.selectedModuleData))
+                                    return
                                 bossCommands.setModuleEnabled(
                                     selectedModuleRow.selectedModuleData.name,
                                     !selectedModuleRow.selectedModuleData.enabled
                                 )
                             }
                         }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: root.dependencyWarning(selectedModuleRow.selectedModuleData).length > 0
+                        text: root.dependencyWarning(selectedModuleRow.selectedModuleData)
+                        textFormat: Text.PlainText
+                        color: "#FB7185"
+                        font.pixelSize: 10
+                        wrapMode: Text.Wrap
                     }
 
                     Repeater {

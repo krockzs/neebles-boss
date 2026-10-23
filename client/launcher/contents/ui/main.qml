@@ -17,10 +17,12 @@ PlasmoidItem {
     property var pendingActions: ({})
     // Fresh canonical Surface Model availability; independent of delegate modelData caching.
     property var canonicalOpenActions: ({})
+    // Stale/legacy surface-model data must never show a destructive control.
+    property bool dependencyModelFresh: false
     property bool refreshBusy: false
     property bool refreshAgain: false
     property string commandError: ""
-    property string bossVersion: "2.0.6"
+    property string bossVersion: "2.0.7"
 
 
 
@@ -187,6 +189,31 @@ PlasmoidItem {
         )
     }
 
+    function dependencyControlsHidden(module) {
+        if (!module || !dependencyModelFresh)
+            return true
+        const guard = module.dependency_guard
+        if (!guard || guard.verified !== true)
+            return true
+        return module.enabled === true && guard.protected === true
+    }
+
+    function dependencyWarning(module) {
+        if (!module)
+            return ""
+        const guard = module.dependency_guard
+        if (!dependencyModelFresh || !guard || guard.verified !== true)
+            return t("modules.dependency_warning_preflight_failed_body")
+        if (module.enabled !== true || guard.protected !== true)
+            return ""
+        const names = (guard.blockers || []).map(function(blocker) {
+            return String(blocker.short_name || blocker.id)
+        })
+        return t("common.disable") + " / " + t("common.uninstall")
+            + " — " + t("modules.dependency_warning_blockers") + " "
+            + names.join(", ")
+    }
+
     function shellArg(value) {
         return "'"
             + String(value).replace(
@@ -258,6 +285,14 @@ PlasmoidItem {
                     }
                     openActions[module.name] = actions
                 }
+                // Reject malformed/legacy policy projections before enabling
+                // state controls; backend preflight is authoritative regardless.
+                dependencyModelFresh = installed.every(function(module) {
+                    return !!module && !!module.dependency_guard
+                        && typeof module.dependency_guard.verified === "boolean"
+                        && typeof module.dependency_guard.protected === "boolean"
+                        && Array.isArray(module.dependency_guard.blockers)
+                })
                 canonicalOpenActions = openActions
                 installedModules = installed
                 applyModuleFilter()
@@ -265,6 +300,7 @@ PlasmoidItem {
                 // Fail closed for actions on read errors; retain only the last
                 // visual model to avoid a disappearing Launcher panel.
                 canonicalOpenActions = ({})
+                dependencyModelFresh = false
                 console.warn("N.E.E.B.L.E.S. Launcher canonical refresh failed:", String(e))
             } finally {
                 refreshBusy = false

@@ -150,9 +150,14 @@ Item {
                             })
                         readonly property int extraCount:
                             remainingButtons.length + declaredSwitches.length
+                        readonly property string dependencyNotice:
+                            bossRoot.dependencyWarning(modelData)
+                        readonly property bool stateHidden:
+                            bossRoot.dependencyControlsHidden(modelData)
 
                         width: ListView.view.width
                         height: Math.max(58, 14 + extraCount * 30)
+                                + (dependencyNotice.length > 0 ? 38 : 0)
                         radius: 8
                         color: "#09090D"
                         border.width: 1
@@ -163,7 +168,7 @@ Item {
                             anchors.leftMargin: 8
                             anchors.rightMargin: 8
                             anchors.topMargin: 6
-                            anchors.bottomMargin: 6
+                            anchors.bottomMargin: moduleRow.dependencyNotice.length > 0 ? 44 : 6
                             spacing: 7
 
                             // Column 1 — mandatory module icon.
@@ -196,8 +201,9 @@ Item {
 
                             // Column 3 — existing administrative Active control.
                             Item {
-                                Layout.preferredWidth: 76
+                                Layout.preferredWidth: moduleRow.stateHidden ? 0 : 76
                                 Layout.fillHeight: true
+                                visible: !moduleRow.stateHidden
 
                                 PlasmaComponents3.Button {
                                     id: stateButton
@@ -230,6 +236,8 @@ Item {
                                         verticalAlignment: Text.AlignVCenter
                                     }
                                     onClicked: {
+                                        if (moduleRow.stateHidden)
+                                            return
                                         const verb = moduleRow.modelData.enabled
                                                      ? "disable" : "enable"
                                         bossRoot.runModuleAction(
@@ -385,6 +393,26 @@ Item {
                                     }
                                 }
                             }
+                        }
+
+                        // Passive policy warning; no clickable bypass of Boss.
+                        Text {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            anchors.bottomMargin: 5
+                            height: 31
+                            visible: moduleRow.dependencyNotice.length > 0
+                            text: moduleRow.dependencyNotice
+                            textFormat: Text.PlainText
+                            color: "#FB7185"
+                            font.pixelSize: 10
+                            wrapMode: Text.Wrap
+                            maximumLineCount: 2
+                            elide: Text.ElideRight
+                            verticalAlignment: Text.AlignVCenter
                         }
                     }
 

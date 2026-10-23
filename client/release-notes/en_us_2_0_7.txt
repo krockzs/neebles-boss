@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.7
+
+- Launcher and Tray honor installed dependencies and hide the disable toggle for modules needed by others.
+- A red notice identifies dependent modules by their short names.
+- If the installed dependency graph cannot be verified, guarded toggles fail closed.
+- Critical Update remains available; Registry rules and secret handling are unchanged.
+- The backend still rejects disabling or uninstalling required provider modules.
+
+Save your work before rebooting Boss.

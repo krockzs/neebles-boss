@@ -1,0 +1,9 @@
+NEEBLES Boss 2.0.7
+
+- Launcher y Tray respetan las dependencias instaladas y ocultan el control de desactivación de módulos necesarios para otros.
+- Un aviso rojo muestra qué módulos dependen del módulo protegido, usando sus nombres cortos.
+- Si no se puede verificar el grafo de dependencias, los controles protegidos se ocultan por seguridad.
+- Critical Update sigue disponible; no cambia las reglas del Registry ni la gestión de secretos.
+- El backend continúa impidiendo desactivar o desinstalar proveedores requeridos.
+
+Guarda tu trabajo antes de reiniciar Boss.
