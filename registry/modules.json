@@ -17,10 +17,19 @@
     },
     "neebles-secrets": {
       "repo": "https://github.com/krockzs/neebles-secrets.git",
-      "commit": "9dac4d6aca926cea1ea1671e155523adc4b975c0",
-      "version": "1.0.4",
+      "commit": "e51006d3a5f19fe38cb54e3880329e1291e54495",
+      "version": "1.0.5",
       "short_name": "Secrets",
-      "depends_install": {}
+      "depends_install": {},
+      "ipc_invoke_allow": {
+        "neebles-connect": [
+          "commands:health",
+          "commands:vault_exists",
+          "commands:vault_request_status",
+          "commands:vault_request",
+          "commands:structure_capabilities"
+        ]
+      }
     }
   }
 }
