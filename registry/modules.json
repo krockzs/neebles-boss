@@ -17,8 +17,8 @@
     },
     "neebles-secrets": {
       "repo": "https://github.com/krockzs/neebles-secrets.git",
-      "commit": "e51006d3a5f19fe38cb54e3880329e1291e54495",
-      "version": "1.0.5",
+      "commit": "4de297ea0d77b0c2f7be0cea1a0b7de671f3588f",
+      "version": "1.0.6",
       "short_name": "Secrets",
       "depends_install": {},
       "ipc_invoke_allow": {
