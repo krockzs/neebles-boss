@@ -3,8 +3,8 @@
   "modules": {
     "neebles-connect": {
       "repo": "https://github.com/krockzs/neebles-connect.git",
-      "commit": "1112d7c02edeff63f6773acfcfb9431aa6f4bc28",
-      "version": "1.0.1",
+      "commit": "2e6390268ea85935d7118b7276adb092c0328f0d",
+      "version": "1.0.2",
       "short_name": "Connect",
       "depends_install": {
         "neebles-secrets": {
