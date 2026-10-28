@@ -2,7 +2,20 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Version:** **2.0.8** (candidato middleware IPC; pendiente compilación, QA y publicación). Boss 2.0.7 es la última versión instalada certificada en la auditoría del 23/10/2026.
+**Versión de código: 2.0.8.** GitHub Release `v2.0.8` publicada el 23-10-2026. La selección de módulos se consulta en el Registry actual; la aceptación instalada tiene evidencia separada.
+
+## Estado operativo y selección de módulos — 28-10-2026
+
+- **Versión de fuente Boss:** `2.0.8` en `Cargo.toml`. **Release GitHub publicada:** [`v2.0.8`](https://github.com/krockzs/neebles-boss/releases/tag/v2.0.8) (23-10-2026). Las secciones que describen 2.0.0/2.0.1/2.0.7 como estado vigente son **históricas**, no instrucciones actuales.
+- **Registry actual:** `registry/modules.json` schema 3 selecciona **Connect 1.0.2** (`2e6390268ea85935d7118b7276adb092c0328f0d`) y **Secrets 1.0.7** (`d61e3aa916d7c5863ae7dc9bb29661b711753a30`). La revisión de Boss que introdujo esa selección fue `b559588312817dcc9166a6e006d1a49d5019e250`.
+- **Construcción de Connect:** CUSTOM V2 `0bb4478d9feae938714c9ca678dcd26dc0a04f86`, RootFS `rust-qt` y world `modules.rust-qt`. `install` y `update` garantizan la bóveda vía Secrets; `open` inicia el runtime gobernado. Los pins documentales nuevos no invalidan los commits de código seleccionados.
+- **Dependencias:** Connect requiere Secrets instalado con `master_key="true"` y `unblock="true"` durante la instalación. `depends_install` **no** es un permiso de IPC. El Registry de Secrets define la lista explícita `ipc_invoke_allow` de endpoints de Boss.
+- **IPC:** los sockets `/run/neebles/neebles.sock` (administrativo) y `/run/neebles/modules.sock` (runtimes) mantienen sus contratos. `async`, `timeout_ms`, `job_id`, límites y reintentos seguros pertenecen al middleware del gobernador, no a decisiones específicas de un módulo.
+- **Prueba real informada:** el operador confirmó el 28-10-2026 el funcionamiento de Connect con dos monitores, equipos y usuarios/credenciales guardados de forma independiente. Esta afirmación es una aceptación funcional comunicada; no atribuye automáticamente a Boss una nueva auditoría de fallos inducidos/rollback ni una nueva GitHub Release.
+
+**Autoridad:** Boss no modifica material de CUSTOM ni las bóvedas por un cambio de README. Los artefactos instalados y la evidencia RuntimeLease de un equipo concreto determinan el alcance final de aceptación, no el encabezado documental.
+
+---
 
 N.E.E.B.L.E.S. Boss is the governance, orchestration and runtime-control layer of the N.E.E.B.L.E.S. ecosystem.
 
@@ -1068,13 +1081,13 @@ Boss startup does not depend on running recovery.
 
 F10 corrige la validación global indebida de todos los mundos CUSTOM dentro de cada RootFS de un módulo. Construction selecciona explícitamente `domination.world` por RootFS y la misma selección se usa en el staging de Install y en RuntimeLease. Preinstall, Essential y los pools de `.deb` por SHA no cambian. Test Module 1.2.12 vuelve al Registry junto a Connect 1.0.0.
 
-La compilación y las pruebas Rust se realizaron en Ryzen antes de F11. El versionado 2.0.1 sigue siendo un candidato local; no equivale a una release publicada. La versión estable publicada continúa siendo 2.0.0 hasta completar el workflow certificado de Esbirro, preservar y publicar sus 11 artefactos exactos y verificar Install/Open/Close/Uninstall de ambos módulos en el Ryzen.
+Nota histórica (fase 2.0.1): las compilaciones y pruebas Rust en Ryzen aún no equivalían a una release publicada. En aquella fase, 2.0.0 era el último release estable; ese estado fue superado por las releases posteriores, incluida 2.0.8.
 
 ---
 
-# Estado y publicacion vigente — Boss 2.0.0
+# Referencia histórica — publicación Boss 2.0.0
 
-**Release estable publicada:** [`v2.0.0`](https://github.com/krockzs/neebles-boss/releases/tag/v2.0.0), compilada desde `68b92d703aaf59e003e6c5624c37254be68cd2cc` (no confundir con los commits posteriores de `registry/modules.json`).
+**Release histórica publicada:** [`v2.0.0`](https://github.com/krockzs/neebles-boss/releases/tag/v2.0.0), compilada desde `68b92d703aaf59e003e6c5624c37254be68cd2cc` (no confundir con los commits posteriores de `registry/modules.json`).
 
 El workflow de release verifico **11 artefactos** y publico sus checksums reales en `SHA256SUMS`: `bootstrap.json`, `boss-runtime.tar.gz`, `client-data.tar.gz`, `critical-update-manifest.json`, `install.sh`, `neebles-auth-agent`, `neebles-backend`, `neebles-installer`, `neebles-runtime-resolve` y `neebles-ui`. El codigo Rust se compilo con 1.98.1; los consumidores Qt se compilaron y certificaron con el laboratorio controlado de Esbirro Qt 6.8.2 y su etapa `DESTDIR`.
 
@@ -1134,6 +1147,6 @@ The intended model is:
 
 > **Declare the module, certify its material/worlds in CUSTOM/Esbirro, expose required OS authority, let Boss govern the generic contract, and keep module implementation outside the core.**
 
-## Boss 2.0.8 — IPC execution middleware (candidate)
+## Boss 2.0.8 — middleware IPC (contrato vigente)
 
-See `IPC_MIDDLEWARE_2_0_8.md` for socket ownership, wire formats, installed provider IPC grants, per-request execution deadlines, jobs, backward compatibility and certification requirements. Boss 2.0.8 is **NOT** a published release until all controlled build and runtime gates pass.
+See `IPC_MIDDLEWARE_2_0_8.md` for socket ownership, wire formats, installed provider IPC grants, per-request execution deadlines, jobs, backward compatibility and certification requirements. La release GitHub `v2.0.8` ya fue publicada; su aceptación instalada, permisos y pruebas de consumidor siguen siendo gates distintos de la publicación.
