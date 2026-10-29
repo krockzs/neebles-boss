@@ -42,6 +42,7 @@ REQUIRED_CLIENT_DATA_ROOTS = {
     "applications",
     "systemd",
     "runtime",
+    "platform-operations",
     'handoff',
 }
 
@@ -53,6 +54,10 @@ REQUIRED_CLIENT_DATA_FILES = {
     "release-notes/es_cl_1_0_39.txt",
     "release-notes/en_us_1_0_39.txt",
     "config/defaults.json",
+    "platform-operations/platform_provider.py",
+    "platform-operations/deploy-provider.sh",
+    "platform-operations/neebles-platform-operations.service",
+    "platform-operations/neebles-platform-operations.socket",
     "launcher/metadata.json",
     "launcher/contents/ui/main.qml",
     "spacer/metadata.json",
