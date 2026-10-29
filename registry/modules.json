@@ -33,7 +33,7 @@
     },
     "neebles-proxy-server": {
       "repo": "https://github.com/krockzs/neebles-proxy-server.git",
-      "commit": "cff513fcc31c4f024f9b649fb794410fd3519498",
+      "commit": "36cad46808c912a0e7b3899518dcff2daf15a94d",
       "version": "1.0.1",
       "short_name": "Proxy Server",
       "depends_install": {
