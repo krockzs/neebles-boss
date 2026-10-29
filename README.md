@@ -1155,3 +1155,7 @@ See `IPC_MIDDLEWARE_2_0_8.md` for socket ownership, wire formats, installed prov
 ## Boss 2.0.9 — artillería genérica de operaciones de plataforma (candidato)
 
 Boss incorpora `boss.platform_operation` y una comprobación `require_privilege` de denegación por defecto. La implementación y autorización de tecnologías concretas corresponden a sus módulos y al proveedor OS independiente. El prototipo de proveedor en `tooling/` no se instala ni se habilita como root con la release de Boss; su puesta en producción exige una certificación independiente de permisos, identidad, política y conexión real.
+
+## Boss 2.0.10 — proveedor privilegiado de plataforma
+
+Proveedor genérico AF_UNIX incorporado a `client/platform-operations/`; el despliegue privilegiado se mantiene explícito y separado. La ejecución requiere el cgroup autentificado de Boss runtime y política root por módulo.

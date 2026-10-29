@@ -1,0 +1,13 @@
+[Unit]
+Description=NEEBLES Boss privileged platform operations socket
+
+[Socket]
+ListenStream=/run/neebles/platform-operations.sock
+SocketUser=root
+SocketGroup=root
+SocketMode=0600
+DirectoryMode=0755
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

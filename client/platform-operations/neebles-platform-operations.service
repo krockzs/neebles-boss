@@ -1,0 +1,22 @@
+[Unit]
+Description=NEEBLES Boss privileged platform operations provider
+Requires=neebles-platform-operations.socket
+After=neebles-platform-operations.socket
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /usr/lib/neebles/platform-operations/provider.py --serve
+Environment=NEEBLES_BOSS_UID=0
+Environment=NEEBLES_BOSS_EXE=/opt/neebles/client/backend/neebles-backend
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/neebles
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
