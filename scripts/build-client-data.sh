@@ -27,6 +27,7 @@ REQUIRED_ROOTS=(
     release-notes
     applications
     systemd
+    platform-operations
 )
 
 for root in "${REQUIRED_ROOTS[@]}"; do
