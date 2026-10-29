@@ -30,6 +30,20 @@
           "commands:structure_capabilities"
         ]
       }
+    },
+    "neebles-proxy-server": {
+      "repo": "https://github.com/krockzs/neebles-proxy-server.git",
+      "commit": "cd9d95786a80968f9aa0bcd090a1e5b4200e8798",
+      "version": "1.0.0",
+      "short_name": "Proxy Server",
+      "depends_install": {
+        "neebles-secrets": {
+          "variables": {
+            "master_key": "true",
+            "unblock": "true"
+          }
+        }
+      }
     }
   }
 }
