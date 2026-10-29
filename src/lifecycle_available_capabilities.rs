@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::os::fd::AsRawFd;
 use std::sync::{Arc, OnceLock};
 
 use crate::lifecycle_capabilities::{CapabilityFuture, CapabilityHandler};
@@ -534,6 +535,188 @@ fn user_service_install_handler(operation: PreparedOperation) -> CapabilityFutur
     })
 }
 
+// Platform operations require a root-authenticated OS provider.
+const PLATFORM_OPERATION_ARTILLERY: &str = "boss.platform_operation";
+const PLATFORM_OPERATION_IMPLEMENTATION: &str = "rust.boss.platform_operation";
+// Privileged OS operations are handled by a separate root-owned provider.
+// Boss remains unprivileged. The module never selects an executable or socket.
+// Generic privileged-platform dispatch: Boss has no knowledge of module technologies.
+const PLATFORM_AUTHORITY: &str = "neebles.platform.operation";
+const PLATFORM_SOCKET: &str = "/run/neebles/platform-operations.sock";
+
+fn platform_operation_validate(operation: &PreparedOperation) -> Result<(&str, &str), String> {
+    if operation.objective != "execute" {
+        return Err("platform operation requires objective=execute".into());
+    }
+    let module = operation
+        .module_id
+        .as_deref()
+        .ok_or("platform operation requires Governor module identity")?;
+    if module.is_empty()
+        || module.len() > 128
+        || !module
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err("invalid Governor module identity".into());
+    }
+    if operation.munition.len() != 2
+        || operation
+            .munition
+            .get("require_privilege")
+            .map(String::as_str)
+            != Some("true")
+    {
+        return Err(
+            "platform operation requires exactly operation and require_privilege=true".into(),
+        );
+    }
+    let action = operation
+        .munition
+        .get("operation")
+        .ok_or("platform operation missing operation")?
+        .as_str();
+    if action.is_empty()
+        || action.len() > 128
+        || !action.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'_' || b == b'-'
+        })
+    {
+        return Err("invalid platform operation identifier".into());
+    }
+    Ok((module, action))
+}
+
+fn platform_operation_invoke(operation: PreparedOperation) -> Result<ExecutionPayload, String> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    let (module, action) = platform_operation_validate(&operation)?;
+    // Registered supply is OS-owned, not a field provided by the module.
+    let registry =
+        neebles_backend::domestic_authority_supply_process::process_supplied_authority_registry()?;
+    let descriptor = registry.descriptor_path(PLATFORM_AUTHORITY)?;
+    neebles_backend::domestic_platform_control::authenticate_platform_controlled_file(descriptor)?;
+    let raw = std::fs::read(descriptor)
+        .map_err(|e| format!("platform authority descriptor unreadable: {e}"))?;
+    if raw.len() > 16384 {
+        return Err("platform authority descriptor too large".into());
+    }
+    let value: serde_json::Value = serde_json::from_slice(&raw)
+        .map_err(|e| format!("invalid platform authority descriptor: {e}"))?;
+    let obj = value
+        .as_object()
+        .ok_or("platform authority descriptor must be an object")?;
+    if obj.len() != 4
+        || obj.get("schema").and_then(|v| v.as_str()) != Some("1")
+        || obj.get("authority").and_then(|v| v.as_str()) != Some(PLATFORM_AUTHORITY)
+        || obj.get("module").and_then(|v| v.as_str()) != Some(module)
+    {
+        return Err("platform authority descriptor identity mismatch".into());
+    }
+    let actions = obj
+        .get("operations")
+        .and_then(|v| v.as_array())
+        .ok_or("platform authority operations missing")?;
+    if actions.is_empty()
+        || actions.len() > 64
+        || !actions.iter().all(|v| v.as_str().is_some())
+        || !actions.iter().any(|v| v.as_str() == Some(action))
+    {
+        return Err("platform operation was not granted by OS descriptor".into());
+    }
+    let mut stream = UnixStream::connect(PLATFORM_SOCKET)
+        .map_err(|e| format!("OS platform provider unavailable: {e}"))?;
+    let timeout = Some(Duration::from_secs(10));
+    stream
+        .set_read_timeout(timeout)
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(timeout)
+        .map_err(|e| e.to_string())?;
+    let mut creds: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut creds as *mut libc::ucred).cast(),
+            &mut len,
+        )
+    };
+    if rc != 0 || len as usize != std::mem::size_of::<libc::ucred>() || creds.uid != 0 {
+        return Err("OS platform provider is not authenticated as root".into());
+    }
+    let payload =
+        serde_json::to_vec(&serde_json::json!({"schema":"1","module":module,"operation":action}))
+            .map_err(|e| e.to_string())?;
+    stream
+        .write_all(&payload)
+        .map_err(|e| format!("OS provider write failed: {e}"))?;
+    stream.write_all(b"\n").map_err(|e| e.to_string())?;
+    let mut response = Vec::new();
+    let mut byte = [0u8; 1];
+    let mut terminated = false;
+    while response.len() < 16384 {
+        match stream
+            .read(&mut byte)
+            .map_err(|e| format!("OS provider read failed: {e}"))?
+        {
+            0 => return Err("OS provider closed before response".into()),
+            _ if byte[0] == b'\n' => {
+                terminated = true;
+                break;
+            }
+            _ => response.push(byte[0]),
+        }
+    }
+    if !terminated {
+        return Err("OS provider response too large".into());
+    }
+    let reply: serde_json::Value = serde_json::from_slice(&response)
+        .map_err(|e| format!("OS provider invalid response: {e}"))?;
+    let r = reply
+        .as_object()
+        .ok_or("OS provider reply must be object")?;
+    if r.get("schema").and_then(|v| v.as_str()) != Some("1")
+        || r.get("ok").and_then(|v| v.as_bool()) != Some(true)
+    {
+        return Err(format!(
+            "OS provider denied operation: {}",
+            r.get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("no successful response")
+        ));
+    }
+    Ok(ExecutionPayload::from([
+        ("operation".into(), action.into()),
+        ("module".into(), module.into()),
+        (
+            "provider_result".into(),
+            r.get("result")
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "null".into()),
+        ),
+    ]))
+}
+
+fn platform_operation_handler(operation: PreparedOperation) -> CapabilityFuture {
+    Box::pin(async move {
+        let (sender, receiver) = async_channel::bounded(1);
+        std::thread::Builder::new()
+            .name("neebles-platform-operation".into())
+            .spawn(move || {
+                let _ = sender.send_blocking(platform_operation_invoke(operation));
+            })
+            .map_err(|e| format!("cannot spawn platform worker: {e}"))?;
+        receiver
+            .recv()
+            .await
+            .map_err(|e| format!("platform worker terminated: {e}"))?
+    })
+}
+
 static PRODUCTIVE_CATALOG: OnceLock<Arc<AvailableCapabilityCatalog>> = OnceLock::new();
 
 fn build_productive_catalog() -> Result<AvailableCapabilityCatalog, String> {
@@ -572,6 +755,14 @@ fn build_productive_catalog() -> Result<AvailableCapabilityCatalog, String> {
         AvailableCapability::new(
             USER_SERVICE_IMPLEMENTATION,
             Arc::new(user_service_install_handler),
+        )?,
+    )?;
+
+    catalog.register(
+        PLATFORM_OPERATION_ARTILLERY,
+        AvailableCapability::new(
+            PLATFORM_OPERATION_IMPLEMENTATION,
+            Arc::new(platform_operation_handler),
         )?,
     )?;
 
@@ -656,6 +847,43 @@ mod tests {
         };
 
         assert!(error.contains("no available Rust capability"));
+    }
+
+    #[test]
+    fn platform_operation_is_registered_without_replacing_legacy_artillery() {
+        let catalog = build_productive_catalog().unwrap();
+        assert_eq!(
+            catalog
+                .resolve(PLATFORM_OPERATION_ARTILLERY)
+                .unwrap()
+                .implementation_id(),
+            PLATFORM_OPERATION_IMPLEMENTATION
+        );
+        for legacy in [
+            WORKSPACE_ARTILLERY,
+            MODULE_IPC_ARTILLERY,
+            USER_SERVICE_ARTILLERY,
+        ] {
+            assert!(catalog.resolve(legacy).is_ok());
+        }
+    }
+
+    #[test]
+    fn platform_operation_fails_without_authenticated_os_provider() {
+        let operation = PreparedOperation {
+            module_id: Some("neebles-proxy-server".into()),
+            execution_id: None,
+            artillery: PLATFORM_OPERATION_ARTILLERY.into(),
+            objective: "execute".into(),
+            munition: BTreeMap::from([
+                ("operation".into(), "tailscale.exit_node.activate".into()),
+                ("require_privilege".into(), "true".into()),
+            ]),
+            tactics: BTreeMap::new(),
+            intelligence: BTreeMap::new(),
+        };
+        let result = futures_lite::future::block_on(platform_operation_handler(operation));
+        assert!(result.unwrap_err().contains("AuthoritySupply"));
     }
 
     #[test]

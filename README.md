@@ -2,11 +2,11 @@
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión de código: 2.0.8.** GitHub Release `v2.0.8` publicada el 23-10-2026. La selección de módulos se consulta en el Registry actual; la aceptación instalada tiene evidencia separada.
+**Versión de código: 2.0.9 (candidato; no publicada).** GitHub Release `v2.0.8` publicada el 23-10-2026. La selección de módulos se consulta en el Registry actual; la aceptación instalada tiene evidencia separada.
 
 ## Estado operativo y selección de módulos — 28-10-2026
 
-- **Versión de fuente Boss:** `2.0.8` en `Cargo.toml`. **Release GitHub publicada:** [`v2.0.8`](https://github.com/krockzs/neebles-boss/releases/tag/v2.0.8) (23-10-2026). Las secciones que describen 2.0.0/2.0.1/2.0.7 como estado vigente son **históricas**, no instrucciones actuales.
+- **Versión de fuente Boss:** `2.0.9` en `Cargo.toml` (candidato, aún no publicado). **Release GitHub publicada:** [`v2.0.8`](https://github.com/krockzs/neebles-boss/releases/tag/v2.0.8) (23-10-2026). Las secciones que describen 2.0.0/2.0.1/2.0.7 como estado vigente son **históricas**, no instrucciones actuales.
 - **Registry actual:** `registry/modules.json` schema 3 selecciona **Connect 1.0.2** (`2e6390268ea85935d7118b7276adb092c0328f0d`) y **Secrets 1.0.7** (`d61e3aa916d7c5863ae7dc9bb29661b711753a30`). La revisión de Boss que introdujo esa selección fue `b559588312817dcc9166a6e006d1a49d5019e250`.
 - **Construcción de Connect:** CUSTOM V2 `0bb4478d9feae938714c9ca678dcd26dc0a04f86`, RootFS `rust-qt` y world `modules.rust-qt`. `install` y `update` garantizan la bóveda vía Secrets; `open` inicia el runtime gobernado. Los pins documentales nuevos no invalidan los commits de código seleccionados.
 - **Dependencias:** Connect requiere Secrets instalado con `master_key="true"` y `unblock="true"` durante la instalación. `depends_install` **no** es un permiso de IPC. El Registry de Secrets define la lista explícita `ipc_invoke_allow` de endpoints de Boss.
@@ -1150,3 +1150,8 @@ The intended model is:
 ## Boss 2.0.8 — middleware IPC (contrato vigente)
 
 See `IPC_MIDDLEWARE_2_0_8.md` for socket ownership, wire formats, installed provider IPC grants, per-request execution deadlines, jobs, backward compatibility and certification requirements. La release GitHub `v2.0.8` ya fue publicada; su aceptación instalada, permisos y pruebas de consumidor siguen siendo gates distintos de la publicación.
+
+
+## Boss 2.0.9 — artillería genérica de operaciones de plataforma (candidato)
+
+Boss incorpora `boss.platform_operation` y una comprobación `require_privilege` de denegación por defecto. La implementación y autorización de tecnologías concretas corresponden a sus módulos y al proveedor OS independiente. El prototipo de proveedor en `tooling/` no se instala ni se habilita como root con la release de Boss; su puesta en producción exige una certificación independiente de permisos, identidad, política y conexión real.

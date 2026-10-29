@@ -48,11 +48,26 @@ fn normalized_failure(error: impl Into<String>) -> Result<NormalizedResult, Stri
     })
 }
 
+// Explicit privilege opt-in is fail-closed until a platform authority executor
+// is installed and authenticated. Legacy operations remain unchanged.
+fn validate_privilege_request(operation: &PreparedOperation) -> Result<(), String> {
+    match operation.munition.get("require_privilege").map(String::as_str) {
+        None | Some("false") => Ok(()),
+        Some("true") if operation.artillery == "boss.platform_operation" => Ok(()),
+        Some("true") => Err("require_privilege=true is restricted to boss.platform_operation; existing artillery never elevates".to_string()),
+        Some(_) => Err("require_privilege must be the literal string 'true' or 'false'".to_string()),
+    }
+}
+
 pub async fn execute_prepared(
     operation: PreparedOperation,
     fire_control: &FireControl,
     capabilities: &CapabilityRegistry,
 ) -> Result<NormalizedResult, String> {
+    if let Err(error) = validate_privilege_request(&operation) {
+        return normalized_failure(error);
+    }
+
     let artillery = operation.artillery.clone();
 
     let objective = operation.objective.clone();
@@ -84,6 +99,10 @@ pub async fn execute_prepared_from_available(
     operation: PreparedOperation,
     available: &AvailableCapabilityCatalog,
 ) -> Result<NormalizedResult, String> {
+    if let Err(error) = validate_privilege_request(&operation) {
+        return normalized_failure(error);
+    }
+
     let mut arsenal = LifecycleArsenal::new();
 
     if let Err(error) =
@@ -319,6 +338,45 @@ mod tests {
             .unwrap();
 
         registry
+    }
+
+    #[test]
+    fn legacy_privilege_omitted_remains_allowed() {
+        assert!(validate_privilege_request(&prepared("boss.module_ipc", "commands")).is_ok());
+    }
+
+    #[test]
+    fn explicit_unprivileged_is_allowed() {
+        let mut op = prepared("boss.module_ipc", "commands");
+        op.munition
+            .insert("require_privilege".to_string(), "false".to_string());
+        assert!(validate_privilege_request(&op).is_ok());
+    }
+
+    #[test]
+    fn privileged_request_fails_closed_before_handler() {
+        let mut op = prepared("future.tool", "anything");
+        op.munition
+            .insert("require_privilege".to_string(), "true".to_string());
+        let result = futures_lite::future::block_on(execute_prepared(
+            op,
+            &working_route("future.tool", "anything", "rust.future.tool"),
+            &successful_registry("rust.future.tool"),
+        ))
+        .unwrap();
+        assert!(result.is_failure());
+        assert!(result
+            .error()
+            .unwrap()
+            .contains("restricted to boss.platform_operation"));
+    }
+
+    #[test]
+    fn malformed_privilege_munition_is_rejected() {
+        let mut op = prepared("future.tool", "anything");
+        op.munition
+            .insert("require_privilege".to_string(), "TRUE".to_string());
+        assert!(validate_privilege_request(&op).is_err());
     }
 
     #[test]
