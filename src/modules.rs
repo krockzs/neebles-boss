@@ -664,6 +664,13 @@ mod registry_schema3_f02_tests {
             ))
             .unwrap(),
         );
+        modules.insert(
+            "neebles-proxy-server".into(),
+            serde_json::from_str::<RegistryModuleMessages>(include_str!(
+                "../registry/registry-proxy-server.json"
+            ))
+            .unwrap(),
+        );
         (boss, modules)
     }
 
@@ -671,7 +678,7 @@ mod registry_schema3_f02_tests {
     fn repository_contract_and_catalogs_are_valid() {
         let registry = registry();
         assert_eq!(registry.schema, 3);
-        assert_eq!(registry.modules.len(), 2);
+        assert_eq!(registry.modules.len(), 3);
         assert!(!registry.modules.contains_key("test-module"));
         // These are real runtime state variables published by Secrets and
         // required by Connect at installation. Do not reduce the dependency

@@ -1,0 +1,8 @@
+{
+  "messages": {
+    "neebles-secrets": {
+      "en_US": "Install and unlock Secrets before installing Proxy Server.",
+      "es_CL": "Debes instalar y desbloquear Secrets antes de instalar Proxy Server."
+    }
+  }
+}
