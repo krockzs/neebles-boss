@@ -671,6 +671,13 @@ mod registry_schema3_f02_tests {
             ))
             .unwrap(),
         );
+        modules.insert(
+            "neebles-proxy-client".into(),
+            serde_json::from_str::<RegistryModuleMessages>(include_str!(
+                "../registry/registry-proxy-client.json"
+            ))
+            .unwrap(),
+        );
         (boss, modules)
     }
 
@@ -678,7 +685,8 @@ mod registry_schema3_f02_tests {
     fn repository_contract_and_catalogs_are_valid() {
         let registry = registry();
         assert_eq!(registry.schema, 3);
-        assert_eq!(registry.modules.len(), 3);
+        assert_eq!(registry.modules.len(), 4);
+        assert!(registry.modules.contains_key("neebles-proxy-client"));
         assert!(!registry.modules.contains_key("test-module"));
         // These are real runtime state variables published by Secrets and
         // required by Connect at installation. Do not reduce the dependency
@@ -695,6 +703,7 @@ mod registry_schema3_f02_tests {
         );
         validate_registry(&registry).unwrap();
         let (boss, modules) = catalogs();
+        assert_eq!(modules.len(), registry.modules.len());
         validate_registry_messages(&registry, &boss, &modules).unwrap();
     }
 
