@@ -53,9 +53,17 @@ REQUIRED_CLIENT_DATA_FILES = {
     "languages/manifest.json",
     "release-notes/es_cl_1_0_39.txt",
     "release-notes/en_us_1_0_39.txt",
+    "release-notes/es_cl_2_0_12.txt",
+    "release-notes/en_us_2_0_12.txt",
     "config/defaults.json",
     "platform-operations/platform_provider.py",
+    "platform-operations/test_platform_policy_manager.py",
+    "platform-operations/test_f23_backwards_compat.py",
+    "platform-operations/register-authority.py",
+    "platform-operations/README.md",
     "platform-operations/deploy-provider.sh",
+    "platform-operations/platform-authority-os.py",
+    "platform-operations/global-platform-authority.json",
     "platform-operations/neebles-platform-operations.service",
     "platform-operations/neebles-platform-operations.socket",
     "launcher/metadata.json",
@@ -193,6 +201,8 @@ def validate_tar(path: Path) -> None:
                 continue
 
             normalized = "/".join(clean_parts)
+            if "__pycache__" in clean_parts or normalized.endswith((".pyc", ".pyo")):
+                fail(f"client-data contains generated Python bytecode/cache: {member.name!r}")
             roots.add(clean_parts[0])
 
             if not (member.isdir() or member.isfile()):

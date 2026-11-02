@@ -85,7 +85,7 @@ for item in "${LAUNCHER_RUNTIME_FILES[@]}"; do
     install -m 0644         "$LAUNCHER_PLUGIN_INSTALL/$item"         "$STAGE/runtime/qml/NEEBLES/BossEvents/$item"
 done
 
-tar     --sort=name     --mtime='@0'     --owner=0     --group=0     --numeric-owner     --mode='u+rwX,go+rX,go-w'     -C "$STAGE"     -cf -     "${REQUIRED_ROOTS[@]}"     runtime     | gzip -n > "$TMP"
+tar     --exclude='__pycache__'     --exclude='*.pyc'     --exclude='*.pyo'     --sort=name     --mtime='@0'     --owner=0     --group=0     --numeric-owner     --mode='u+rwX,go+rX,go-w'     -C "$STAGE"     -cf -     "${REQUIRED_ROOTS[@]}"     runtime     | gzip -n > "$TMP"
 
 mv "$TMP" "$OUTPUT"
 trap - EXIT

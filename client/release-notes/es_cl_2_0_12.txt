@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.12
+
+Operaciones privilegiadas universales con autorización independiente de OS por módulo, operación y hashes certificados. Instalar o actualizar un módulo no concede por sí mismo permisos root. El proveedor es opcional para Boss y para módulos sin privilegios, como Connect y Secrets. Las operaciones privilegiadas sin autorización válida se rechazan. Publicación sujeta a certificación de Rust, Qt/Esbirro, instalador, artefactos SHA-256 y aceptación instalada.

@@ -1,8 +1,13 @@
 # N.E.E.B.L.E.S. Boss
 
+## Boss 2.0.12 — candidato integral de autoridad OS universal
+
+**Estado: fuente candidata, no release publicada.** Este cambio completa el proveedor de operaciones privilegiadas global, la política JSON opcional por módulo, su reconciliación automática con Install/Update/Uninstall y la distribución del proveedor con Boss. Los límites OS, la autorización root, la certificación de los ELF por Esbirro/CUSTOM y la aceptación en equipos reales siguen siendo gates distintos. No se incorporan decisiones específicas de Tailscale, Proxy Client o Proxy Server.
+
+
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión de código: 2.0.9 (candidato; no publicada).** GitHub Release `v2.0.8` publicada el 23-10-2026. La selección de módulos se consulta en el Registry actual; la aceptación instalada tiene evidencia separada.
+**Versión candidata local: 2.0.12 (F23/F24; no publicada).** Última release pública verificada el 02-11-2026: `v2.0.11` (29-10-2026). Las secciones históricas conservan su contexto y no sustituyen la versión de código, los pins ni las evidencias del candidato actual.
 
 ## Estado operativo y selección de módulos — 28-10-2026
 
@@ -1159,3 +1164,12 @@ Boss incorpora `boss.platform_operation` y una comprobación `require_privilege`
 ## Boss 2.0.11 — proveedor privilegiado de plataforma
 
 Proveedor genérico AF_UNIX incorporado a `client/platform-operations/`; el despliegue privilegiado se mantiene explícito y separado. La ejecución requiere el cgroup autentificado de Boss runtime y política root por módulo.
+
+
+## Boss 2.0.12 — candidato universal F23/F24 (sin publicación)
+
+El mecanismo de autorización OS superior es genérico y **opcional** para módulos ordinarios. `require_privilege` ausente/`false` mantiene Lifecycle normal; `true` solo corresponde a `boss.platform_operation`. El manifiesto schema 4 puede omitir `platform_operations` y entonces Boss no solicita ni reconcilia política root para ese módulo. Connect 1.0.2 y Secrets 1.0.7 mantienen sus operaciones sin elevación.
+
+La autoridad del OS es independiente de la petición del módulo. Install/Update no autoaprueban: la aprobación root requiere material certificado exacto y hashes vigentes de manifiesto, contrato y ELF. El proveedor se instala mediante el canal OS cuando este suministra AuthoritySupply. Su ausencia no bloquea Boss ordinario; todas las peticiones privilegiadas fallan cerradas.
+
+**Release gate:** actualizar producto (Cargo/Cargo.lock, CMake/Qt, instalador, Launcher, metadata y notas), ejecutar pruebas Rust/Python, certificar Qt/Esbirro desde CUSTOM classic inmutable, verificar client-data, 11 artefactos y SHA256SUMS, y publicar exactamente los mismos bytes del candidato. CUSTOM classic no debe editarse ni repinnearse sin cambio físico verificado; CUSTOM V2 continúa siendo la autoridad separada del material de módulos. Aceptación en sistema instalado y rollback se registran por separado. `v2.0.12` no es una release publicada mientras esos gates no concluyan.

@@ -1,0 +1,5 @@
+{
+  "schema": "2",
+  "authority": "neebles.platform.operation",
+  "authorization": "root-policy-per-module"
+}

@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -271,6 +271,11 @@ pub struct ModuleManifest {
      */
     #[serde(default)]
     pub contracts: Vec<ContractReference>,
+
+    // Explicit opt-in to OS-controlled operations. The module owns the WHAT;
+    // the OS provider validates and installs the fixed native ELF and policy.
+    #[serde(default)]
+    pub platform_operations: Option<String>,
 
     #[serde(default)]
     pub tray: Option<TrayContract>,
@@ -2738,6 +2743,7 @@ fn install_require_tree(
         }
 
         let lifecycle = candidate.lifecycle().clone();
+        let needs_platform_authority = candidate.manifest.platform_operations.is_some();
 
         // Preinstall must complete inside the unpublished candidate. Publishing
         // first would expose an installed module with no materialized rootfs.
@@ -2805,6 +2811,8 @@ fn install_require_tree(
                 &mut transaction,
             ));
         }
+
+        harden_privileged_module_material(candidate.staging.path(), &candidate.manifest)?;
 
         let publication = publish_require_candidate(candidate);
 
@@ -2897,6 +2905,18 @@ fn install_require_tree(
                 ),
                 &mut transaction,
             ));
+        }
+
+        if needs_platform_authority {
+            if let Err(error) = crate::platform_policy_lifecycle::sync(&module_id) {
+                return Err(require_install_failure(
+                    format!(
+                        "OS platform authority install failed for '{}': {}",
+                        module_id, error
+                    ),
+                    &mut transaction,
+                ));
+            }
         }
 
         if let Err(error) = execute_module_governor_lifecycle(
@@ -6656,6 +6676,16 @@ fn uninstall_after_extras(
         staged_extra_cleanup,
     );
 
+    // Revoke only after the irreversible filesystem commit. If the OS
+    // provider is unavailable, report a critical cleanup debt; its execution
+    // gate independently refuses absent modules even with a stale root policy.
+    let stale_policy = Path::new("/etc/neebles/platform-operations").join(format!("{name}.json"));
+    if uninstall_manifest.platform_operations.is_some() || stale_policy.exists() {
+        if let Err(error) = crate::platform_policy_lifecycle::revoke(name) {
+            post_commit_errors.push(format!("OS platform policy revocation incomplete: {error}"));
+        }
+    }
+
     // Only now retire module-owned startup resources. Rollback before this
     // point has always retained the original unit file and enablement.
     if let Some(contract) = uninstall_manifest.uninstall.as_ref() {
@@ -7209,6 +7239,8 @@ pub fn update_observed(
 }
 
 fn restore_services_after_module_update_failure(
+    module: &str,
+    policy_involved: bool,
     failure: String,
     rollback: &LiveUpdateRollbackReport,
     services: &crate::module_uninstall::ManagedServiceCutover,
@@ -7220,6 +7252,23 @@ fn restore_services_after_module_update_failure(
             );
         }
         return failure;
+    }
+    // A previous module version may have been restored after the new OS
+    // policy was installed. Restore its exact root policy from installed bytes
+    // before allowing services to resume; deny restoration if it cannot.
+    if policy_involved {
+        let restored = match installed_module_manifest(module) {
+            Ok(manifest) if manifest.platform_operations.is_some() => {
+                crate::platform_policy_lifecycle::sync(module)
+            }
+            Ok(_) => crate::platform_policy_lifecycle::revoke(module),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = restored {
+            return format!(
+                "{failure}; CRITICAL: previous platform authority could not be restored ({error}); services remain stopped"
+            );
+        }
     }
     match services.restore_original() {
         Ok(()) => failure,
@@ -7380,6 +7429,8 @@ fn update_with_observer(
             )
         })?;
 
+    harden_privileged_module_material(staging.path(), &manifest)?;
+
     /*
      * Candidate is now completely staged and validated.
      *
@@ -7454,6 +7505,9 @@ fn update_with_observer(
                 binding_sync,
             );
             return Err(restore_services_after_module_update_failure(
+                name,
+                manifest.platform_operations.is_some()
+                    || installed_manifest.platform_operations.is_some(),
                 failure,
                 &rollback,
                 &service_cutover,
@@ -7495,6 +7549,9 @@ fn update_with_observer(
                 binding_sync,
             );
             return Err(restore_services_after_module_update_failure(
+                name,
+                manifest.platform_operations.is_some()
+                    || installed_manifest.platform_operations.is_some(),
                 failure,
                 &rollback,
                 &service_cutover,
@@ -7507,6 +7564,36 @@ fn update_with_observer(
         name,
         material_binding_update.active_path().display()
     );
+
+    if manifest.platform_operations.is_some() || installed_manifest.platform_operations.is_some() {
+        if let Err(grant_error) = crate::platform_policy_lifecycle::sync(name) {
+            let failed_update_path = root.join(format!(
+                ".neebles-failed-platform-policy-update-{name}-{transaction}"
+            ));
+            let rollback =
+                rollback_live_update_paths(&current_path, &backup_path, &failed_update_path);
+            let binding_sync = synchronize_activated_material_binding_after_update_rollback(
+                material_binding_update,
+                &material_root,
+                name,
+                rollback.state,
+            );
+            let failure = format_live_update_failure_with_binding(
+                name,
+                "OS platform policy",
+                &grant_error,
+                &rollback,
+                binding_sync,
+            );
+            return Err(restore_services_after_module_update_failure(
+                name,
+                true,
+                failure,
+                &rollback,
+                &service_cutover,
+            ));
+        }
+    }
 
     let lifecycle_runtime = match module_governor_lifecycle_runtime() {
         Ok(runtime) => runtime,
@@ -7534,6 +7621,9 @@ fn update_with_observer(
                 binding_sync,
             );
             return Err(restore_services_after_module_update_failure(
+                name,
+                manifest.platform_operations.is_some()
+                    || installed_manifest.platform_operations.is_some(),
                 failure,
                 &rollback,
                 &service_cutover,
@@ -7569,6 +7659,9 @@ fn update_with_observer(
             binding_sync,
         );
         return Err(restore_services_after_module_update_failure(
+            name,
+            manifest.platform_operations.is_some()
+                || installed_manifest.platform_operations.is_some(),
             failure,
             &rollback,
             &service_cutover,
@@ -7605,6 +7698,9 @@ fn update_with_observer(
             binding_sync,
         );
         return Err(restore_services_after_module_update_failure(
+            name,
+            manifest.platform_operations.is_some()
+                || installed_manifest.platform_operations.is_some(),
             failure,
             &rollback,
             &service_cutover,
@@ -7636,6 +7732,9 @@ fn update_with_observer(
             binding_sync,
         );
         return Err(restore_services_after_module_update_failure(
+            name,
+            manifest.platform_operations.is_some()
+                || installed_manifest.platform_operations.is_some(),
             failure,
             &rollback,
             &service_cutover,
@@ -8354,6 +8453,43 @@ fn launcher_action_from_contracts(
     }
 }
 
+fn harden_privileged_module_material(
+    module_dir: &Path,
+    manifest: &ModuleManifest,
+) -> Result<(), String> {
+    if manifest.platform_operations.is_none() {
+        return Ok(());
+    }
+    if unsafe { libc::geteuid() } != 0 {
+        return Err("privileged module staging requires root-owned Governor".into());
+    }
+    let items = [
+        module_dir.to_path_buf(),
+        module_dir.join("contracts"),
+        module_dir.join("runtime"),
+        module_dir.join("manifest.json"),
+        module_dir.join("contracts/platform-operations.json"),
+        module_dir.join(format!("runtime/{}-platform", manifest.name)),
+    ];
+    for path in items {
+        let meta = fs::symlink_metadata(&path)
+            .map_err(|e| format!("privileged module staging {}: {e}", path.display()))?;
+        if meta.file_type().is_symlink() || meta.uid() != 0 {
+            return Err(format!(
+                "untrusted privileged module material: {}",
+                path.display()
+            ));
+        }
+        let mode = meta.permissions().mode();
+        let safe = (mode & 0o7777) & !0o022;
+        if (mode & 0o022) != 0 {
+            fs::set_permissions(&path, fs::Permissions::from_mode(safe))
+                .map_err(|e| format!("cannot seal privileged material {}: {e}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
 fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Result<(), String> {
     if manifest.schema != MODULE_SCHEMA_VERSION {
         return Err(format!(
@@ -8405,6 +8541,18 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
     let contracts = load_module_contracts(&manifest.name, module_dir, &manifest.contracts)?;
 
     let _ = launcher_action_from_contracts(&manifest.name, &contracts)?;
+
+    if let Some(path) = manifest.platform_operations.as_deref() {
+        if path != "contracts/platform-operations.json" {
+            return Err("unsupported platform operations contract path".into());
+        }
+        let _ = resolve_module_file(module_dir, path, "platform operations")?;
+        let _ = resolve_module_file(
+            module_dir,
+            &format!("runtime/{}-platform", manifest.name),
+            "platform helper",
+        )?;
+    }
 
     if let Some(tray) = &manifest.tray {
         if tray.protocol != crate::tray::protocol::TRAY_PROTOCOL_VERSION {
@@ -8585,6 +8733,8 @@ mod require_candidate_contract_tests {
 
             contracts: Vec::new(),
 
+            platform_operations: None,
+
             tray: None,
 
             notifications: None,
@@ -8748,6 +8898,7 @@ mod lifecycle_contract_reference_tests {
             lifecycle: Some(path.to_string()),
             surfaces: None,
             contracts: Vec::new(),
+            platform_operations: None,
             tray: None,
             notifications: None,
             settings: None,

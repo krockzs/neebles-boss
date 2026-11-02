@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.12
+
+Universal privileged operations with independent OS approval bound to module identity, operation and certified hashes. Installing or updating a module never grants root access by itself. The OS provider is optional for ordinary Boss use and non-privileged modules such as Connect and Secrets. Privileged operations without valid approval are denied. Publication requires Rust and Qt/Esbirro certification, installer validation, SHA-256 asset verification and installed-system acceptance.

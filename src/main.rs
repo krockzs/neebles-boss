@@ -52,6 +52,7 @@ mod network_boundary;
 pub mod nightmare;
 mod notification_presenter;
 mod notifications;
+mod platform_policy_lifecycle;
 mod privileges;
 mod request;
 mod runtime_identity;

@@ -14,3 +14,7 @@ ui/auth-agent/build/
 /scripts/__pycache__/
 /testings/domesticacion/qt/build/
 /ui/installer/build-domestic/
+
+# Generated Python artifacts (not source authority)
+**/__pycache__/
+*.py[cod]

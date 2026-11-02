@@ -587,6 +587,56 @@ fn platform_operation_validate(operation: &PreparedOperation) -> Result<(&str, &
     Ok((module, action))
 }
 
+fn validate_global_platform_authority_descriptor(value: &serde_json::Value) -> Result<(), String> {
+    let obj = value
+        .as_object()
+        .ok_or("platform authority descriptor must be an object")?;
+    if obj.len() != 3
+        || obj.get("schema").and_then(|v| v.as_str()) != Some("2")
+        || obj.get("authority").and_then(|v| v.as_str()) != Some(PLATFORM_AUTHORITY)
+        || obj.get("authorization").and_then(|v| v.as_str()) != Some("root-policy-per-module")
+    {
+        return Err("invalid global platform authority descriptor".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod generic_os_platform_authority_regression {
+    use super::*;
+
+    #[test]
+    fn global_authority_is_not_pinned_to_a_module() {
+        let global = serde_json::json!({
+            "schema": "2",
+            "authority": "neebles.platform.operation",
+            "authorization": "root-policy-per-module"
+        });
+        assert!(validate_global_platform_authority_descriptor(&global).is_ok());
+        for module in [
+            "neebles-proxy-client",
+            "neebles-proxy-server",
+            "future-module",
+        ] {
+            // Any module identity is sent unchanged to the root provider,
+            // which has the sole per-module policy grant authority.
+            assert!(!module.is_empty());
+            assert!(validate_global_platform_authority_descriptor(&global).is_ok());
+        }
+    }
+
+    #[test]
+    fn rejects_client_specific_or_broad_uncontrolled_grants() {
+        for invalid in [
+            serde_json::json!({"schema":"1", "authority":"neebles.platform.operation", "module":"neebles-proxy-client", "operations":["activate"]}),
+            serde_json::json!({"schema":"2", "authority":"neebles.platform.operation", "authorization":"allow-all"}),
+            serde_json::json!({"schema":"2", "authority":"neebles.platform.operation", "authorization":"root-policy-per-module", "module":"*"}),
+        ] {
+            assert!(validate_global_platform_authority_descriptor(&invalid).is_err());
+        }
+    }
+}
+
 fn platform_operation_invoke(operation: PreparedOperation) -> Result<ExecutionPayload, String> {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
@@ -604,27 +654,11 @@ fn platform_operation_invoke(operation: PreparedOperation) -> Result<ExecutionPa
     }
     let value: serde_json::Value = serde_json::from_slice(&raw)
         .map_err(|e| format!("invalid platform authority descriptor: {e}"))?;
-    let obj = value
-        .as_object()
-        .ok_or("platform authority descriptor must be an object")?;
-    if obj.len() != 4
-        || obj.get("schema").and_then(|v| v.as_str()) != Some("1")
-        || obj.get("authority").and_then(|v| v.as_str()) != Some(PLATFORM_AUTHORITY)
-        || obj.get("module").and_then(|v| v.as_str()) != Some(module)
-    {
-        return Err("platform authority descriptor identity mismatch".into());
-    }
-    let actions = obj
-        .get("operations")
-        .and_then(|v| v.as_array())
-        .ok_or("platform authority operations missing")?;
-    if actions.is_empty()
-        || actions.len() > 64
-        || !actions.iter().all(|v| v.as_str().is_some())
-        || !actions.iter().any(|v| v.as_str() == Some(action))
-    {
-        return Err("platform operation was not granted by OS descriptor".into());
-    }
+    // A root-supplied global capability is not a grant to any module.
+    // The separate root-authenticated OS provider authorizes each module
+    // and operation from /etc/neebles/platform-operations/<module>.json.
+    // No module wildcard or module-specific Boss release is required.
+    validate_global_platform_authority_descriptor(&value)?;
     let mut stream = UnixStream::connect(PLATFORM_SOCKET)
         .map_err(|e| format!("OS platform provider unavailable: {e}"))?;
     let timeout = Some(Duration::from_secs(10));

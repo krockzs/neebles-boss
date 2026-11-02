@@ -70,6 +70,9 @@ CLIENT_STAGE=""
 CLIENT_BACKUP=""
 CLIENT_SWAPPED=0
 GLOBAL_BACKUP_ROOT=""
+NEEBLES_PLATFORM_TOUCHED=0
+NEEBLES_PLATFORM_PREV_SOCKET_ACTIVE=0
+NEEBLES_PLATFORM_PREV_SERVICE_ACTIVE=0
 
 declare -a GLOBAL_PATHS=()
 declare -a GLOBAL_BACKUPS=()
@@ -132,6 +135,17 @@ cleanup() {
             fi
         fi
     fi
+
+        if (( rc != 0 )) && [[ "$NEEBLES_PLATFORM_TOUCHED" == 1 && -z "$DESTDIR" ]]; then
+            systemctl stop neebles-platform-operations.service neebles-platform-operations.socket >/dev/null 2>&1 || true
+            systemctl daemon-reload >/dev/null 2>&1 || true
+            if [[ "$NEEBLES_PLATFORM_PREV_SOCKET_ACTIVE" == 1 ]]; then
+                systemctl start neebles-platform-operations.socket >/dev/null 2>&1 || true
+            fi
+            if [[ "$NEEBLES_PLATFORM_PREV_SERVICE_ACTIVE" == 1 ]]; then
+                systemctl start neebles-platform-operations.service >/dev/null 2>&1 || true
+            fi
+        fi
 
     if [[ -n "$CLIENT_STAGE" && -e "$CLIENT_STAGE" ]]; then
         rm -rf "$CLIENT_STAGE"
@@ -299,7 +313,7 @@ fi
 # installation the old binary is absent, so there is no update handoff or notes.
 # The probe happens BEFORE replacing client/. No process is stopped here.
 NEEBLES_BOSS_PREVIOUS_VERSION=""
-NEEBLES_BOSS_TARGET_VERSION="2.0.11"
+NEEBLES_BOSS_TARGET_VERSION="2.0.12"
 NEEBLES_BOSS_IS_UPGRADE=0
 if [[ -z "$DESTDIR" && -f "$BIN_DIR/neebles" && -x "$BIN_DIR/neebles" ]]; then
     neebles_boss_previous_version_output="$("$BIN_DIR/neebles" --version)" || {
@@ -362,6 +376,20 @@ if [[ $# -eq 7 ]]; then
         echo "AuthoritySupply path is missing or unreadable: $AUTHORITY_SUPPLY_SOURCE" >&2
         exit 1
     }
+fi
+
+# AuthoritySupply remains OS-owned, but is optional for ordinary Boss use.
+# Existing non-privileged modules must not depend on the root provider.
+# A privileged module's policy sync still fails closed when OS is unavailable.
+if [[ -z "$DESTDIR" && -z "$AUTHORITY_SUPPLY_SOURCE" ]]; then
+    OS_AUTHORITY_SUPPLY="/usr/lib/neebles/platform/authority/authority-supply.json"
+    if [[ -f "$OS_AUTHORITY_SUPPLY" && ! -L "$OS_AUTHORITY_SUPPLY" ]]; then
+        AUTHORITY_SUPPLY_SOURCE="$OS_AUTHORITY_SUPPLY"
+    fi
+fi
+if [[ -z "$DESTDIR" && -n "$AUTHORITY_SUPPLY_SOURCE" && "$AUTHORITY_SUPPLY_SOURCE" != "/usr/lib/neebles/platform/authority/authority-supply.json" ]]; then
+    echo 'Unsupported alternative OS AuthoritySupply; no implicit privilege bypass.' >&2
+    exit 1
 fi
 
 progress 5
@@ -538,6 +566,7 @@ REQUIRED_ROOTS=(
     release-notes
     applications
     systemd
+    platform-operations
     runtime
 )
 
@@ -571,6 +600,12 @@ REQUIRED_FILES=(
     spacer/contents/ui/main.qml
     systemd/neebles-tray-manager.service
     systemd/neebles-runtime.service
+    platform-operations/platform_provider.py
+    platform-operations/deploy-provider.sh
+    platform-operations/platform-authority-os.py
+    platform-operations/global-platform-authority.json
+    platform-operations/neebles-platform-operations.service
+    platform-operations/neebles-platform-operations.socket
     runtime/tray-host/neebles-tray-host
     runtime/qml/NEEBLES/BossEvents/libneebles-launcher-events.so
     runtime/qml/NEEBLES/BossEvents/libneebles-launcher-eventsplugin.so
@@ -688,6 +723,7 @@ copy_data_tree "$CLIENT_DATA_SOURCE/handoff" "$CLIENT_STAGE/handoff"
 [[ -f "$CLIENT_STAGE/handoff/neebles-boss-handoff.py" && ! -L "$CLIENT_STAGE/handoff/neebles-boss-handoff.py" ]] || { echo "Missing installed handoff helper" >&2; exit 1; }
 copy_data_tree "$CLIENT_DATA_SOURCE/release-notes" "$CLIENT_STAGE/release-notes"
 copy_data_tree "$CLIENT_DATA_SOURCE/applications" "$CLIENT_STAGE/applications"
+copy_data_tree "$CLIENT_DATA_SOURCE/platform-operations" "$CLIENT_STAGE/platform-operations"
 
 progress 75
 status_key "installer.progress.creating_entrypoint"
@@ -777,6 +813,13 @@ backup_global_path "$RUNTIME_ENV" "runtime-env"
 backup_global_path "$PLASMA_LAUNCHER" "plasma-launcher"
 backup_global_path "$PLASMA_SPACER" "plasma-spacer"
 backup_global_path "$BOSS_EVENTS_QML" "boss-events-qml"
+backup_global_path "${DESTDIR}/usr/lib/neebles/platform-operations/provider.py" "platform-provider"
+backup_global_path "${DESTDIR}/usr/lib/neebles/platform-operations/platform-authority-os.py" "platform-os-manager"
+backup_global_path "${DESTDIR}/usr/lib/neebles/platform/authority/neebles-platform-operation.json" "global-platform-descriptor"
+backup_global_path "${DESTDIR}/usr/lib/neebles/platform/authority/authority-supply.json" "global-authority-supply"
+backup_global_path "${DESTDIR}/etc/systemd/system/neebles-platform-operations.service" "platform-service"
+backup_global_path "${DESTDIR}/etc/systemd/system/neebles-platform-operations.socket" "platform-socket"
+backup_global_path "${DESTDIR}/etc/systemd/system/sockets.target.wants/neebles-platform-operations.socket" "platform-socket-wants"
 
 install -d -m 0755 "$(dirname "$GLOBAL_BIN")"
 
@@ -1000,6 +1043,47 @@ if [[ -n "${NEEBLES_INSTALL_TEST_FAIL_AFTER_GLOBALS:-}" ]]; then
     exit 97
 fi
 
+for platform_file in \
+    platform_provider.py \
+    deploy-provider.sh \
+    platform-authority-os.py \
+    global-platform-authority.json \
+    neebles-platform-operations.service \
+    neebles-platform-operations.socket
+do
+    cmp -s \
+        "$CLIENT_DATA_SOURCE/platform-operations/$platform_file" \
+        "$CLIENT_ROOT/platform-operations/$platform_file" || {
+            echo "Installed platform operation source differs: $platform_file" >&2
+            exit 1
+        }
+done
+
+# The OS owns the provider. Only integrate it when OS AuthoritySupply exists.
+# Non-privileged Boss/Connect/Secrets deployments do not require this provider.
+# A module asking for privileged operations remains fail-closed without it.
+if [[ -z "$DESTDIR" ]]; then
+    if [[ -n "$AUTHORITY_SUPPLY_SOURCE" ]]; then
+        if systemctl is-active --quiet neebles-platform-operations.socket; then
+            NEEBLES_PLATFORM_PREV_SOCKET_ACTIVE=1
+        fi
+        if systemctl is-active --quiet neebles-platform-operations.service; then
+            NEEBLES_PLATFORM_PREV_SERVICE_ACTIVE=1
+        fi
+        NEEBLES_PLATFORM_TOUCHED=1
+        /bin/bash "$CLIENT_ROOT/platform-operations/deploy-provider.sh" || {
+            echo 'OS platform provider deployment failed; rolling back Boss installation.' >&2
+            exit 1
+        }
+    fi
+else
+    install -d -m 0755 "${DESTDIR}/usr/lib/neebles/platform-operations"         "${DESTDIR}/etc/systemd/system"
+    install -m 0644 "$CLIENT_ROOT/platform-operations/platform_provider.py"         "${DESTDIR}/usr/lib/neebles/platform-operations/provider.py"
+    install -m 0644 "$CLIENT_ROOT/platform-operations/platform-authority-os.py"         "${DESTDIR}/usr/lib/neebles/platform-operations/platform-authority-os.py"
+    install -m 0644 "$CLIENT_ROOT/platform-operations/neebles-platform-operations.service"         "${DESTDIR}/etc/systemd/system/neebles-platform-operations.service"
+    install -m 0644 "$CLIENT_ROOT/platform-operations/neebles-platform-operations.socket"         "${DESTDIR}/etc/systemd/system/neebles-platform-operations.socket"
+fi
+
 progress 94
 status_key "installer.progress.verifying_backend"
 
@@ -1181,6 +1265,16 @@ if [[ -z "$DESTDIR" ]]; then
         echo "N.E.E.B.L.E.S. Boss Runtime did not start correctly." >&2
         exit 1
     }
+    if [[ "$NEEBLES_PLATFORM_TOUCHED" == 1 ]]; then
+        systemctl restart neebles-platform-operations.service || {
+            echo 'OS platform provider failed to activate with the installed Boss.' >&2
+            exit 1
+        }
+        systemctl is-active --quiet neebles-platform-operations.service || {
+            echo 'OS platform provider did not become active.' >&2
+            exit 1
+        }
+    fi
 
     # Critical Update runs install.sh directly; Qt Installer integrateDesktop()
     # is not part of that path. Treat this user service as mandatory infrastructure.
@@ -1240,7 +1334,7 @@ publish_boss_upgrade_receipt() {
     local passwd_record home_dir config_root neebles_config receipt temporary mode
     [[ -z "$DESTDIR" && "$NEEBLES_BOSS_IS_UPGRADE" == 1 ]] || return 0
     [[ "$NEEBLES_BOSS_PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '2.0.11' ]] || return 1
+    [[ "$NEEBLES_BOSS_TARGET_VERSION" == '2.0.12' ]] || return 1
     [[ "$DESKTOP_UID" =~ ^[0-9]+$ && "$DESKTOP_GID" =~ ^[0-9]+$ && "$DESKTOP_UID" != '0' ]] || return 1
     passwd_record="$(getent passwd "$DESKTOP_UID")" || return 1
     IFS=: read -r _ _ _ _ _ home_dir _ <<< "$passwd_record"
