@@ -1,0 +1,5 @@
+NEEBLES Boss 2.0.12 — certified CI candidate trigger
+Source baseline: 78765039f46e195096ffc22670e3417be26ab3c5
+CUSTOM classic pinned: 20488f6818d5e227f043425a682115f614f4bf79
+Gate: compile/certify Rust 1.98.1 + Qt 6.8.2/Esbirro; verify 11 artifacts and SHA256SUMS.
+This marker does not publish a GitHub Release.
