@@ -83,6 +83,7 @@ REQUIRED_CLIENT_DATA_FILES = {
 
 EXECUTABLE_CLIENT_DATA_FILES = {
     "runtime/tray-host/neebles-tray-host",
+    "platform-operations/deploy-provider.sh",
     'handoff/neebles-boss-handoff.py',
 }
 
