@@ -1,6 +1,6 @@
-NEEBLES Boss 2.0.12 — certified CI candidate trigger (retry after payload permission gate)
-Source baseline: 85e9b2b7fe928ec4016597747b5e2a4e738578b9
+NEEBLES Boss 2.0.12 — certified CI candidate trigger (disk-space remediation)
+Source baseline: 7bd145c997b9a95ff6174bfc6c66ea99f484f43e
 CUSTOM classic pinned: 20488f6818d5e227f043425a682115f614f4bf79
 Gate: compile/certify Rust 1.98.1 + Qt 6.8.2/Esbirro; verify 11 artifacts and SHA256SUMS.
-Fix: deploy-provider.sh retains 0755; release verifier accepts this explicit executable.
+Fix: reclaim generated compilation workspaces after staged ELF certification; preserve runtime, manifests and binaries.
 This marker does not publish a GitHub Release.
