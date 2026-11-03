@@ -245,6 +245,72 @@ jobs:
             --manifest neebles-custom/boss_current_manifest.json \
             --prefix rootfs
 
+      - name: Reclaim expendable build workspaces before RootFS transport
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== DISK SPACE BEFORE CLEANUP ==="
+          df -h . /tmp
+
+          # The next steps consume only certified DESTDIR outputs, Rust release
+          # executables, and CUSTOM classic runtime/boss/rootfs. Never touch
+          # those artifacts, the immutable CUSTOM checkout, or its manifests.
+          preserved=(
+            target/release/neebles-backend
+            target/release/neebles-domestic-materialize
+            target/release/neebles-domestic-transport
+            target/x86_64-unknown-linux-musl/release/neebles-runtime-resolve
+            neebles-custom/build_sysroot_6.8.2/work/neebles-boss-ui-stage/usr/bin/neebles-ui
+            neebles-custom/build_sysroot_6.8.2/work/neebles-installer-stage/usr/bin/neebles-installer
+            neebles-custom/build_sysroot_6.8.2/work/neebles-auth-agent-stage/usr/bin/neebles-auth-agent
+            neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-stage/usr/bin/neebles-tray-host
+          )
+
+          for artifact in "${preserved[@]}"; do
+            test -f "$artifact" || { echo "Missing certified artifact: $artifact" >&2; exit 1; }
+          done
+
+          test -s neebles-custom/boss_current_manifest.json
+          test -s neebles-custom/runtime/manifests/boss.rootfs.tsv
+          test -d neebles-custom/runtime/boss/rootfs
+          test -d release-work/launcher-plugin-install
+          test "$(git -C neebles-custom rev-parse HEAD)" = "20488f6818d5e227f043425a682115f614f4bf79"
+
+          sha256sum "${preserved[@]}" > release-work/retained-binaries.sha256
+
+          # Only previously consumed, generated compilation workspaces.
+          # No certified runtime, stage, manifest, Cargo.lock or source is removed.
+          disposable=(
+            target/debug
+            target/release/build
+            target/release/deps
+            neebles-custom/build_deps
+            neebles-custom/build_sysroot_6.8.2/work/neebles-boss-source
+            neebles-custom/build_sysroot_6.8.2/work/neebles-boss-ui-build
+            neebles-custom/build_sysroot_6.8.2/work/neebles-installer-build
+            neebles-custom/build_sysroot_6.8.2/work/neebles-auth-agent-build
+            neebles-custom/build_sysroot_6.8.2/work/neebles-launcher-plugin-build
+            neebles-custom/build_sysroot_6.8.2/work/neebles-tray-host-build
+          )
+
+          for directory in "${disposable[@]}"; do
+            if [[ -L "$directory" ]]; then
+              echo "Refusing to remove symlink: $directory" >&2
+              exit 1
+            fi
+            if [[ -d "$directory" ]]; then
+              du -sh "$directory"
+              rm -rf -- "$directory"
+            fi
+          done
+
+          sha256sum --check release-work/retained-binaries.sha256
+
+          echo "=== DISK SPACE AFTER CLEANUP ==="
+          df -h . /tmp
+          du -sh neebles-custom/runtime/boss/rootfs
+
       - name: Package and certify domestic Boss runtime
         shell: bash
         run: |
