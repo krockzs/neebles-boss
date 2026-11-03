@@ -1,13 +1,13 @@
 # N.E.E.B.L.E.S. Boss
 
-## Boss 2.0.12 — candidato integral de autoridad OS universal
+## Boss 2.0.13 — candidato Surface Open label y toggle-button
 
-**Estado: fuente candidata, no release publicada.** Este cambio completa el proveedor de operaciones privilegiadas global, la política JSON opcional por módulo, su reconciliación automática con Install/Update/Uninstall y la distribución del proveedor con Boss. Los límites OS, la autorización root, la certificación de los ELF por Esbirro/CUSTOM y la aceptación en equipos reales siguen siendo gates distintos. No se incorporan decisiones específicas de Tailscale, Proxy Client o Proxy Server.
+**Estado: fuente candidata, no release 2.0.13 publicada.** Los módulos pueden declarar `other-label-open` opcional (ausente = `false`) para renombrar visualmente Open con sus propios idiomas; la ejecución sigue en `governor.open`. El control genérico `toggle-button` se proyecta en Boss Config, Launcher y Tray. La última release publicada es `v2.0.12`; el paquete 2.0.13 requiere CI de compilación/certificación y publicación de bytes exactos. CUSTOM clásico y CUSTOM V2 conservan autoridades separadas.
 
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**
 
-**Versión candidata local: 2.0.12 (F23/F24; no publicada).** Última release pública verificada el 02-11-2026: `v2.0.11` (29-10-2026). Las secciones históricas conservan su contexto y no sustituyen la versión de código, los pins ni las evidencias del candidato actual.
+**Versión candidata local: 2.0.13 (F18/F24/F25C; sin publicar).** Última release pública comprobada: `v2.0.12`, publicada el 03-11-2026. Las secciones históricas conservan su contexto y no sustituyen la versión de código, los pins ni las evidencias del candidato actual.
 
 ## Estado operativo y selección de módulos — 28-10-2026
 
@@ -1166,10 +1166,18 @@ Boss incorpora `boss.platform_operation` y una comprobación `require_privilege`
 Proveedor genérico AF_UNIX incorporado a `client/platform-operations/`; el despliegue privilegiado se mantiene explícito y separado. La ejecución requiere el cgroup autentificado de Boss runtime y política root por módulo.
 
 
-## Boss 2.0.12 — candidato universal F23/F24 (sin publicación)
+## Boss 2.0.12 — proveedor OS universal (release publicada)
 
 El mecanismo de autorización OS superior es genérico y **opcional** para módulos ordinarios. `require_privilege` ausente/`false` mantiene Lifecycle normal; `true` solo corresponde a `boss.platform_operation`. El manifiesto schema 4 puede omitir `platform_operations` y entonces Boss no solicita ni reconcilia política root para ese módulo. Connect 1.0.2 y Secrets 1.0.7 mantienen sus operaciones sin elevación.
 
 La autoridad del OS es independiente de la petición del módulo. Install/Update no autoaprueban: la aprobación root requiere material certificado exacto y hashes vigentes de manifiesto, contrato y ELF. El proveedor se instala mediante el canal OS cuando este suministra AuthoritySupply. Su ausencia no bloquea Boss ordinario; todas las peticiones privilegiadas fallan cerradas.
 
-**Release gate:** actualizar producto (Cargo/Cargo.lock, CMake/Qt, instalador, Launcher, metadata y notas), ejecutar pruebas Rust/Python, certificar Qt/Esbirro desde CUSTOM classic inmutable, verificar client-data, 11 artefactos y SHA256SUMS, y publicar exactamente los mismos bytes del candidato. CUSTOM classic no debe editarse ni repinnearse sin cambio físico verificado; CUSTOM V2 continúa siendo la autoridad separada del material de módulos. Aceptación en sistema instalado y rollback se registran por separado. `v2.0.12` no es una release publicada mientras esos gates no concluyan.
+**Release gate:** actualizar producto (Cargo/Cargo.lock, CMake/Qt, instalador, Launcher, metadata y notas), ejecutar pruebas Rust/Python, certificar Qt/Esbirro desde CUSTOM classic inmutable, verificar client-data, 11 artefactos y SHA256SUMS, y publicar exactamente los mismos bytes del candidato. CUSTOM classic no debe editarse ni repinnearse sin cambio físico verificado; CUSTOM V2 continúa siendo la autoridad separada del material de módulos. Aceptación en sistema instalado y rollback se registran por separado. `v2.0.12` fue publicada tras completar la certificación y entrega de los artefactos de esa versión; el nuevo alcance de 2.0.13 todavía no está publicado.
+
+## Boss 2.0.13 — Surface Open label y controles alternantes
+
+`manifest.other-label-open` es opcional y `false` cuando falta: la UI de Boss continúa con **Open**. Si es `true`, la etiqueta del Open administrativo procede del `label_key` de Surface resuelto con los idiomas del propio módulo. No cambia `governor.open`, no crea otro Governor y no exige cambios a Secrets, Connect ni Proxy Server.
+
+`toggle-button` reutiliza el objeto Lifecycle canónico y presenta su estado traducido en Boss Config, Launcher y Tray. La autorización y la ejecución de las acciones permanecen en `surface-action` y Governor. Esta ampliación es genérica: Client 1.0.1 solo es el primer consumidor que opta por la etiqueta alternativa.
+
+**Release gate:** compilar Rust 1.98.1 y Qt 6.8.2 en Esbirro con CUSTOM clásico fijado por commit, certificar cada `DESTDIR`, generar los 11 artefactos, verificar SHA-256 y publicar exactamente el candidato aprobado. F25C es una validación de fuente anterior al bump; su ELF no constituye binario final 2.0.13.

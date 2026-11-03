@@ -55,6 +55,8 @@ REQUIRED_CLIENT_DATA_FILES = {
     "release-notes/en_us_1_0_39.txt",
     "release-notes/es_cl_2_0_12.txt",
     "release-notes/en_us_2_0_12.txt",
+    "release-notes/es_cl_2_0_13.txt",
+    "release-notes/en_us_2_0_13.txt",
     "config/defaults.json",
     "platform-operations/platform_provider.py",
     "platform-operations/test_platform_policy_manager.py",

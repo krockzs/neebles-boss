@@ -559,9 +559,15 @@ ApplicationWindow {
                 : ({})
 
             if (
-                data.control === "button"
-                && data.action
-                && data.label_key
+                (data.control === "button"
+                 && data.action && data.label_key)
+                || (data.control === "toggle-button"
+                    && item.object_id
+                    && item.active !== undefined
+                    && item.active !== null
+                    && data.action_on && data.action_off
+                    && data.transition_on && data.transition_off
+                    && data.label_key && item.label_on && item.label_off)
             ) {
                 result.push(entry)
                 continue
@@ -1591,6 +1597,7 @@ ApplicationWindow {
                                     Item {
                                         visible:
                                             surfaceData.control === "button"
+                                            || surfaceData.control === "toggle-button"
                                         Layout.fillWidth: true
                                     }
 
@@ -1600,6 +1607,8 @@ ApplicationWindow {
                                         visible:
                                             surfaceData.control
                                             === "button"
+                                            || surfaceData.control
+                                            === "toggle-button"
 
                                         Layout.fillWidth: false
                                         Layout.preferredWidth:
@@ -1613,15 +1622,16 @@ ApplicationWindow {
                                             | Qt.AlignVCenter
 
                                         text:
-                                            root.surfaceConfigLabel(
-                                                modelData
-                                            )
+                                            surfaceData.control === "toggle-button"
+                                            ? (surfaceItem.active
+                                               ? surfaceItem.label_on : surfaceItem.label_off)
+                                            : root.surfaceConfigLabel(modelData)
 
                                         enabled:
                                             typeof boss
                                             !== "undefined"
                                             && !boss.busy
-                                            && surfaceItem.requirements_met
+                                            && surfaceItem.action_available
                                             === true
 
                                         hoverEnabled: true
@@ -1667,7 +1677,10 @@ ApplicationWindow {
                                             boss.requestSurfaceAction(
                                                 surfaceItem.owner_module,
                                                 surfaceItem.item_id,
-                                                surfaceData.action
+                                                surfaceData.control === "toggle-button"
+                                                ? (surfaceItem.active
+                                                   ? surfaceData.action_off : surfaceData.action_on)
+                                                : surfaceData.action
                                             )
                                         }
                                     }
@@ -2190,11 +2203,18 @@ if (
                                             visible:
                                                 moduleCard.effectiveInstalled
 
-                                            Layout.preferredWidth: 82
+                                            Layout.preferredWidth:
+                                                modelData.other_label_open === true
+                                                ? Math.max(82, implicitWidth + 12)
+                                                : 82
                                             Layout.preferredHeight: 34
 
                                             text:
-                                                root.t("common.open")
+                                                modelData.other_label_open === true
+                                                && typeof modelData.open_label === "string"
+                                                && modelData.open_label.length > 0
+                                                ? modelData.open_label
+                                                : root.t("common.open")
 
                                             enabled:
                                                 typeof boss !== "undefined"

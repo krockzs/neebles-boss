@@ -1,0 +1,7 @@
+NEEBLES Boss 2.0.13 — release CI candidate trigger
+Previous Boss main: b71f09b26eacba35cb153e30c013d82164325df3
+CUSTOM classic pin: 20488f6818d5e227f043425a682115f614f4bf79
+Scope: generic other-label-open / module language resolution / toggle-button.
+No module-specific branches. No change to governor.open.
+CI must certify Rust 1.98.1 + Qt 6.8.2/Esbirro, 11 assets, SHA256SUMS.
+This marker requests a candidate; it is not a published release.

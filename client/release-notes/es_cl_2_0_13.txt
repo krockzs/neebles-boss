@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.13
+
+Los módulos pueden cambiar opcionalmente la etiqueta visual de Open mediante other-label-open. La opción ausente equivale a false y conserva Open; si se activa, la etiqueta proviene del diccionario del módulo, sin cambiar governor.open ni sus controles. Los botones alternantes declarados por Lifecycle se presentan de forma coherente en Boss Config, Launcher y Tray. Secrets, Connect y los módulos sin la opción conservan su funcionamiento. Los cambios de código se certifican con CUSTOM clásico y Esbirro; la instalación debe verificarse en el equipo real.

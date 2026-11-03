@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.13
+
+Modules can optionally change the visible Open label using other-label-open. When omitted the option defaults to false and keeps Open; when enabled, the label comes from the module's own language dictionary without changing governor.open or its protections. Lifecycle-declared alternating buttons are presented consistently in Boss Config, Launcher and Tray. Secrets, Connect and modules not using the option are unaffected. Release sources are certified with classic CUSTOM and Esbirro; installed runtime acceptance remains separate.

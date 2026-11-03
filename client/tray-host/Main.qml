@@ -124,11 +124,16 @@ Window {
                     ? item.data
                     : ({})
 
-                return (
-                    data.control === "button"
-                    && data.action
-                    && data.label_key
+                const regular = data.control === "button" && !!data.action
+                const alternating = (
+                    data.control === "toggle-button"
+                    && !!item.object_id
+                    && item.active !== undefined && item.active !== null
+                    && !!data.action_on && !!data.action_off
+                    && !!data.transition_on && !!data.transition_off
+                    && !!item.label_on && !!item.label_off
                 )
+                return (regular || alternating) && !!data.label_key
             }
         )
     }
@@ -679,7 +684,10 @@ Window {
                             Layout.fillWidth: true
 
                             text:
-                                surfaceItem.label
+                                surfaceData.control === "toggle-button"
+                                ? (surfaceItem.active
+                                   ? surfaceItem.label_on : surfaceItem.label_off)
+                                : surfaceItem.label
 
                             enabled:
                                 !bossCommands.busy
@@ -690,7 +698,10 @@ Window {
                                 bossCommands.surfaceAction(
                                     surfaceItem.owner_module,
                                     surfaceItem.item_id,
-                                    surfaceData.action
+                                    surfaceData.control === "toggle-button"
+                                    ? (surfaceItem.active
+                                       ? surfaceData.action_off : surfaceData.action_on)
+                                    : surfaceData.action
                                 )
                             }
                         }

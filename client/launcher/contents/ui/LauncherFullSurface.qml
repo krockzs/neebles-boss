@@ -326,7 +326,10 @@ Item {
                                             readonly property var item: modelData
                                             width: 76
                                             height: 26
-                                            text: item.label
+                                            text: item.data.control === "toggle-button"
+                                                  ? (item.active ? item.label_on
+                                                                 : item.label_off)
+                                                  : item.label
                                             enabled: !bossRoot.modulePending(item.owner_module)
                                                      && item.action_available === true
                                             hoverEnabled: true
@@ -351,7 +354,10 @@ Item {
                                                     bossRoot.surfaceActionCommand(
                                                         item.owner_module,
                                                         item.item_id,
-                                                        item.data.action
+                                                        item.data.control === "toggle-button"
+                                                            ? (item.active ? item.data.action_off
+                                                                           : item.data.action_on)
+                                                            : item.data.action
                                                     ),
                                                     item.owner_module
                                                 )

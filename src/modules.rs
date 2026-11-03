@@ -260,6 +260,10 @@ pub struct ModuleManifest {
     #[serde(default)]
     pub surfaces: Option<String>,
 
+    /* Optional display override for the canonical governor.open control. */
+    #[serde(rename = "other-label-open", default)]
+    pub other_label_open: bool,
+
     /*
      * Dynamic module contracts.
      *
@@ -1569,6 +1573,91 @@ fn surface_presentation_label(
         .map(str::to_string))
 }
 
+/*
+ * A module may rename the presentation of governor.open, but never its
+ * semantics. The label comes from the module's existing translated Surface
+ * projection, not the global Boss translation dictionary.
+ *
+ * A malformed opt-in fails closed. Legacy modules do not enter this path.
+ */
+fn module_open_presentation_label(
+    manifest: &ModuleManifest,
+    content: &[Value],
+) -> Result<Option<String>, String> {
+    if !manifest.other_label_open {
+        return Ok(None);
+    }
+
+    let mut selected: Option<String> = None;
+    for item in content {
+        let data = &item["data"];
+        if item["visible"] != true || data["control"] != "button" || data["action"] != "open" {
+            continue;
+        }
+
+        let label = item["label"]
+            .as_str()
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "module {} requests other-label-open without a translated Open Surface label",
+                    manifest.name
+                )
+            })?;
+
+        if let Some(previous) = selected.as_deref() {
+            if previous != label {
+                return Err(format!(
+                    "module {} has conflicting translated Open labels across Surfaces",
+                    manifest.name
+                ));
+            }
+        } else {
+            selected = Some(label.to_string());
+        }
+    }
+
+    selected.map(Some).ok_or_else(|| {
+        format!(
+            "module {} requests other-label-open but declares no visible Open Surface button",
+            manifest.name
+        )
+    })
+}
+
+/* Resolve optional state-dependent labels through the existing module locale. */
+fn surface_variant_label(
+    item: &crate::surface_content::SurfaceContentItem,
+    module_strings: &BTreeMap<String, String>,
+    key_field: &str,
+    fallback_field: &str,
+) -> Result<Option<String>, String> {
+    if let Some(key) = item.data().get(key_field).map(String::as_str) {
+        let label = module_strings
+            .get(key)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "module {} Surface item {} has missing or empty translation {}",
+                    item.identity().owner_module(),
+                    item.identity().item_id(),
+                    key
+                )
+            })?;
+        return Ok(Some(label.to_string()));
+    }
+    Ok(item
+        .data()
+        .get(fallback_field)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
+}
+
 fn surface_content_item_json(
     item: &crate::surface_content::SurfaceContentItem,
     states: &crate::lifecycle_objects::ObjectStateStore,
@@ -1581,6 +1670,8 @@ fn surface_content_item_json(
     };
 
     let label = surface_presentation_label(item, module_strings)?;
+    let label_on = surface_variant_label(item, module_strings, "label_on_key", "label_on")?;
+    let label_off = surface_variant_label(item, module_strings, "label_off_key", "label_off")?;
 
     Ok(json!({
         "owner_module":
@@ -1610,10 +1701,77 @@ fn surface_content_item_json(
         "label":
             label,
 
+        "label_on": label_on,
+        "label_off": label_off,
+
         "data":
             item.data(),
     }))
 }
+#[cfg(test)]
+mod primary_open_label_tests {
+    use super::*;
+
+    fn manifest(enabled: bool) -> ModuleManifest {
+        let mut value = serde_json::json!({
+            "name": "test-module",
+            "entrypoint": "runtime/app",
+            "version": "1.0.0"
+        });
+        if enabled {
+            value["other-label-open"] = serde_json::json!(true);
+        }
+        serde_json::from_value(value).unwrap()
+    }
+
+    fn open_surface(label: &str) -> Value {
+        serde_json::json!({
+            "visible": true,
+            "data": {"control": "button", "action": "open"},
+            "label": label,
+        })
+    }
+
+    #[test]
+    fn absent_opt_in_defaults_false_and_preserves_legacy_open() {
+        let legacy = manifest(false);
+        assert!(!legacy.other_label_open);
+        assert_eq!(module_open_presentation_label(&legacy, &[]).unwrap(), None);
+    }
+
+    #[test]
+    fn explicit_opt_in_uses_translated_module_surface_label() {
+        let enabled = manifest(true);
+        assert_eq!(
+            module_open_presentation_label(
+                &enabled,
+                &[open_surface("Configurar"), open_surface("Configurar")]
+            )
+            .unwrap(),
+            Some("Configurar".to_string())
+        );
+        assert_eq!(
+            module_open_presentation_label(
+                &enabled,
+                &[open_surface("Config"), open_surface("Config")]
+            )
+            .unwrap(),
+            Some("Config".to_string())
+        );
+    }
+
+    #[test]
+    fn opted_in_missing_or_conflicting_labels_fail_closed() {
+        let enabled = manifest(true);
+        assert!(module_open_presentation_label(&enabled, &[]).is_err());
+        assert!(module_open_presentation_label(
+            &enabled,
+            &[open_surface("Config"), open_surface("Settings")]
+        )
+        .is_err());
+    }
+}
+
 #[cfg(test)]
 mod surface_content_json_contract_tests {
     use super::*;
@@ -5696,6 +5854,7 @@ pub fn installed_modules_json() -> Result<Value, String> {
             .iter()
             .map(|item| surface_content_item_json(item, &object_states, &module_strings))
             .collect::<Result<Vec<_>, String>>()?;
+        let open_label = module_open_presentation_label(&manifest, &surface_content)?;
 
         let mut item = json!({
             "name": manifest.name,
@@ -5705,6 +5864,8 @@ pub fn installed_modules_json() -> Result<Value, String> {
             "path": entry.path(),
             "icon": icon,
             "surface_content": surface_content,
+            "other_label_open": manifest.other_label_open,
+            "open_label": open_label,
             "surface_visibility": {
                 "tray": tray_visible,
                 "launcher": launcher_visible
@@ -8595,7 +8756,29 @@ fn validate_module_manifest(module_dir: &Path, manifest: &ModuleManifest) -> Res
      * Boss surface declarations are part of the installed module
      * contract and must resolve only real Lifecycle identities.
      */
-    let _ = surface_projection_from_module(module_dir, manifest, &lifecycle)?;
+    let projection = surface_projection_from_module(module_dir, manifest, &lifecycle)?;
+    if manifest.other_label_open {
+        if crate::lifecycle_governor_binding::resolve(&lifecycle, "open")?.is_none() {
+            return Err(format!(
+                "module {} requests other-label-open without governor.open",
+                manifest.name
+            ));
+        }
+        // Validate against the module's own default dictionary. The active
+        // locale is checked again when constructing the live Surface model.
+        let language = read_module_language_manifest(module_dir)?;
+        let module_strings = load_module_strings(module_dir, &language.default)?;
+        let content = crate::surface_content::resolve_all(&projection);
+        let mut labels = Vec::<Value>::new();
+        for item in &content {
+            labels.push(serde_json::json!({
+                "visible": item.visible(),
+                "data": item.data(),
+                "label": surface_presentation_label(item, &module_strings)?,
+            }));
+        }
+        let _ = module_open_presentation_label(manifest, &labels)?;
+    }
 
     /*
      * Settings are part of the installed module contract.
@@ -8730,6 +8913,7 @@ mod require_candidate_contract_tests {
             lifecycle: lifecycle.map(str::to_string),
 
             surfaces: None,
+            other_label_open: false,
 
             contracts: Vec::new(),
 
@@ -8897,6 +9081,7 @@ mod lifecycle_contract_reference_tests {
             entrypoint: "entrypoint".to_string(),
             lifecycle: Some(path.to_string()),
             surfaces: None,
+            other_label_open: false,
             contracts: Vec::new(),
             platform_operations: None,
             tray: None,

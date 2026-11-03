@@ -22,7 +22,7 @@ PlasmoidItem {
     property bool refreshBusy: false
     property bool refreshAgain: false
     property string commandError: ""
-    property string bossVersion: "2.0.12"
+    property string bossVersion: "2.0.13"
 
 
 
@@ -141,10 +141,25 @@ PlasmoidItem {
                     ? item.data
                     : ({})
 
-                return (
+                const regular = (
                     data.control === "button"
                     && typeof data.action === "string"
                     && data.action.length > 0
+                )
+                const alternating = (
+                    data.control === "toggle-button"
+                    && !!item.object_id
+                    && item.active !== undefined
+                    && item.active !== null
+                    && !!data.action_on && !!data.action_off
+                    && !!data.transition_on && !!data.transition_off
+                    && typeof item.label_on === "string"
+                    && item.label_on.length > 0
+                    && typeof item.label_off === "string"
+                    && item.label_off.length > 0
+                )
+                return (
+                    (regular || alternating)
                     && typeof data.label_key === "string"
                     && data.label_key.length > 0
                 )
