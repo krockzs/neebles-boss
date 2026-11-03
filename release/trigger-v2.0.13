@@ -5,3 +5,4 @@ Scope: generic other-label-open / module language resolution / toggle-button.
 No module-specific branches. No change to governor.open.
 CI must certify Rust 1.98.1 + Qt 6.8.2/Esbirro, 11 assets, SHA256SUMS.
 This marker requests a candidate; it is not a published release.
+F29: execute all release Rust tests serially; prevent transient ETXTBSY from parallel executable fixtures.
