@@ -2978,10 +2978,22 @@ fn install_require_tree(
                 candidate.staging.path(),
                 true,
             ) {
+                let diagnostic = if error.starts_with("OS_ADMIN_APPROVAL_REQUIRED ") {
+                    match crate::platform_policy_lifecycle::preserve_candidate_for_os_review(
+                        &module_id,
+                        candidate.staging.path(),
+                        &error,
+                    ) {
+                        Ok(review) => format!("{error}; OS_ADMIN_REVIEW_DIR={}", review.display()),
+                        Err(reason) => format!("{error}; OS review snapshot unavailable: {reason}"),
+                    }
+                } else {
+                    error
+                };
                 return Err(require_install_failure(
                     format!(
                         "OS platform approval preflight rejected module '{}': {}",
-                        module_id, error
+                        module_id, diagnostic
                     ),
                     &mut transaction,
                 ));
@@ -7618,9 +7630,23 @@ fn update_with_observer(
             manifest.platform_operations.is_some(),
         )
         .map_err(|error| {
+            let diagnostic = if manifest.platform_operations.is_some()
+                && error.starts_with("OS_ADMIN_APPROVAL_REQUIRED ")
+            {
+                match crate::platform_policy_lifecycle::preserve_candidate_for_os_review(
+                    name,
+                    staging.path(),
+                    &error,
+                ) {
+                    Ok(review) => format!("{error}; OS_ADMIN_REVIEW_DIR={}", review.display()),
+                    Err(reason) => format!("{error}; OS review snapshot unavailable: {reason}"),
+                }
+            } else {
+                error
+            };
             format!(
                 "module '{}' OS platform approval preflight failed before stopping services: {}",
-                name, error
+                name, diagnostic
             )
         })?;
     }

@@ -137,6 +137,7 @@
   "modules.dependency_warning_understood": "Entendido",
   "modules.dependency_warning_preflight_failed_title": "No se pudo verificar la operación",
   "modules.dependency_warning_preflight_failed_body": "Boss no pudo determinar con seguridad las consecuencias de esta operación. No se realizará ningún cambio.",
+  "modules.transaction.os_approval_required": "Se requiere una aprobación administrativa independiente del código privilegiado. La instalación anterior permanece protegida. No se ha concedido permiso ni completado la operación.",
   "modules.transaction.title": "Transacción de módulos",
   "modules.transaction.running": "Procesando...",
   "modules.transaction.success": "Transacción completada",
@@ -147,5 +148,11 @@
   "config.startup_minimized": "Iniciar minimizado",
   "release_notes.reboot": "Reiniciar",
   "release_notes.reboot_warning": "Guarda tu trabajo y cierra las aplicaciones abiertas antes de reiniciar el sistema.",
-  "modules.critical_update": "Critical Update"
+  "modules.critical_update": "Critical Update",
+  "modules.transaction.os_review_title": "Revisar y autorizar operaciones OS",
+  "modules.transaction.os_review_warning": "Esta versión solicita ejecutar operaciones privilegiadas. Revisa los SHA-256 exactos del manifiesto, contrato y ejecutable. Solo al confirmar se solicitará autorización administrativa separada; si la cancelas, no se instalará ni actualizará el módulo.",
+  "modules.transaction.os_cancel": "Cancelar",
+  "modules.transaction.os_approve": "Solicitar autorización OS",
+  "modules.transaction.os_reviewing": "La autorización seguirá deshabilitada hasta revisar las operaciones exactas con la autoridad OS.",
+  "modules.transaction.os_operations": "Operaciones privilegiadas solicitadas (ejecutable y argumentos)"
 }

@@ -1,6 +1,22 @@
 # N.E.E.B.L.E.S. Boss
 
-## Boss 2.0.15 — corrección de autenticación administrativa (candidato de fuente)
+## Boss 2.0.16 — aprobación OS independiente y Install/Update (candidato de fuente)
+
+F54–F61 incorporan el contrato de revisión administrativa por SHA-256 exactos,
+el desafío de aprobación tipado, el directorio root de revisión del candidato,
+la confirmación explícita con Polkit, la presentación de operaciones y la
+revalidación completa de Install/Update antes de intervenir servicios.
+
+La revisión no constituye una aprobación. Los módulos y su IPC no pueden emitir
+recibos de autoridad OS; el proveedor root es la única autoridad de emisión.
+La cancelación o el fallo de revisión dejan el módulo previamente instalado
+sin reemplazo. La aprobación de un candidato no autoriza ningún otro contenido.
+
+F62 alinea metadatos, Cargo, Qt, instalador, workflow y notas con 2.0.16.
+Las pruebas de fuente y Esbirro Qt 6.8.2 no constituyen por sí mismas
+aceptación instalada ni publicación de GitHub; estas son puertas separadas.
+
+## Boss 2.0.15 — referencia histórica de fuente
 
 F47 corrige la validación de la identidad de Boss ante el proveedor OS cuando el
 agente Qt invoca `neebles-backend --authority-supply <ruta OS> modules update`.

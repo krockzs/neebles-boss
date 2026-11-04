@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.16
+
+Module installation and update now support independent operating-system approval of privileged operations. Boss presents declared operations and exact SHA-256 fingerprints, requires an explicit Polkit administrative decision, and revalidates the transaction before changing services. Reviewing alone never grants authority. Cancellation or denial preserves the previous installed version.

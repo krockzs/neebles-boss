@@ -210,12 +210,16 @@ class Manager:
             return True
         return self.approved_fingerprint(module, candidate)
 
-    def approve(self, module):
-        """Explicit OS-administrator action only; never invoked by Boss IPC."""
+    def approve(self, module, *, expected=None):
+        """Explicit OS-administrator action; compare reviewed bytes BEFORE writing."""
         if os.geteuid() != 0 and self.strict:
             raise ValueError('root required for OS approval')
         self.dirs()
         data = self.fingerprint(module)
+        if expected is not None:
+            self.validate_approval_record(module, expected)
+            if data != expected:
+                raise ValueError('reviewed candidate SHA-256 changed; approval denied')
         active = self.approval_path(module)
         if active.exists() or active.is_symlink():
             previous = parse(safe_read(active, strict=self.strict))
@@ -232,6 +236,33 @@ class Manager:
                0o600, strict=self.strict)
         self.approval(module)
         return data
+
+    def review_candidate(self, module):
+        """Root-owned OS candidate review; never mutates approval or policy."""
+        self.dirs()
+        if self.pending(module):
+            raise ValueError('unreconciled platform policy transaction')
+        record = self.fingerprint(module)
+        directory, _, _, _ = self.paths(module)
+        contract = parse(safe_read(directory / 'contracts/platform-operations.json',
+                                   strict=self.strict))
+        return {'fingerprint': record, 'operations': contract['operations']}
+
+    def approve_exact_candidate(self, module, expected):
+        """Explicit OS administrator approval, pinned to reviewed source bytes.
+
+        This must NEVER be called via the Boss module IPC or provider socket.
+        Ordinary Install/Update only calls the read-only preflight.
+        """
+        if os.geteuid() != 0 and self.strict:
+            raise ValueError('root required for OS approval')
+        self.validate_approval_record(module, expected)
+        review = self.review_candidate(module)
+        if review['fingerprint'] != expected:
+            raise ValueError('reviewed candidate SHA-256 changed; approval denied')
+        # The expected fingerprint is verified inside approve(), immediately
+        # before the first write, rather than after it has created a receipt.
+        return self.approve(module, expected=expected)
 
     def revoke_approval(self, module):
         """Revoke all approved versions for a module, then retire OS policy."""
@@ -397,8 +428,28 @@ def handle_control(req, manager=None):
             engine = manager or Manager()
             engine.preflight_approved_candidate(module, req['candidate'])
             return {'schema':'1','ok':True,'result':{'state':'ready'}}
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
-            return {'schema':'1','ok':False,'error':'OS candidate approval absent, mismatched or unavailable'}
+        except (FileNotFoundError, ValueError) as exc:
+            # Only an absent or mismatched exact-byte approval is a reviewable
+            # challenge. A pending transaction, malformed receipt or invalid
+            # candidate is a generic denial, NOT authorization to proceed.
+            if ((isinstance(exc, FileNotFoundError)
+                    and str(exc) == 'OS approval receipt is absent for module: ' + module)
+                    or str(exc) == 'OS approval missing for exact certified module bytes'):
+                candidate = req.get('candidate')
+                try:
+                    engine.validate_approval_record(module, candidate)
+                except (TypeError, ValueError, KeyError):
+                    pass
+                else:
+                    return {'schema':'1','ok':False,
+                            'error':'OS administrator approval required for exact candidate',
+                            'approval_required':True,
+                            'fingerprint':candidate}
+            return {'schema':'1','ok':False,
+                    'error':'OS candidate approval absent, mismatched or unavailable'}
+        except (OSError, TypeError, KeyError, json.JSONDecodeError):
+            return {'schema':'1','ok':False,
+                    'error':'OS candidate approval absent, mismatched or unavailable'}
     if set(req) != {'schema', 'module', 'operation'} or operation not in (
             'platform.policy.sync', 'platform.policy.revoke'):
         return {'schema':'1','ok':False,'error':'invalid management action'}
@@ -696,28 +747,46 @@ def administer(argv):
     import argparse
     parser = argparse.ArgumentParser(description='NEEBLES OS module privilege approvals')
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('approve', 'audit-approval', 'revoke-approval'):
+    for name in ('review', 'approve', 'audit-approval', 'revoke-approval'):
         cmd = sub.add_parser(name)
         cmd.add_argument('--module', required=True)
-        if name == 'approve':
+        if name in ('review', 'approve'):
             cmd.add_argument('--candidate-dir', required=True, type=Path)
+        if name == 'approve':
             cmd.add_argument('--confirm-root-authority', action='store_true')
+            cmd.add_argument('--expect-manifest-sha256')
+            cmd.add_argument('--expect-contract-sha256')
+            cmd.add_argument('--expect-helper-sha256')
     args = parser.parse_args(argv)
     if os.geteuid() != 0:
         raise ValueError('explicit root administrator authorization required')
-    if args.command == 'approve':
-        if not args.confirm_root_authority:
-            raise ValueError('explicit --confirm-root-authority required')
+    if args.command in ('review', 'approve'):
+        if args.command == 'approve':
+            # Reject before reading any candidate or attempting to create a receipt.
+            if not args.confirm_root_authority:
+                raise ValueError('explicit --confirm-root-authority required')
+            if not (args.expect_manifest_sha256 and args.expect_contract_sha256
+                    and args.expect_helper_sha256):
+                raise ValueError('explicit three SHA-256 expectations are required')
         candidate = args.candidate_dir
-        if not candidate.is_absolute() or candidate.name != args.module:
+        if (not candidate.is_absolute() or '..' in candidate.parts
+                or candidate.name != args.module):
             raise ValueError('candidate directory must be absolute and named for the module')
-        # Privileged approval reads only a separately controlled, root-owned
-        # candidate directory. Boss cannot create or modify the approval.
+        # Separate OS-owned administrative boundary: no Boss IPC action can
+        # invoke review/approve. Candidate must be owned and confined by root.
         admin = Manager(modules_root=candidate.parent)
-        record = admin.approve(args.module)
-        print('APPROVED OS privileged material:', record['module'])
-        for key in ('manifest_sha256', 'contract_sha256', 'helper_sha256'):
-            print(key, record[key])
+        review = admin.review_candidate(args.module)
+        if args.command == 'review':
+            print(json.dumps(review, sort_keys=True, indent=2))
+        else:
+            expected = {'schema': '1', 'module': args.module,
+                        'manifest_sha256': args.expect_manifest_sha256,
+                        'contract_sha256': args.expect_contract_sha256,
+                        'helper_sha256': args.expect_helper_sha256}
+            record = admin.approve_exact_candidate(args.module, expected)
+            print('APPROVED OS privileged material:', record['module'])
+            for key in ('manifest_sha256', 'contract_sha256', 'helper_sha256'):
+                print(key, record[key])
     else:
         admin = Manager()
         if args.command == 'audit-approval':

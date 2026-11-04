@@ -2108,6 +2108,51 @@ void BossController::consumeModuleProcessOutput()
         }
 
         /*
+         * An approval challenge is a PRESENTATION state, never permission.
+         * The module remains unsuccessful until a separate OS administrator
+         * explicitly reviews exact certified bytes and Install/Update retries.
+         * No code path from this marker invokes approve(), pkexec or sync().
+         */
+        if (
+            m_activeModuleOperation == QStringLiteral("install")
+            || m_activeModuleOperation == QStringLiteral("update")
+        ) {
+            static const QRegularExpression challengePattern(
+                QStringLiteral(
+                    "OS_ADMIN_APPROVAL_REQUIRED module=([a-z0-9-]+) "
+                    "manifest_sha256=([a-f0-9]{64}) "
+                    "contract_sha256=([a-f0-9]{64}) "
+                    "helper_sha256=([a-f0-9]{64})"
+                )
+            );
+            const QRegularExpressionMatch match = challengePattern.match(line);
+            if (match.hasMatch() && match.captured(1) == m_activeModuleName) {
+                m_transactionOperation.insert(QStringLiteral("approvalRequired"), true);
+                m_transactionOperation.insert(QStringLiteral("approvalManifestSha256"), match.captured(2));
+                m_transactionOperation.insert(QStringLiteral("approvalContractSha256"), match.captured(3));
+                m_transactionOperation.insert(QStringLiteral("approvalHelperSha256"), match.captured(4));
+                emit transactionOperationChanged();
+            }
+            // Root Governor publishes this stable path only after it has
+            // copied and re-verified all three certified candidate files.
+            // A free-form candidate path is never accepted from stdout.
+            static const QRegularExpression reviewPathPattern(
+                QStringLiteral(
+                    "OS_ADMIN_REVIEW_DIR=/var/lib/neebles/platform-operations/"
+                    "reviews/([a-z0-9-]+)(?=\\s|;|$)"
+                )
+            );
+            const QRegularExpressionMatch reviewMatch = reviewPathPattern.match(line);
+            if (reviewMatch.hasMatch()
+                && reviewMatch.captured(1) == m_activeModuleName
+                && m_transactionOperation.value(
+                    QStringLiteral("approvalRequired")).toBool()) {
+                m_transactionOperation.insert(QStringLiteral("approvalReviewReady"), true);
+                emit transactionOperationChanged();
+            }
+        }
+
+        /*
          * Everything not belonging to the reserved
          * machine protocol remains human transcript.
          */
@@ -3115,6 +3160,266 @@ void BossController::updateModule(
         }
     );
 }
+
+void BossController::reviewPendingPlatformOperation()
+{
+    // Reviewing is independent from granting. A second explicit UI action is
+    // required for approval; this read-only OS CLI cannot produce a receipt.
+    if (m_busy || m_moduleOperationProcess || m_platformApprovalProcess)
+        return;
+    const QVariantMap tx = m_transactionOperation;
+    const QString module = tx.value(QStringLiteral("module")).toString();
+    const QRegularExpression modulePattern(QStringLiteral("^[a-z0-9][a-z0-9-]{0,127}$"));
+    const QRegularExpression shaPattern(QStringLiteral("^[a-f0-9]{64}$"));
+    if (!modulePattern.match(module).hasMatch()
+        || !tx.value(QStringLiteral("approvalRequired")).toBool()
+        || !tx.value(QStringLiteral("approvalReviewReady")).toBool()
+        || tx.value(QStringLiteral("approvalBusy")).toBool()
+        || tx.value(QStringLiteral("running")).toBool()
+        || tx.value(QStringLiteral("success")).toBool()
+        || (tx.value(QStringLiteral("operation")).toString() != QStringLiteral("install")
+            && tx.value(QStringLiteral("operation")).toString() != QStringLiteral("update"))) {
+        return;
+    }
+    for (const auto &field : {"approvalManifestSha256", "approvalContractSha256", "approvalHelperSha256"}) {
+        if (!shaPattern.match(tx.value(QString::fromLatin1(field)).toString()).hasMatch())
+            return;
+    }
+    const QString authAgent = authorizationPath();
+    const QStringList runtimeAuthority = runtimeAuthorityArguments();
+    if (authAgent.isEmpty() || runtimeAuthority.isEmpty()) {
+        appendTransactionOperationLog(QStringLiteral("OS review unavailable: authorization agent missing"));
+        return;
+    }
+    const QString reviewDirectory = QStringLiteral(
+        "/var/lib/neebles/platform-operations/reviews/") + module;
+    QStringList args {
+        QStringLiteral("--locale"), m_language,
+        QStringLiteral("--operation"), QStringLiteral("review-module-privileges"),
+        QStringLiteral("--name"), module,
+        QStringLiteral("--running"), QStringLiteral("false")
+    };
+    args.append(runtimeAuthority);
+    args << QStringLiteral("--")
+         << QStringLiteral("/usr/bin/python3")
+         << QStringLiteral("-I")
+         << QStringLiteral("/usr/lib/neebles/platform-operations/provider.py")
+         << QStringLiteral("review")
+         << QStringLiteral("--module") << module
+         << QStringLiteral("--candidate-dir") << reviewDirectory;
+
+    m_platformReviewOutput.clear();
+    setTransactionOperationField(QStringLiteral("approvalOperationsReviewed"), false);
+    setTransactionOperationField(QStringLiteral("approvalOperations"), QString());
+    setTransactionOperationField(QStringLiteral("approvalBusy"), true);
+    QProcess *process = new QProcess(this);
+    m_platformApprovalProcess = process;
+    setBusy(true);
+    process->setProcessChannelMode(QProcess::SeparateChannels);
+    connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
+        if (m_platformApprovalProcess != process)
+            return;
+        const QByteArray bytes = process->readAllStandardOutput();
+        if (m_platformReviewOutput.size() + bytes.size() <= 65536)
+            m_platformReviewOutput.append(bytes);
+        else
+            m_platformReviewOutput = QByteArray(65537, 'x'); // fail closed
+    });
+    connect(process, &QProcess::errorOccurred, this,
+            [this, process](QProcess::ProcessError error) {
+        if (m_platformApprovalProcess == process && error == QProcess::FailedToStart) {
+            m_platformApprovalProcess = nullptr;
+            m_platformReviewOutput.clear();
+            setTransactionOperationField(QStringLiteral("approvalBusy"), false);
+            appendTransactionOperationLog(QStringLiteral("OS review process failed to start"));
+            setBusy(false);
+            process->deleteLater();
+        }
+    });
+    connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+            [this, process, tx, module](int rc, QProcess::ExitStatus exitStatus) {
+        if (m_platformApprovalProcess != process)
+            return;
+        if (m_platformReviewOutput.size() <= 65536)
+            m_platformReviewOutput.append(process->readAllStandardOutput());
+        const QString stderrText = QString::fromUtf8(process->readAllStandardError()).trimmed();
+        const QByteArray output = m_platformReviewOutput;
+        m_platformReviewOutput.clear();
+        m_platformApprovalProcess = nullptr;
+        process->deleteLater();
+        setTransactionOperationField(QStringLiteral("approvalBusy"), false);
+        setBusy(false);
+        if (exitStatus != QProcess::NormalExit || rc != 0 || output.size() > 65536) {
+            appendTransactionOperationLog(QStringLiteral("OS review was cancelled or rejected: ")
+                                          + stderrText.left(500));
+            return;
+        }
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(output, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+            appendTransactionOperationLog(QStringLiteral("OS review returned invalid JSON"));
+            return;
+        }
+        const QJsonObject root = doc.object();
+        const QJsonObject fingerprint = root.value(QStringLiteral("fingerprint")).toObject();
+        const QJsonObject operations = root.value(QStringLiteral("operations")).toObject();
+        if (fingerprint.value(QStringLiteral("schema")).toString() != QStringLiteral("1")
+            || fingerprint.value(QStringLiteral("module")).toString() != module
+            || fingerprint.value(QStringLiteral("manifest_sha256")).toString()
+                != tx.value(QStringLiteral("approvalManifestSha256")).toString()
+            || fingerprint.value(QStringLiteral("contract_sha256")).toString()
+                != tx.value(QStringLiteral("approvalContractSha256")).toString()
+            || fingerprint.value(QStringLiteral("helper_sha256")).toString()
+                != tx.value(QStringLiteral("approvalHelperSha256")).toString()
+            || operations.isEmpty() || operations.size() > 64
+            || m_transactionOperation.value(QStringLiteral("module")).toString() != module
+            || m_transactionOperation.value(QStringLiteral("approvalContractSha256")).toString()
+                != tx.value(QStringLiteral("approvalContractSha256")).toString()
+            || !m_transactionOperation.value(QStringLiteral("approvalRequired")).toBool()) {
+            appendTransactionOperationLog(QStringLiteral("OS review fingerprint mismatch; approval denied"));
+            return;
+        }
+        const QString description = QString::fromUtf8(
+            QJsonDocument(operations).toJson(QJsonDocument::Indented));
+        setTransactionOperationField(QStringLiteral("approvalOperations"), description);
+        setTransactionOperationField(QStringLiteral("approvalOperationsReviewed"), true);
+        appendTransactionOperationLog(QStringLiteral("OS privileged operations reviewed; separate approval still required"));
+    });
+    process->start(authAgent, args);
+}
+
+void BossController::approvePendingPlatformOperation()
+{
+    // A deliberate UI click is required; module IPC and Install/Update never
+    // call this. Polkit grants execution of the OS-owned approval CLI, not
+    // permission to run a module's privileged helper.
+    if (m_busy || m_moduleOperationProcess || m_platformApprovalProcess)
+        return;
+
+    const QVariantMap tx = m_transactionOperation;
+    const QString module = tx.value(QStringLiteral("module")).toString();
+    const QString operation = tx.value(QStringLiteral("operation")).toString();
+    const QRegularExpression modulePattern(
+        QStringLiteral("^[a-z0-9][a-z0-9-]{0,127}$"));
+    const QRegularExpression digestPattern(QStringLiteral("^[a-f0-9]{64}$"));
+    if (!modulePattern.match(module).hasMatch()
+        || (operation != QStringLiteral("install")
+            && operation != QStringLiteral("update"))
+        || tx.value(QStringLiteral("running")).toBool()
+        || tx.value(QStringLiteral("success")).toBool()
+        || !tx.value(QStringLiteral("approvalRequired")).toBool()
+        || !tx.value(QStringLiteral("approvalReviewReady")).toBool()
+        || !tx.value(QStringLiteral("approvalOperationsReviewed")).toBool()
+        || tx.value(QStringLiteral("approvalBusy")).toBool()) {
+        return;
+    }
+
+    const QString manifest = tx.value(
+        QStringLiteral("approvalManifestSha256")).toString();
+    const QString contract = tx.value(
+        QStringLiteral("approvalContractSha256")).toString();
+    const QString helper = tx.value(
+        QStringLiteral("approvalHelperSha256")).toString();
+    if (!digestPattern.match(manifest).hasMatch()
+        || !digestPattern.match(contract).hasMatch()
+        || !digestPattern.match(helper).hasMatch()) {
+        return;
+    }
+
+    const QString authAgent = authorizationPath();
+    const QStringList runtimeAuthority = runtimeAuthorityArguments();
+    const QString reviewDirectory = QStringLiteral(
+        "/var/lib/neebles/platform-operations/reviews/") + module;
+    if (authAgent.isEmpty() || runtimeAuthority.isEmpty()) {
+        appendTransactionOperationLog(QStringLiteral(
+            "OS administrator approval unavailable: auth agent or runtime authority missing"));
+        return;
+    }
+
+    QStringList args {
+        QStringLiteral("--locale"), m_language,
+        QStringLiteral("--operation"), QStringLiteral("approve-module-privileges"),
+        QStringLiteral("--name"), module
+    };
+    if (!tx.value(QStringLiteral("fromVersion")).toString().isEmpty()) {
+        args << QStringLiteral("--from")
+             << tx.value(QStringLiteral("fromVersion")).toString();
+    }
+    if (!tx.value(QStringLiteral("toVersion")).toString().isEmpty()) {
+        args << QStringLiteral("--to")
+             << tx.value(QStringLiteral("toVersion")).toString();
+    }
+    args << QStringLiteral("--running") << QStringLiteral("false");
+    args.append(runtimeAuthority);
+    args << QStringLiteral("--")
+         << QStringLiteral("/usr/bin/python3")
+         << QStringLiteral("-I")
+         << QStringLiteral("/usr/lib/neebles/platform-operations/provider.py")
+         << QStringLiteral("approve")
+         << QStringLiteral("--module") << module
+         << QStringLiteral("--candidate-dir") << reviewDirectory
+         << QStringLiteral("--confirm-root-authority")
+         << QStringLiteral("--expect-manifest-sha256") << manifest
+         << QStringLiteral("--expect-contract-sha256") << contract
+         << QStringLiteral("--expect-helper-sha256") << helper;
+
+    QProcess *process = new QProcess(this);
+    m_platformApprovalProcess = process;
+    setBusy(true);
+    setTransactionOperationField(QStringLiteral("approvalBusy"), true);
+    appendTransactionOperationLog(QStringLiteral(
+        "N.E.E.B.L.E.S.: requesting independent OS administrator approval"));
+    process->setProcessChannelMode(QProcess::MergedChannels);
+    connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
+        if (m_platformApprovalProcess == process) {
+            const QString log = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
+            if (!log.isEmpty())
+                appendTransactionOperationLog(log);
+        }
+    });
+    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError) {
+        if (m_platformApprovalProcess == process
+            && process->error() == QProcess::FailedToStart) {
+            appendTransactionOperationLog(QStringLiteral(
+                "OS approval process could not start; no authority was granted"));
+            m_platformApprovalProcess = nullptr;
+            setTransactionOperationField(QStringLiteral("approvalBusy"), false);
+            setBusy(false);
+            process->deleteLater();
+        }
+    });
+    connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+            this, [this, process, module, operation](int rc, QProcess::ExitStatus status) {
+        if (m_platformApprovalProcess != process)
+            return;
+        const QString tail = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
+        if (!tail.isEmpty())
+            appendTransactionOperationLog(tail);
+        const bool approved = status == QProcess::NormalExit && rc == 0;
+        m_platformApprovalProcess = nullptr;
+        setTransactionOperationField(QStringLiteral("approvalBusy"), false);
+        process->deleteLater();
+        setBusy(false);
+        if (!approved) {
+            appendTransactionOperationLog(QStringLiteral(
+                "OS approval cancelled or denied; installed module preserved"));
+            return;
+        }
+        // A zero exit from the independent root CLI merely registers an exact
+        // OS receipt. A fresh Boss transaction MUST stage and verify again:
+        // never install the prior staged material from the untrusted UI.
+        appendTransactionOperationLog(QStringLiteral(
+            "OS approval recorded; repeating certified Install/Update preflight"));
+        if (operation == QStringLiteral("update")) {
+            startModuleProcess(operation, module, true,
+                               {QStringLiteral("--close-running")});
+        } else {
+            startModuleProcess(operation, module, true);
+        }
+    });
+    process->start(authAgent, args);
+}
+
 
 
 void BossController::uninstallModule(

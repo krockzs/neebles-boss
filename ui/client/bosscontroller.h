@@ -80,6 +80,8 @@ public:
     );
     Q_INVOKABLE void installModule(const QString &name);
     Q_INVOKABLE void updateModule(const QString &name);
+    Q_INVOKABLE void reviewPendingPlatformOperation();
+    Q_INVOKABLE void approvePendingPlatformOperation();
     Q_INVOKABLE void uninstallModule(
         const QString &name,
         bool removeSettings
@@ -187,6 +189,8 @@ private:
     int m_transactionSequence = 0;
 
     QProcess *m_moduleOperationProcess = nullptr;
+    QProcess *m_platformApprovalProcess = nullptr;
+    QByteArray m_platformReviewOutput;
 
     QString m_activeModuleName;
     QString m_activeModuleOperation;

@@ -2535,6 +2535,91 @@ boss.updateModule(
         }
     }
 
+    // Explicit user action, separate from the Install/Update authentication.
+    // No automatic permission grant occurs when the transaction first runs.
+    Dialog {
+        id: osApprovalDialog
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        title: root.t("modules.transaction.os_review_title")
+        width: Math.min(680, root.width - 64)
+        height: Math.min(610, root.height - 64)
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        standardButtons: Dialog.NoButton
+        contentItem: ColumnLayout {
+            spacing: 12
+            property var tx: (typeof boss !== "undefined" && boss.transactionOperation)
+                ? boss.transactionOperation : ({})
+            Label {
+                Layout.fillWidth: true
+                text: root.t("modules.transaction.os_review_warning")
+                wrapMode: Text.WordWrap
+                color: "#FDE68A"
+            }
+            Label {
+                Layout.fillWidth: true
+                text: osApprovalDialog.contentItem.tx.module || ""
+                color: "#C4B5FD"
+                font.bold: true
+            }
+            Label {
+                Layout.fillWidth: true
+                text: root.t("modules.transaction.os_operations")
+                color: "#F5D0FE"
+                font.bold: true
+            }
+            TextArea {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 112
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.WrapAnywhere
+                color: "#E4E4E7"
+                font.family: "monospace"
+                text: osApprovalDialog.contentItem.tx.approvalOperations || ""
+            }
+            Label {
+                Layout.fillWidth: true
+                text: root.t("modules.transaction.os_reviewing")
+                color: "#C4B5FD"
+                visible: osApprovalDialog.contentItem.tx.approvalOperationsReviewed !== true
+            }
+            TextArea {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 142
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.WrapAnywhere
+                color: "#E4E4E7"
+                font.family: "monospace"
+                text: "manifest SHA-256: " + (osApprovalDialog.contentItem.tx.approvalManifestSha256 || "")
+                    + "\ncontract SHA-256: " + (osApprovalDialog.contentItem.tx.approvalContractSha256 || "")
+                    + "\nhelper SHA-256: " + (osApprovalDialog.contentItem.tx.approvalHelperSha256 || "")
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: root.t("modules.transaction.os_cancel")
+                    onClicked: osApprovalDialog.close()
+                }
+                Button {
+                    text: root.t("modules.transaction.os_approve")
+                    enabled: osApprovalDialog.contentItem.tx.approvalReviewReady === true
+                        && osApprovalDialog.contentItem.tx.approvalOperationsReviewed === true
+                        && osApprovalDialog.contentItem.tx.approvalBusy !== true
+                        && !boss.busy
+                    onClicked: {
+                        osApprovalDialog.close()
+                        boss.approvePendingPlatformOperation()
+                    }
+                }
+            }
+        }
+    }
+
     Dialog {
         id: transactionProcessDialog
 
@@ -2791,6 +2876,32 @@ boss.updateModule(
 
                     horizontalAlignment:
                         Text.AlignRight
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: transactionProcessDialog.contentItem.transaction.approvalRequired === true
+                text: root.t("modules.transaction.os_approval_required")
+                wrapMode: Text.WordWrap
+                color: "#FBBF24"
+                font.pixelSize: 13
+                font.bold: true
+            }
+
+            Button {
+                Layout.fillWidth: true
+                visible: transactionProcessDialog.contentItem.transaction.approvalRequired === true
+                    && transactionProcessDialog.contentItem.transaction.approvalReviewReady === true
+                    && transactionProcessDialog.contentItem.transaction.running !== true
+                    && transactionProcessDialog.contentItem.transaction.success !== true
+                enabled: visible
+                    && transactionProcessDialog.contentItem.transaction.approvalBusy !== true
+                    && !boss.busy
+                text: root.t("modules.transaction.os_review_title")
+                onClicked: {
+                    osApprovalDialog.open()
+                    boss.reviewPendingPlatformOperation()
                 }
             }
 
