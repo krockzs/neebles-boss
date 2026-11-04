@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.14
+
+Proveedor OS: CLI administrativa root de Boss autorizada por identidad exacta del ejecutable; preflight independiente de los hashes certificados antes de detener servicios en Install/Update. Las aprobaciones no son automaticas. Candidato pendiente de CI Esbirro y aceptacion instalada.

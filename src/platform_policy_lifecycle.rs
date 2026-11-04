@@ -1,16 +1,18 @@
 //! Governor-owned privileged platform policy lifecycle.
 //!
-//! The OS owns the provider, material approval and policy semantics. Boss owns
-//! the installed module identity and when to reconcile it. No module names,
-//! executable paths, host commands or root policy data are supplied by Boss.
+//! The OS provider owns approval and policy semantics. Governor supplies only
+//! an authenticated module identity and a read-only digest preflight.
+use sha2::{Digest, Sha256};
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::Duration;
 
 const SOCKET: &str = "/run/neebles/platform-operations.sock";
 
-pub fn reconcile(module: &str, remove: bool) -> Result<(), String> {
+fn validate_module(module: &str) -> Result<(), String> {
     if module.is_empty()
         || module.len() > 128
         || !module
@@ -19,11 +21,52 @@ pub fn reconcile(module: &str, remove: bool) -> Result<(), String> {
     {
         return Err("invalid Governor module identity for platform policy".into());
     }
-    let action = if remove {
-        "platform.policy.revoke"
-    } else {
-        "platform.policy.sync"
-    };
+    Ok(())
+}
+
+fn sha256_regular_file(path: &Path) -> Result<String, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|e| format!("candidate material unavailable {}: {e}", path.display()))?;
+    if !metadata.file_type().is_file() || metadata.len() > 16 * 1024 * 1024 {
+        return Err(format!(
+            "candidate material is not a bounded regular file: {}",
+            path.display()
+        ));
+    }
+    let bytes = fs::read(path)
+        .map_err(|e| format!("candidate material unreadable {}: {e}", path.display()))?;
+    let digest = Sha256::digest(&bytes);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn candidate_fingerprint(
+    module: &str,
+    candidate_dir: &Path,
+    has_platform_operations: bool,
+) -> Result<serde_json::Value, String> {
+    validate_module(module)?;
+    if !has_platform_operations {
+        return Ok(serde_json::Value::Null);
+    }
+    let manifest_sha256 = sha256_regular_file(&candidate_dir.join("manifest.json"))?;
+    let contract_sha256 =
+        sha256_regular_file(&candidate_dir.join("contracts/platform-operations.json"))?;
+    let helper_sha256 = sha256_regular_file(
+        &candidate_dir
+            .join("runtime")
+            .join(format!("{module}-platform")),
+    )?;
+    Ok(serde_json::json!({
+        "schema": "1",
+        "module": module,
+        "manifest_sha256": manifest_sha256,
+        "contract_sha256": contract_sha256,
+        "helper_sha256": helper_sha256,
+    }))
+}
+
+fn communicate(module: &str, request: serde_json::Value) -> Result<(), String> {
+    validate_module(module)?;
     let mut socket = UnixStream::connect(SOCKET)
         .map_err(|e| format!("OS platform policy service unavailable: {e}"))?;
     socket
@@ -46,7 +89,6 @@ pub fn reconcile(module: &str, remove: bool) -> Result<(), String> {
     if ok != 0 || size as usize != std::mem::size_of::<libc::ucred>() || peer.uid != 0 {
         return Err("OS platform policy peer is not root-authenticated".into());
     }
-    let request = serde_json::json!({"schema":"1", "module":module, "operation":action});
     socket
         .write_all(format!("{request}\n").as_bytes())
         .map_err(|e| format!("OS policy request write failed: {e}"))?;
@@ -77,6 +119,37 @@ pub fn reconcile(module: &str, remove: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// A preflight never changes privileged policy. OS approval is independently
+/// bound to the exact manifest, platform contract and helper ELF hashes.
+pub fn preflight(
+    module: &str,
+    candidate_dir: &Path,
+    has_platform_operations: bool,
+) -> Result<(), String> {
+    let candidate = candidate_fingerprint(module, candidate_dir, has_platform_operations)?;
+    communicate(
+        module,
+        serde_json::json!({
+            "schema": "1", "module": module,
+            "operation": "platform.policy.preflight", "candidate": candidate,
+        }),
+    )
+}
+
+pub fn reconcile(module: &str, remove: bool) -> Result<(), String> {
+    let operation = if remove {
+        "platform.policy.revoke"
+    } else {
+        "platform.policy.sync"
+    };
+    communicate(
+        module,
+        serde_json::json!({
+            "schema": "1", "module": module, "operation": operation,
+        }),
+    )
+}
+
 pub fn sync(module: &str) -> Result<(), String> {
     reconcile(module, false)
 }
@@ -87,9 +160,41 @@ pub fn revoke(module: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn no_module_names_or_helper_paths_encoded() {
-        assert!(!super::SOCKET.contains("proxy"));
-        assert!(!super::SOCKET.contains("tailscale"));
+        assert!(!SOCKET.contains("proxy"));
+        assert!(!SOCKET.contains("tailscale"));
+    }
+
+    #[test]
+    fn preflight_without_platform_policy_requires_no_approval() {
+        let candidate =
+            candidate_fingerprint("example-module", Path::new("/absent"), false).unwrap();
+        assert!(candidate.is_null());
+    }
+
+    #[test]
+    fn preflight_hashes_exact_candidate_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("contracts")).unwrap();
+        fs::create_dir_all(dir.path().join("runtime")).unwrap();
+        fs::write(dir.path().join("manifest.json"), b"manifest").unwrap();
+        fs::write(
+            dir.path().join("contracts/platform-operations.json"),
+            b"contract",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("runtime/example-module-platform"),
+            b"\x7fELFtest",
+        )
+        .unwrap();
+        let result = candidate_fingerprint("example-module", dir.path(), true).unwrap();
+        assert_eq!(result["schema"], "1");
+        assert_eq!(result["module"], "example-module");
+        assert_eq!(result["manifest_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(result["contract_sha256"].as_str().unwrap().len(), 64);
     }
 }

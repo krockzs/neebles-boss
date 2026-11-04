@@ -1,8 +1,17 @@
 # N.E.E.B.L.E.S. Boss
 
-## Boss 2.0.13 — candidato Surface Open label y toggle-button
+## Boss 2.0.14 — candidato de fuente, sin publicar
 
-**Estado: fuente candidata, no release 2.0.13 publicada.** Los módulos pueden declarar `other-label-open` opcional (ausente = `false`) para renombrar visualmente Open con sus propios idiomas; la ejecución sigue en `governor.open`. El control genérico `toggle-button` se proyecta en Boss Config, Launcher y Tray. La última release publicada es `v2.0.12`; el paquete 2.0.13 requiere CI de compilación/certificación y publicación de bytes exactos. CUSTOM clásico y CUSTOM V2 conservan autoridades separadas.
+F41 introduce la identidad de CLI administrativa root validada por el proveedor
+OS y un preflight de aprobaciones SHA-256 antes de detener servicios en las
+transacciones de módulos. La autorización independiente de OS sigue siendo
+obligatoria. No se han certificado aún los binarios de 2.0.14. Consultar
+`release/notes-v2.0.14.md` y pruebas de aceptación reales.
+
+
+## Boss 2.0.13 — referencia histórica Surface Open label y toggle-button
+
+**Estado histórico de esta sección: redactada antes de publicar 2.0.13.** Los módulos pueden declarar `other-label-open` opcional (ausente = `false`) para renombrar visualmente Open con sus propios idiomas; la ejecución sigue en `governor.open`. El control genérico `toggle-button` se proyecta en Boss Config, Launcher y Tray. La última release publicada es `v2.0.12`; el paquete 2.0.13 requiere CI de compilación/certificación y publicación de bytes exactos. CUSTOM clásico y CUSTOM V2 conservan autoridades separadas.
 
 
 **Nested Evolutionary Engine for Behavioral Language Emergent Systems**

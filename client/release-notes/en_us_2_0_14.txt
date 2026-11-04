@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.14
+
+OS provider: privileged Boss administrative CLI authenticated by exact executable identity; independent certified-byte approval preflight before Install/Update service cutover. Approval is never automatic. Candidate awaits Esbirro CI and installed acceptance.

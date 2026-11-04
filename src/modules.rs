@@ -2972,6 +2972,22 @@ fn install_require_tree(
 
         harden_privileged_module_material(candidate.staging.path(), &candidate.manifest)?;
 
+        if needs_platform_authority {
+            if let Err(error) = crate::platform_policy_lifecycle::preflight(
+                &module_id,
+                candidate.staging.path(),
+                true,
+            ) {
+                return Err(require_install_failure(
+                    format!(
+                        "OS platform approval preflight rejected module '{}': {}",
+                        module_id, error
+                    ),
+                    &mut transaction,
+                ));
+            }
+        }
+
         let publication = publish_require_candidate(candidate);
 
         let data = match publication {
@@ -7591,6 +7607,23 @@ fn update_with_observer(
         })?;
 
     harden_privileged_module_material(staging.path(), &manifest)?;
+
+    // Verify independent OS approval and authenticated administrator identity
+    // BEFORE quiescing services or replacing the installed module. The OS
+    // provider grants nothing during this strictly read-only preflight.
+    if manifest.platform_operations.is_some() || installed_manifest.platform_operations.is_some() {
+        crate::platform_policy_lifecycle::preflight(
+            name,
+            staging.path(),
+            manifest.platform_operations.is_some(),
+        )
+        .map_err(|error| {
+            format!(
+                "module '{}' OS platform approval preflight failed before stopping services: {}",
+                name, error
+            )
+        })?;
+    }
 
     /*
      * Candidate is now completely staged and validated.

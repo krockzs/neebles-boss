@@ -152,21 +152,63 @@ class Manager:
             'helper_sha256': sha(safe_read(directory / 'runtime' / (module + '-platform'), MAX_HELPER, strict=self.strict)),
         }
 
-    def approval(self, module):
-        path = self.approval_path(module)
-        record = parse(safe_read(path, strict=self.strict))
-        expected_keys = {'schema', 'module', 'manifest_sha256', 'contract_sha256', 'helper_sha256'}
-        if not isinstance(record, dict) or set(record) != expected_keys:
+    def archived_approval_path(self, module, record):
+        """A stable, root-owned historical grant for exact approved bytes."""
+        self.paths(module)
+        canonical = (json.dumps(record, sort_keys=True, separators=(',', ':')) + '\n').encode()
+        return self.approval_root / (module + '--' + sha(canonical) + '.json')
+
+    def validate_approval_record(self, module, record):
+        keys = {'schema', 'module', 'manifest_sha256', 'contract_sha256', 'helper_sha256'}
+        if not isinstance(record, dict) or set(record) != keys:
             raise ValueError('invalid root approval receipt')
         if record.get('schema') != '1' or record.get('module') != module:
             raise ValueError('root approval identity mismatch')
         for key in ('manifest_sha256', 'contract_sha256', 'helper_sha256'):
             if not isinstance(record.get(key), str) or not SHA.fullmatch(record[key]):
                 raise ValueError('root approval digest invalid')
-        expected = self.fingerprint(module)
-        if record != expected:
-            raise ValueError('OS approval missing for current certified module bytes')
+
+    def approved_fingerprint(self, module, fingerprint):
+        """Accept only a valid current or root-archived approval for exact bytes."""
+        self.validate_approval_record(module, fingerprint)
+        active = self.approval_path(module)
+        if active.exists() or active.is_symlink():
+            current = parse(safe_read(active, strict=self.strict))
+            self.validate_approval_record(module, current)
+            if current == fingerprint:
+                return True
+        historical = self.archived_approval_path(module, fingerprint)
+        # Absence of the exact archived receipt is a denied authorization,
+        # not an unhandled filesystem error. A symlink or invalid existing
+        # receipt is still checked by safe_read() and fails closed.
+        if not historical.exists() and not historical.is_symlink():
+            # Preserve the original absence contract for callers and tests:
+            # no receipt at all means no approval exists (FileNotFoundError).
+            # A present, valid but different active receipt means that this
+            # specific candidate lacks approval (ValueError). Both deny access.
+            if not active.exists() and not active.is_symlink():
+                raise FileNotFoundError('OS approval receipt is absent for module: ' + module)
+            raise ValueError('OS approval missing for exact certified module bytes')
+        recorded = parse(safe_read(historical, strict=self.strict))
+        self.validate_approval_record(module, recorded)
+        if recorded != fingerprint:
+            raise ValueError('OS approval missing for exact certified module bytes')
         return True
+
+    def approval(self, module):
+        return self.approved_fingerprint(module, self.fingerprint(module))
+
+    def preflight_approved_candidate(self, module, candidate):
+        """Read-only comparison; never stages an ELF or grants OS authority."""
+        self.dirs()
+        self.paths(module)
+        if self.pending(module):
+            raise ValueError('unreconciled platform policy transaction')
+        if candidate is None:
+            # A candidate without privileged operations may request policy
+            # revocation. No additional approval is needed to remove grants.
+            return True
+        return self.approved_fingerprint(module, candidate)
 
     def approve(self, module):
         """Explicit OS-administrator action only; never invoked by Boss IPC."""
@@ -174,21 +216,38 @@ class Manager:
             raise ValueError('root required for OS approval')
         self.dirs()
         data = self.fingerprint(module)
-        atomic(self.approval_path(module),
-               (json.dumps(data, sort_keys=True, separators=(',', ':')) + '\n').encode(),
+        active = self.approval_path(module)
+        if active.exists() or active.is_symlink():
+            previous = parse(safe_read(active, strict=self.strict))
+            self.validate_approval_record(module, previous)
+            if previous != data:
+                historical = self.archived_approval_path(module, previous)
+                archived = (json.dumps(previous, sort_keys=True, separators=(',', ':')) + '\n').encode()
+                if historical.exists() or historical.is_symlink():
+                    if parse(safe_read(historical, strict=self.strict)) != previous:
+                        raise ValueError('historical OS approval receipt does not match')
+                else:
+                    atomic(historical, archived, 0o600, strict=self.strict)
+        atomic(active, (json.dumps(data, sort_keys=True, separators=(',', ':')) + '\n').encode(),
                0o600, strict=self.strict)
         self.approval(module)
         return data
 
     def revoke_approval(self, module):
-        """Revoke approval; audit then denies operations even if a policy remains."""
+        """Revoke all approved versions for a module, then retire OS policy."""
         if os.geteuid() != 0 and self.strict:
             raise ValueError('root required for OS revocation')
         self.dirs()
-        path = self.approval_path(module)
-        if path.exists() or path.is_symlink():
-            trusted(path, strict=self.strict)
-            path.unlink()
+        active = self.approval_path(module)
+        if active.exists() or active.is_symlink():
+            trusted(active, strict=self.strict)
+            active.unlink()
+        pattern = re.compile(re.escape(module) + r'--[a-f0-9]{64}\.json\Z')
+        for historical in self.approval_root.glob(module + '--*.json'):
+            if not pattern.fullmatch(historical.name):
+                raise ValueError('unexpected approval archive entry')
+            trusted(historical, strict=self.strict)
+            historical.unlink()
         self.reconcile(module, remove=True)
         return True
 
@@ -326,19 +385,30 @@ class Manager:
 
 
 def handle_control(req, manager=None):
-    if not isinstance(req, dict) or set(req) != {'schema', 'module', 'operation'} or req.get('schema') != '1':
+    if not isinstance(req, dict) or req.get('schema') != '1':
         return {'schema':'1','ok':False,'error':'invalid management request'}
-    module, operation = req['module'], req['operation']
+    module, operation = req.get('module'), req.get('operation')
     if not isinstance(module, str) or not MODULE.fullmatch(module):
         return {'schema':'1','ok':False,'error':'invalid module'}
-    if operation not in ('platform.policy.sync', 'platform.policy.revoke'):
+    if operation == 'platform.policy.preflight':
+        if set(req) != {'schema', 'module', 'operation', 'candidate'}:
+            return {'schema':'1','ok':False,'error':'invalid preflight request'}
+        try:
+            engine = manager or Manager()
+            engine.preflight_approved_candidate(module, req['candidate'])
+            return {'schema':'1','ok':True,'result':{'state':'ready'}}
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            return {'schema':'1','ok':False,'error':'OS candidate approval absent, mismatched or unavailable'}
+    if set(req) != {'schema', 'module', 'operation'} or operation not in (
+            'platform.policy.sync', 'platform.policy.revoke'):
         return {'schema':'1','ok':False,'error':'invalid management action'}
     try:
         engine = manager or Manager()
         value = engine.reconcile(module, remove=operation.endswith('.revoke'))
         return {'schema':'1','ok':True,'result':{'state':value}}
-    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         return {'schema':'1','ok':False,'error':'policy transaction rejected or failed'}
+
 
 
 def validate_identity(s):
@@ -448,7 +518,8 @@ def load_policy(module, * , policy_dir=POLICY_DIR, verifier=secure_regular):
 def handle(req, peer_uid, expected_uid, *, policy_loader=load_policy, executor=subprocess.run, executable_opener=secure_executable):
     if peer_uid != expected_uid:
         return {'schema':'1', 'ok':False, 'error':'caller not authorized'}
-    if not isinstance(req, dict) or set(req) != {'schema','module','operation'} or req.get('schema') != '1':
+    if not isinstance(req, dict) or req.get('schema') != '1' or (
+            set(req) != ({'schema','module','operation','candidate'} if req.get('operation') == 'platform.policy.preflight' else {'schema','module','operation'})):
         return {'schema':'1', 'ok':False, 'error':'invalid request shape'}
     module, operation = req['module'], req['operation']
     if not validate_identity(module) or not validate_identity(operation):
@@ -457,7 +528,7 @@ def handle(req, peer_uid, expected_uid, *, policy_loader=load_policy, executor=s
         # Reserve policy lifecycle for the physically authenticated Boss runtime.
         # A module can only change its own policy from its pinned installed files.
         # No arbitrary source path, ELF, argv, shell, or module target arrives over IPC.
-        if operation in ('platform.policy.sync', 'platform.policy.revoke'):
+        if operation in ('platform.policy.sync', 'platform.policy.revoke', 'platform.policy.preflight'):
             return handle_control(req)
         if operation.startswith('platform.policy.'):
             raise ValueError('reserved OS policy operation')
@@ -516,6 +587,41 @@ def is_boss_runtime_process(peer_pid):
                for line in lines)
 
 
+def is_authorized_root_boss_administrator(peer_pid):
+    """Recognize a root-authorized installed Boss administrative CLI invocation.
+
+    The caller must separately pass the exact root-owned Boss ELF inode check,
+    SO_PEERCRED uid=0, and the OS socket's root-only permissions. No module
+    process, arbitrary root Python process or desktop-user client can satisfy
+    this authorization by spoofing a JSON caller field.
+    """
+    if peer_pid <= 1:
+        return False
+    try:
+        lines = Path(f'/proc/{peer_pid}/status').read_text().splitlines()
+        uid_fields = [line.split()[1:] for line in lines if line.startswith('Uid:')]
+        if len(uid_fields) != 1 or uid_fields[0] != ['0', '0', '0', '0']:
+            return False
+        arguments = Path(f'/proc/{peer_pid}/cmdline').read_bytes().split(b'\x00')
+        return (len(arguments) >= 5
+                and arguments[1] == b'modules'
+                and arguments[2] in (b'install', b'update', b'uninstall')
+                and MODULE.fullmatch(arguments[3].decode('ascii')) is not None)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return False
+
+
+def authorized_boss_peer(peer_pid, peer_uid, expected_uid, trusted_executable,
+                         *, peer_verifier=verify_peer_executable):
+    """Accept the exact Boss service or an explicitly elevated Boss CLI."""
+    if (peer_uid != expected_uid or peer_uid != 0
+            or not trusted_executable or peer_pid <= 1
+            or not peer_verifier(peer_pid, trusted_executable)):
+        return False
+    return (is_boss_runtime_process(peer_pid)
+            or is_authorized_root_boss_administrator(peer_pid))
+
+
 def serve_one(client, expected_uid, *, policy_loader=load_policy,
               executor=subprocess.run, executable_opener=secure_executable,
               peer_verifier=verify_peer_executable, trusted_executable=None):
@@ -537,7 +643,7 @@ def serve_one(client, expected_uid, *, policy_loader=load_policy,
         if not complete or len(line) > MAX_FRAME:
             raise ValueError('invalid frame')
         req = json.loads(line, object_pairs_hook=reject_duplicate_keys)
-        if not trusted_executable or not peer_verifier(peer_pid, trusted_executable) or not is_boss_runtime_process(peer_pid):
+        if not authorized_boss_peer(peer_pid, peer_uid, expected_uid, trusted_executable, peer_verifier=peer_verifier):
             response = {'schema':'1','ok':False,'error':'caller executable not authorized'}
         else:
             response = handle(req, peer_uid, expected_uid, policy_loader=policy_loader,
