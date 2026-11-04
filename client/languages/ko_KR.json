@@ -147,5 +147,12 @@
   "config.startup_minimized": "Start minimized",
   "release_notes.reboot": "재부팅",
   "release_notes.reboot_warning": "Save your work and close open applications before rebooting the system.",
-  "modules.critical_update": "업데이트!"
+  "modules.critical_update": "업데이트!",
+  "modules.transaction.os_approval_required": "권한이 필요한 코드에는 관리자의 독립적인 승인이 필요합니다. 기존 설치는 보호됩니다. 권한이 부여되지 않았으며 작업이 완료되지 않았습니다.",
+  "modules.transaction.os_review_title": "OS 작업 검토 및 승인",
+  "modules.transaction.os_review_warning": "이 버전은 권한이 필요한 작업을 요청합니다. 매니페스트, 계약 및 실행 파일의 정확한 SHA-256 값을 검토하세요. 확인하면 별도의 관리자 승인이 요청되며 취소하면 현재 설치가 유지됩니다.",
+  "modules.transaction.os_cancel": "취소",
+  "modules.transaction.os_approve": "OS 승인 요청",
+  "modules.transaction.os_reviewing": "시스템 권한 기관에서 정확한 작업을 검토할 때까지 승인 기능은 비활성화됩니다.",
+  "modules.transaction.os_operations": "요청된 권한 작업(실행 파일 및 인수)"
 }

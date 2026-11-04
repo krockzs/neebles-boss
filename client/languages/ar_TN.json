@@ -147,5 +147,12 @@
   "config.startup_minimized": "Start minimized",
   "release_notes.reboot": "إعادة التشغيل",
   "release_notes.reboot_warning": "Save your work and close open applications before rebooting the system.",
-  "modules.critical_update": "تحديث!"
+  "modules.critical_update": "تحديث!",
+  "modules.transaction.os_approval_required": "يلزم الحصول على موافقة مستقلة من مسؤول النظام على الشيفرة ذات الامتيازات. يظل التثبيت السابق محميًا. لم يُمنح أي إذن ولم تكتمل العملية.",
+  "modules.transaction.os_review_title": "مراجعة عمليات النظام والتصريح بها",
+  "modules.transaction.os_review_warning": "يطلب هذا الإصدار تنفيذ عمليات ذات امتيازات. راجع بصمات SHA-256 الدقيقة للبيان والعقد والملف التنفيذي. يؤدي التأكيد إلى طلب تصريح إداري منفصل؛ أما الإلغاء فيُبقي التثبيت الحالي دون تغيير.",
+  "modules.transaction.os_cancel": "إلغاء",
+  "modules.transaction.os_approve": "طلب تصريح النظام",
+  "modules.transaction.os_reviewing": "يبقى منح الموافقة معطّلًا حتى تراجع سلطة النظام العمليات الدقيقة.",
+  "modules.transaction.os_operations": "العمليات ذات الامتيازات المطلوبة (الملف التنفيذي والوسائط)"
 }

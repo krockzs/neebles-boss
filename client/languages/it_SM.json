@@ -147,5 +147,12 @@
   "config.startup_minimized": "Avvia ridotto a icona",
   "release_notes.reboot": "Riavvia",
   "release_notes.reboot_warning": "Salva il lavoro e chiudi le applicazioni aperte prima di riavviare il sistema.",
-  "modules.critical_update": "Aggiorna!"
+  "modules.critical_update": "Aggiorna!",
+  "modules.transaction.os_approval_required": "È necessaria l’approvazione indipendente di un amministratore per il codice privilegiato. L’installazione precedente resta protetta. Non è stata concessa alcuna autorizzazione e l’operazione non è terminata.",
+  "modules.transaction.os_review_title": "Esamina e autorizza le operazioni di sistema",
+  "modules.transaction.os_review_warning": "Questa versione richiede operazioni privilegiate. Verifica gli SHA-256 esatti di manifesto, contratto ed eseguibile. La conferma richiede un’autorizzazione amministrativa separata; l’annullamento mantiene l’installazione attuale.",
+  "modules.transaction.os_cancel": "Annulla",
+  "modules.transaction.os_approve": "Richiedi autorizzazione del sistema",
+  "modules.transaction.os_reviewing": "L’approvazione resta disabilitata finché le operazioni esatte non sono state esaminate dall’autorità del sistema.",
+  "modules.transaction.os_operations": "Operazioni privilegiate richieste (eseguibile e argomenti)"
 }

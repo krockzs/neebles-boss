@@ -147,5 +147,12 @@
   "config.startup_minimized": "Minimiert starten",
   "release_notes.reboot": "Neustart",
   "release_notes.reboot_warning": "Speichern Sie Ihre Arbeit und schließen Sie alle Anwendungen vor dem Neustart.",
-  "modules.critical_update": "Aktualisieren!"
+  "modules.critical_update": "Aktualisieren!",
+  "modules.transaction.os_approval_required": "Für privilegierten Code ist eine unabhängige Administratorfreigabe erforderlich. Die vorherige Installation bleibt geschützt. Es wurde keine Berechtigung erteilt und der Vorgang ist nicht abgeschlossen.",
+  "modules.transaction.os_review_title": "Systemoperationen prüfen und autorisieren",
+  "modules.transaction.os_review_warning": "Diese Version fordert privilegierte Operationen an. Prüfe die exakten SHA-256-Werte von Manifest, Vertrag und ausführbarer Datei. Die Bestätigung startet eine separate Administratorfreigabe; bei Abbruch bleibt die Installation unverändert.",
+  "modules.transaction.os_cancel": "Abbrechen",
+  "modules.transaction.os_approve": "Systemautorisierung anfordern",
+  "modules.transaction.os_reviewing": "Die Freigabe bleibt deaktiviert, bis die genauen Operationen durch die Systemautorität geprüft wurden.",
+  "modules.transaction.os_operations": "Angeforderte privilegierte Operationen (Programm und Argumente)"
 }

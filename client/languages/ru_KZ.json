@@ -147,5 +147,12 @@
   "config.startup_minimized": "Start minimized",
   "release_notes.reboot": "Перезагрузка",
   "release_notes.reboot_warning": "Save your work and close open applications before rebooting the system.",
-  "modules.critical_update": "Обновить!"
+  "modules.critical_update": "Обновить!",
+  "modules.transaction.os_approval_required": "Для привилегированного кода требуется независимое разрешение администратора. Предыдущая установка защищена. Разрешение не выдано, операция не завершена.",
+  "modules.transaction.os_review_title": "Проверить и разрешить операции ОС",
+  "modules.transaction.os_review_warning": "Эта версия запрашивает привилегированные операции. Проверьте точные SHA-256 манифеста, контракта и исполняемого файла. Подтверждение запускает отдельную авторизацию администратора; отмена сохраняет текущую установку.",
+  "modules.transaction.os_cancel": "Отмена",
+  "modules.transaction.os_approve": "Запросить разрешение ОС",
+  "modules.transaction.os_reviewing": "Подтверждение недоступно, пока точные операции не проверены полномочиями ОС.",
+  "modules.transaction.os_operations": "Запрошенные привилегированные операции (исполняемый файл и аргументы)"
 }

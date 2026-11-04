@@ -147,5 +147,12 @@
   "config.startup_minimized": "Start minimized",
   "release_notes.reboot": "Qala hape",
   "release_notes.reboot_warning": "Save your work and close open applications before rebooting the system.",
-  "modules.critical_update": "Critical Update"
+  "modules.critical_update": "Critical Update",
+  "modules.transaction.os_approval_required": "Independent administrator approval of privileged code is required. The previous installation remains protected. No permission has been granted and the operation has not completed.",
+  "modules.transaction.os_review_title": "Review and authorize OS operations",
+  "modules.transaction.os_review_warning": "This version requests privileged OS operations. Review the exact manifest, contract, and helper SHA-256 digests. Confirmation triggers a separate administrator authorization; cancellation keeps the current installation unchanged.",
+  "modules.transaction.os_cancel": "Cancel",
+  "modules.transaction.os_approve": "Request OS authorization",
+  "modules.transaction.os_reviewing": "Approval remains disabled until the exact operations have been reviewed with OS authority.",
+  "modules.transaction.os_operations": "Requested privileged operations (executable and arguments)"
 }

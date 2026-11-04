@@ -147,5 +147,12 @@
   "config.startup_minimized": "Geminimaliseerd starten",
   "release_notes.reboot": "Opnieuw opstarten",
   "release_notes.reboot_warning": "Sla uw werk op en sluit toepassingen voordat u het systeem opnieuw opstart.",
-  "modules.critical_update": "Bijwerken!"
+  "modules.critical_update": "Bijwerken!",
+  "modules.transaction.os_approval_required": "Voor bevoorrechte code is onafhankelijke goedkeuring door een beheerder vereist. De vorige installatie blijft beschermd. Er is geen toestemming verleend en de bewerking is niet voltooid.",
+  "modules.transaction.os_review_title": "Systeemhandelingen controleren en autoriseren",
+  "modules.transaction.os_review_warning": "Deze versie vraagt bevoorrechte handelingen aan. Controleer de exacte SHA-256-waarden van manifest, contract en uitvoerbaar bestand. Bevestigen vraagt afzonderlijke beheerderstoestemming; annuleren behoudt de huidige installatie.",
+  "modules.transaction.os_cancel": "Annuleren",
+  "modules.transaction.os_approve": "Systeemautorisatie aanvragen",
+  "modules.transaction.os_reviewing": "Goedkeuring blijft uitgeschakeld totdat de exacte handelingen door de systeemautoriteit zijn beoordeeld.",
+  "modules.transaction.os_operations": "Aangevraagde bevoorrechte handelingen (uitvoerbaar bestand en argumenten)"
 }

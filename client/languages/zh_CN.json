@@ -147,5 +147,12 @@
   "config.startup_minimized": "Start minimized",
   "release_notes.reboot": "重新启动",
   "release_notes.reboot_warning": "Save your work and close open applications before rebooting the system.",
-  "modules.critical_update": "更新!"
+  "modules.critical_update": "更新!",
+  "modules.transaction.os_approval_required": "特权代码需要管理员独立批准。先前的安装仍受保护。尚未授予权限，操作也尚未完成。",
+  "modules.transaction.os_review_title": "审核并授权系统操作",
+  "modules.transaction.os_review_warning": "此版本请求执行特权操作。请核对清单、合约及可执行文件的准确 SHA-256 摘要。确认后将单独请求管理员授权；取消则保持当前安装不变。",
+  "modules.transaction.os_cancel": "取消",
+  "modules.transaction.os_approve": "请求系统授权",
+  "modules.transaction.os_reviewing": "在系统授权机构审核具体操作之前，批准功能将保持禁用。",
+  "modules.transaction.os_operations": "请求的特权操作（可执行文件及参数）"
 }

@@ -147,5 +147,12 @@
   "config.startup_minimized": "Démarrer en mode réduit",
   "release_notes.reboot": "Redémarrer",
   "release_notes.reboot_warning": "Enregistrez votre travail et fermez les applications avant de redémarrer le système.",
-  "modules.critical_update": "Mettre à jour!"
+  "modules.critical_update": "Mettre à jour!",
+  "modules.transaction.os_approval_required": "L’approbation indépendante d’un administrateur est requise pour le code privilégié. L’installation précédente reste protégée. Aucune autorisation n’a été accordée et l’opération n’est pas terminée.",
+  "modules.transaction.os_review_title": "Examiner et autoriser les opérations du système",
+  "modules.transaction.os_review_warning": "Cette version demande des opérations privilégiées. Vérifie les empreintes SHA-256 exactes du manifeste, du contrat et de l’exécutable. La confirmation déclenche une autorisation administrative distincte ; l’annulation préserve l’installation actuelle.",
+  "modules.transaction.os_cancel": "Annuler",
+  "modules.transaction.os_approve": "Demander l’autorisation du système",
+  "modules.transaction.os_reviewing": "L’approbation reste désactivée jusqu’à l’examen des opérations exactes par l’autorité du système.",
+  "modules.transaction.os_operations": "Opérations privilégiées demandées (exécutable et arguments)"
 }

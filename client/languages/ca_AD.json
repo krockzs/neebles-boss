@@ -147,5 +147,12 @@
   "config.startup_minimized": "Start minimized",
   "release_notes.reboot": "Reinicia",
   "release_notes.reboot_warning": "Save your work and close open applications before rebooting the system.",
-  "modules.critical_update": "Actualitza!"
+  "modules.critical_update": "Actualitza!",
+  "modules.transaction.os_approval_required": "Cal una aprovació independent de l’administrador per al codi privilegiat. La instal·lació anterior continua protegida. No s’ha concedit cap permís i l’operació no s’ha completat.",
+  "modules.transaction.os_review_title": "Revisa i autoritza les operacions del sistema",
+  "modules.transaction.os_review_warning": "Aquesta versió sol·licita operacions privilegiades. Revisa els SHA-256 exactes del manifest, el contracte i l’executable. Confirmar inicia una autorització administrativa separada; cancel·lar manté la instal·lació actual.",
+  "modules.transaction.os_cancel": "Cancel·la",
+  "modules.transaction.os_approve": "Sol·licita autorització del sistema",
+  "modules.transaction.os_reviewing": "L’aprovació continuarà desactivada fins que l’autoritat del sistema hagi revisat les operacions exactes.",
+  "modules.transaction.os_operations": "Operacions privilegiades sol·licitades (executable i arguments)"
 }
