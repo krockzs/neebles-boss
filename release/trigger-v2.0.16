@@ -1,0 +1,10 @@
+NEEBLES Boss 2.0.16 — certified release candidate trigger
+Certified source main: d7c9998338dc84b7b97c149e6385ea88949ed3b5
+Previous source commit: 32a30e7798e6c9c8ae99b1d4a6afd607a6febb07
+GitHub contracts CI run: 41781864473
+GitHub contracts CI: completed / success (verified before publishing marker)
+F64B: 11 standalone release assets independently verified locally
+F67: 253 locales in strict 156-key parity
+Certified CUSTOM classic pin: 20488f6818d5e227f043425a682115f614f4bf79
+Scope: start official release candidate build and retain artifacts in GitHub Actions
+Not a public GitHub Release; no host installation, module approval, or runtime change
