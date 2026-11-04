@@ -603,10 +603,23 @@ def is_authorized_root_boss_administrator(peer_pid):
         if len(uid_fields) != 1 or uid_fields[0] != ['0', '0', '0', '0']:
             return False
         arguments = Path(f'/proc/{peer_pid}/cmdline').read_bytes().split(b'\x00')
-        return (len(arguments) >= 5
-                and arguments[1] == b'modules'
-                and arguments[2] in (b'install', b'update', b'uninstall')
-                and MODULE.fullmatch(arguments[3].decode('ascii')) is not None)
+        if arguments and arguments[-1] == b'':
+            arguments.pop()
+
+        # The installed Qt authorization agent launches Boss with the global
+        # AuthoritySupply option before the module command. The only accepted
+        # prefix is the exact OS-owned supply already required by Boss.
+        command_offset = 1
+        if len(arguments) >= 2 and arguments[1] == b'--authority-supply':
+            if (len(arguments) < 3 or arguments[2] !=
+                    b'/usr/lib/neebles/platform/authority/authority-supply.json'):
+                return False
+            command_offset = 3
+
+        return (len(arguments) >= command_offset + 3
+                and arguments[command_offset] == b'modules'
+                and arguments[command_offset + 1] in (b'install', b'update', b'uninstall')
+                and MODULE.fullmatch(arguments[command_offset + 2].decode('ascii')) is not None)
     except (OSError, ValueError, UnicodeDecodeError):
         return False
 

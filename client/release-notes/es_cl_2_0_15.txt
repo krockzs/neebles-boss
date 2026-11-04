@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.15
+
+Corrección del contrato de autenticación OS para Install/Update/Uninstall iniciados desde la interfaz Qt de Boss. Se admite exclusivamente el AuthoritySupply administrado por OS antes de la orden administrativa. Se preservan las verificaciones de UID root, ejecutable instalado, pertenencia al servicio o CLI administrativa y la aprobación independiente por SHA-256. La instalación no concede privilegios por sí misma.

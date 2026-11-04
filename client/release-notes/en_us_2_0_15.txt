@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.15
+
+Fix OS authorization contract for Install/Update/Uninstall launched from the Boss Qt interface. Only the OS-owned AuthoritySupply is accepted before the administrative command. Root UID, installed executable identity, authenticated service or CLI provenance, and independent SHA-256 approval remain required. Installing a module does not grant privileges.

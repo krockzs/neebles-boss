@@ -57,6 +57,82 @@ class RootAuthorityGates(unittest.TestCase):
             self.assertFalse(provider.is_authorized_root_boss_administrator(200))
 
 
+class QtRootCliProvenanceRegression(unittest.TestCase):
+    """The Qt-authenticated CLI must satisfy the original root identity gate."""
+
+    def check_cli(self, argv, uid='0\t0\t0\t0'):
+        class FakeProc:
+            def read_text(self):
+                return 'Name:\tneebles-backend\nUid:\t' + uid + '\n'
+
+            def read_bytes(self):
+                return b'\x00'.join(argument.encode('ascii') for argument in argv) + b'\x00'
+
+        with patch.object(provider, 'Path', return_value=FakeProc()):
+            return provider.is_authorized_root_boss_administrator(7123)
+
+    def test_installed_qt_agent_prefixed_update_accepted(self):
+        argv = [
+            '/opt/neebles/client/backend/neebles-backend',
+            '--authority-supply',
+            '/usr/lib/neebles/platform/authority/authority-supply.json',
+            'modules', 'update', 'neebles-proxy-client', '--lifecycle-events',
+            '--close-running',
+        ]
+        self.assertTrue(self.check_cli(argv))
+
+    def test_unprefixed_install_update_uninstall_preserved(self):
+        for action in ('install', 'update', 'uninstall'):
+            with self.subTest(action=action):
+                self.assertTrue(self.check_cli([
+                    '/opt/neebles/client/backend/neebles-backend',
+                    'modules', action, 'neebles-proxy-client',
+                ]))
+
+    def test_untrusted_supply_rejected(self):
+        for supply in ('/tmp/authority-supply.json',
+                       '/usr/lib/neebles/platform/authority/authority-supply.json.bak',
+                       '--lifecycle-events'):
+            with self.subTest(supply=supply):
+                self.assertFalse(self.check_cli([
+                    '/opt/neebles/client/backend/neebles-backend',
+                    '--authority-supply', supply,
+                    'modules', 'update', 'neebles-proxy-client',
+                ]))
+
+    def test_missing_supply_argument_rejected(self):
+        self.assertFalse(self.check_cli([
+            '/opt/neebles/client/backend/neebles-backend',
+            '--authority-supply',
+        ]))
+
+    def test_unrelated_cli_command_rejected(self):
+        for action in ('available', 'list', 'enable'):
+            with self.subTest(action=action):
+                self.assertFalse(self.check_cli([
+                    '/opt/neebles/client/backend/neebles-backend',
+                    '--authority-supply',
+                    '/usr/lib/neebles/platform/authority/authority-supply.json',
+                    'modules', action, 'neebles-proxy-client',
+                ]))
+
+    def test_nonroot_uids_rejected(self):
+        self.assertFalse(self.check_cli([
+            '/opt/neebles/client/backend/neebles-backend',
+            '--authority-supply',
+            '/usr/lib/neebles/platform/authority/authority-supply.json',
+            'modules', 'update', 'neebles-proxy-client',
+        ], uid='1000\t0\t0\t0'))
+
+    def test_invalid_module_identity_rejected(self):
+        self.assertFalse(self.check_cli([
+            '/opt/neebles/client/backend/neebles-backend',
+            '--authority-supply',
+            '/usr/lib/neebles/platform/authority/authority-supply.json',
+            'modules', 'update', '../neebles-proxy-client',
+        ]))
+
+
 class ReadOnlyPreflight(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

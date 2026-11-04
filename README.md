@@ -1,6 +1,20 @@
 # N.E.E.B.L.E.S. Boss
 
-## Boss 2.0.14 — candidato de fuente, sin publicar
+## Boss 2.0.15 — corrección de autenticación administrativa (candidato de fuente)
+
+F47 corrige la validación de la identidad de Boss ante el proveedor OS cuando el
+agente Qt invoca `neebles-backend --authority-supply <ruta OS> modules update`.
+Solo se acepta el AuthoritySupply exacto propiedad del OS; se conserva la
+verificación UID root, ejecutable root-owned por inode, cgroup de runtime o CLI
+administrativa autentificada, y la aprobación independiente por huellas del
+candidato. No se conceden políticas automáticamente.
+
+F48 alinea Cargo, Qt, empaquetado, metadatos y notas con 2.0.15. El candidato
+requiere todavía las puertas de certificación de Esbirro, materialización de
+la distribución y aceptación instalada. El fallo que motivó F47 ocurrió durante
+la actualización gobernada de Proxy Client 1.0.1 desde Boss 2.0.14.
+
+## Boss 2.0.14 — referencia histórica de fuente
 
 F41 introduce la identidad de CLI administrativa root validada por el proveedor
 OS y un preflight de aprobaciones SHA-256 antes de detener servicios en las
