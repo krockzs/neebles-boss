@@ -1,7 +1,11 @@
-NEEBLES Boss v2.0.17 — candidate build authorization marker
-Source main commit: 6003ee79a55779da050530d4e9c895f3464aceb1
-GitHub contracts CI: 41985122416
-GitHub contracts CI status: completed / success (verified before marker)
+NEEBLES Boss v2.0.17 — controlled candidate rebuild after packaging mode correction
+Source main commit: b9adb1c5ea6601510bac9cf55cfd935a53f8250c
+Original source commit: 6003ee79a55779da050530d4e9c895f3464aceb1
+Previous candidate workflow: 41987132313 (failed only at release payload file mode gate)
+Regression test Git blob unchanged: 4b0d1c8fa3b59ab7d2ade59452b65d7289653625
+Regression test Git mode corrected: 100755 -> 100644
+GitHub contracts CI: 41988669609
+GitHub contracts CI status: completed / success (verified before marker update)
 Certified CUSTOM classic pin: 20488f6818d5e227f043425a682115f614f4bf79
-Scope: start controlled Esbirro/custom classic release candidate workflow; preserve 11 artifacts in GitHub Actions.
-Not a public GitHub Release. No installation or module approval.
+Scope: run certified Esbirro/CUSTOM classic candidate workflow; preserve 11 artifacts.
+Not a public GitHub Release. No host installation or module approval.
