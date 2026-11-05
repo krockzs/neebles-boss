@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.17
+
+Se ajusta el aislamiento del proveedor de operaciones privilegiadas para permitir la comunicación con los sockets de módulos en /run/user, manteniendo /home y /root inaccesibles. No cambia la autorización del sistema operativo, los permisos root ni los contratos de los módulos.

@@ -12,7 +12,8 @@ Environment=NEEBLES_BOSS_UID=0
 Environment=NEEBLES_BOSS_EXE=/opt/neebles/client/backend/neebles-backend
 NoNewPrivileges=yes
 PrivateTmp=yes
-ProtectHome=yes
+ProtectHome=read-only
+InaccessiblePaths=/home /root
 ProtectSystem=strict
 ReadWritePaths=/run/neebles /etc/neebles/platform-operations /usr/lib/neebles/module-operations /var/lib/neebles/platform-operations
 RestrictAddressFamilies=AF_UNIX

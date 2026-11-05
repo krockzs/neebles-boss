@@ -1,0 +1,3 @@
+NEEBLES Boss 2.0.17
+
+The privileged operations provider sandbox now permits access to module sockets under /run/user while keeping /home and /root inaccessible. OS authorization, root permissions, and module contracts are unchanged.

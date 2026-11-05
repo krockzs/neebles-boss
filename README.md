@@ -1,5 +1,17 @@
 # N.E.E.B.L.E.S. Boss
 
+## Boss 2.0.17 — acceso gobernado de proveedor OS a Bridge (candidato de fuente)
+
+El servicio global `neebles-platform-operations.service` mantiene su aislamiento
+privilegiado y permite consultar el socket de Bridge en `/run/user/<uid>` mediante
+`ProtectHome=read-only` y `InaccessiblePaths=/home /root`. No se cambian las
+politicas root por modulo, las aprobaciones OS, los permisos del socket, el
+proveedor Python ni los contratos de Proxy Client o Secrets.
+
+Esta fuente no constituye release, instalacion ni prueba de activacion. La
+publicacion requiere la compilacion completa y certificacion de Boss con
+CUSTOM clasico fijado y Esbirro; la aceptacion real se verifica por separado.
+
 ## Boss 2.0.16 — aprobación OS independiente y Install/Update (candidato de fuente)
 
 F54–F61 incorporan el contrato de revisión administrativa por SHA-256 exactos,

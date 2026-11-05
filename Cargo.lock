@@ -994,7 +994,7 @@ dependencies = [
 
 [[package]]
 name = "neebles-backend"
-version = "2.0.16"
+version = "2.0.17"
 dependencies = [
  "argon2",
  "async-broadcast",
