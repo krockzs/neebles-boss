@@ -47,8 +47,8 @@
     },
     "neebles-proxy-client": {
       "repo": "https://github.com/krockzs/neebles-proxy-client.git",
-      "commit": "19fe839863c40e2d8ab492848230ed04f7e891bd",
-      "version": "1.0.2",
+      "commit": "c483bb06f674ad6d2b2fe558e2d66d0b31d0ad8e",
+      "version": "1.0.3",
       "short_name": "Proxy Client",
       "depends_install": {
         "neebles-secrets": {
