@@ -1,0 +1,7 @@
+NEEBLES Boss v2.0.17 — candidate build authorization marker
+Source main commit: 6003ee79a55779da050530d4e9c895f3464aceb1
+GitHub contracts CI: 41985122416
+GitHub contracts CI status: completed / success (verified before marker)
+Certified CUSTOM classic pin: 20488f6818d5e227f043425a682115f614f4bf79
+Scope: start controlled Esbirro/custom classic release candidate workflow; preserve 11 artifacts in GitHub Actions.
+Not a public GitHub Release. No installation or module approval.
